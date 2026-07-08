@@ -27,6 +27,11 @@ func main() {
 	defer db.Close()
 	log.Println("database connected ✓")
 
+	if err := database.RunMigrations(cfg.DBUrl); err != nil {
+		log.Fatalf("migration failed: %v", err)
+	}
+	log.Println("migrations applied ✓")
+
 	vmRepo := repositories.NewVMRepo(db)
 	allocSvc := services.NewAllocationService(db)
 
