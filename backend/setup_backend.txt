@@ -1,4 +1,0 @@
-cd Caesar-Caster/backend
-cp .env.example .env
-docker compose up -d
-go run ./cmd/server
