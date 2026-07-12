@@ -4,19 +4,44 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"backend/internal/entity"
 )
 
+// MockProvisioner = provisioner ปลอมสำหรับ dev/test — ไม่แตะ cluster จริง แค่ log แล้วคืน success
+// ใช้ตอน PROVISIONER=mock (ค่า default) เพื่อให้พัฒนา/เทสต์ API ได้โดยไม่ต้องมี k8s
 type MockProvisioner struct{}
 
+// NewMockProvisioner สร้าง mock — ถูกเลือกใช้ใน main เมื่อ PROVISIONER != "kubernetes"
 func NewMockProvisioner() *MockProvisioner { return &MockProvisioner{} }
 
-func (m *MockProvisioner) CreateVM(ctx context.Context, nodeHostname, vmName string, cores, ramMB int) error {
-	log.Printf("[MOCK] สร้าง VM '%s' บน %s (%d cores, %d MB)", vmName, nodeHostname, cores, ramMB)
-	time.Sleep(500 * time.Millisecond) // จำลองว่าใช้เวลา
+// EnsureNamespace จำลองการสร้าง namespace + ResourceQuota
+// data flow: รับ namespace ที่ NamespaceManager เพิ่งบันทึกลง DB → log โควตาที่จะไปตั้งบน cluster → คืน nil
+func (m *MockProvisioner) EnsureNamespace(ctx context.Context, ns *entity.Namespace) error {
+	log.Printf("[MOCK] สร้าง namespace '%s' (%s) quota: %dm CPU / %d MB / %d services",
+		ns.Name, ns.Type, ns.CPULimitMilli, ns.RAMLimitMB, ns.MaxServices)
 	return nil
 }
 
-func (m *MockProvisioner) DeleteVM(ctx context.Context, nodeHostname string, vmID int) error {
-	log.Printf("[MOCK] ลบ VM id=%d บน %s", vmID, nodeHostname)
+// DeleteNamespace จำลองการลบ namespace ทั้งก้อน
+// data flow: รับชื่อ namespace จาก NamespaceManager → log → คืน nil
+func (m *MockProvisioner) DeleteNamespace(ctx context.Context, nsName string) error {
+	log.Printf("[MOCK] ลบ namespace '%s'", nsName)
+	return nil
+}
+
+// DeployService จำลองการ deploy workload: log สเปกที่ ServiceManager ส่งมา แล้ว sleep ให้เหมือนมี latency จริง
+// data flow: รับชื่อ namespace + service (สเปก snapshot แล้ว) จาก ServiceManager.Create → log → คืน nil
+func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
+	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %dm CPU / %d MB",
+		svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB)
+	time.Sleep(300 * time.Millisecond) // จำลองว่าใช้เวลา
+	return nil
+}
+
+// DeleteService จำลองการลบ workload ตัวเดียว
+// data flow: รับ namespace + ชื่อ service จาก ServiceManager.Delete → log → คืน nil
+func (m *MockProvisioner) DeleteService(ctx context.Context, nsName, svcName string) error {
+	log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svcName, nsName)
 	return nil
 }

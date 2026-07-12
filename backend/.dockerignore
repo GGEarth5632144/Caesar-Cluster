@@ -1,0 +1,4 @@
+.env
+.git
+*.md
+setup_backend.txt
