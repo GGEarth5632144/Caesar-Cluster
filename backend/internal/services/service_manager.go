@@ -10,21 +10,21 @@ import (
 )
 
 var (
-	ErrPlanNotFound    = errors.New("ไม่พบ plan ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
-	ErrServiceNotFound = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
+	ErrRequestTemplateNotFound = errors.New("ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
+	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
 // (ไม่ import dto ตรงๆ) เพื่อไม่ให้ service layer ผูกกับ controller/dto layer
 //
-// เลือกสเปกได้ 2 ทาง: ส่ง PlanID มา (เลือกจาก choice ที่ admin สร้างไว้)
-// หรือกรอก CPUMilli/RAMMB เอง — ถ้าส่ง PlanID มา ค่าใน plan จะชนะเสมอ
+// เลือกสเปกได้ 2 ทาง: ส่ง RequestTemplateID มา (เลือกจาก choice ที่ admin สร้างไว้)
+// หรือกรอก CPUMilli/RAMMB เอง — ถ้าส่ง RequestTemplateID มา ค่าใน template จะชนะเสมอ
 type CreateServiceParams struct {
-	Name     string
-	Image    string
-	PlanID   *int
-	CPUMilli int
-	RAMMB    int
+	Name              string
+	Image             string
+	RequestTemplateID *int
+	CPUMilli          int
+	RAMMB             int
 }
 
 // ServiceManager = business logic ของ workload: เช็คโควตา → บันทึก DB → deploy จริงขึ้น cluster
@@ -59,7 +59,7 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 //
 // data flow:
 //   - รับ userID + namespaceID + params จาก ServiceController
-//   - ถ้าเลือก plan มา → อ่าน plan ที่ is_active แล้วก๊อป cpu/ram มาเป็น snapshot (ดูเหตุผลใน entity/plan.go)
+//   - ถ้าเลือก template มา → อ่าน template ที่ is_active แล้วก๊อป cpu/ram มาเป็น snapshot (ดูเหตุผลใน entity/request_template.go)
 //   - QuotaService.ReserveAndInsert ล็อกแถว namespace → เช็คโควตารวม → INSERT service (status=creating) ใน tx เดียว
 //   - นอก transaction: prov.DeployService สร้าง workload จริงบน cluster
 //   - สำเร็จ → update status=running ; ล้มเหลว → ลบ row ทิ้งเพื่อ "คืนโควตา" แล้วคืน error
@@ -72,29 +72,29 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p CreateServiceParams) (*entity.Service, error) {
 	cpuMilli, ramMB := p.CPUMilli, p.RAMMB
 
-	// เลือกจาก choice ที่ admin สร้างไว้ → ใช้สเปกของ plan เป็นหลัก
-	if p.PlanID != nil {
-		var plan entity.Plan
+	// เลือกจาก choice ที่ admin สร้างไว้ → ใช้สเปกของ template เป็นหลัก
+	if p.RequestTemplateID != nil {
+		var tmpl entity.RequestTemplate
 		err := m.db.WithContext(ctx).
-			Where("id = ? AND is_active = true", *p.PlanID).First(&plan).Error
+			Where("id = ? AND is_active = true", *p.RequestTemplateID).First(&tmpl).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, ErrPlanNotFound
+				return nil, ErrRequestTemplateNotFound
 			}
 			return nil, err
 		}
-		cpuMilli, ramMB = plan.CPUMilli, plan.RAMMB
+		cpuMilli, ramMB = tmpl.CPULimitMilli, tmpl.RAMLimitMB
 	}
 
 	svc := &entity.Service{
-		NamespaceID: namespaceID,
-		Name:        p.Name,
-		CreatedBy:   userID,
-		PlanID:      p.PlanID,
-		Image:       p.Image,
-		CPUMilli:    cpuMilli,
-		RAMMB:       ramMB,
-		Status:      entity.ServiceCreating,
+		NamespaceID:       namespaceID,
+		Name:              p.Name,
+		CreatedBy:         userID,
+		RequestTemplateID: p.RequestTemplateID,
+		Image:             p.Image,
+		CPUMilli:          cpuMilli,
+		RAMMB:             ramMB,
+		Status:            entity.ServiceCreating,
 	}
 
 	// เช็คโควตาของ namespace แล้ว INSERT ภายใน transaction เดียวกับที่ล็อก namespace ไว้
@@ -117,8 +117,10 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		return nil, err
 	}
 
+	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว (ถ้า deploy สำเร็จ) — persist คู่กับ status ในทีเดียว
 	if err := m.db.WithContext(ctx).Model(&entity.Service{}).
-		Where("id = ?", svc.ID).Update("status", entity.ServiceRunning).Error; err != nil {
+		Where("id = ?", svc.ID).
+		Updates(map[string]any{"status": entity.ServiceRunning, "node_port": svc.NodePort}).Error; err != nil {
 		return nil, err
 	}
 	svc.Status = entity.ServiceRunning

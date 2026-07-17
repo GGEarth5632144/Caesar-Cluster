@@ -38,7 +38,7 @@ type Namespace struct {
 	ID            int       `gorm:"column:id;type:serial;primaryKey" json:"id"`
 	Name          string    `gorm:"column:name;type:varchar(50);unique;not null" json:"name"`
 	Type          string    `gorm:"column:type;type:varchar(10);not null;default:solo;check:type IN ('solo','group')" json:"type"`
-	OwnerID       int       `gorm:"column:owner_id;type:integer;not null;index:idx_namespaces_owner" json:"owner_id"`
+	ContributorID int       `gorm:"column:contributor_id;type:integer;not null;index:idx_namespaces_contributor" json:"contributor_id"`
 	CPULimitMilli int       `gorm:"column:cpu_limit_milli;type:integer;not null;check:cpu_limit_milli > 0" json:"cpu_limit_milli"`
 	RAMLimitMB    int       `gorm:"column:ram_limit_mb;type:integer;not null;check:ram_limit_mb > 0" json:"ram_limit_mb"`
 	MaxServices   int       `gorm:"column:max_services;type:integer;not null;check:max_services > 0" json:"max_services"`
