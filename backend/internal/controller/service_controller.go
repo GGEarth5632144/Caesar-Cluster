@@ -48,7 +48,7 @@ func (h *ServiceController) List(c *gin.Context) {
 //
 // data flow: JSON body → bind CreateServiceRequest → เช็คชื่อตามกฎ k8s
 // → แปลงเป็น services.CreateServiceParams → ServiceManager.Create
-// (เลือก plan หรือกรอกสเปกเอง → เช็คโควตารวมของ namespace → INSERT → deploy จริง) → ตอบ service ที่สร้าง
+// (เลือก template หรือกรอกสเปกเอง → เช็คโควตารวมของ namespace → INSERT → deploy จริง) → ตอบ service ที่สร้าง
 //
 // error ที่ผู้ใช้แก้เองได้จะถูกแปลงเป็น 409 พร้อมบอกเหตุผล (โควตาไม่พอ / service เต็ม / สเปกเกินเพดาน)
 func (h *ServiceController) Create(c *gin.Context) {
@@ -69,11 +69,11 @@ func (h *ServiceController) Create(c *gin.Context) {
 	}
 
 	svc, err := h.svc.Create(c.Request.Context(), c.GetInt("userID"), nsID, services.CreateServiceParams{
-		Name:     req.Name,
-		Image:    req.Image,
-		PlanID:   req.PlanID,
-		CPUMilli: req.CPUMilli,
-		RAMMB:    req.RAMMB,
+		Name:              req.Name,
+		Image:             req.Image,
+		RequestTemplateID: req.RequestTemplateID,
+		CPUMilli:          req.CPUMilli,
+		RAMMB:             req.RAMMB,
 	})
 	if err != nil {
 		switch {
@@ -83,8 +83,8 @@ func (h *ServiceController) Create(c *gin.Context) {
 			utils.Error(c, http.StatusConflict, "SERVICE_LIMIT", err.Error())
 		case errors.Is(err, services.ErrServiceTooLarge):
 			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
-		case errors.Is(err, services.ErrPlanNotFound):
-			utils.Error(c, http.StatusBadRequest, "PLAN_NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrRequestTemplateNotFound):
+			utils.Error(c, http.StatusBadRequest, "TEMPLATE_NOT_FOUND", err.Error())
 		default:
 			log.Printf("create service error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "deploy ไม่สำเร็จ")

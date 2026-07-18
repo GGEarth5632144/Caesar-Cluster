@@ -63,27 +63,27 @@ func (h *AdminController) AddEligibleStudents(c *gin.Context) {
 	})
 }
 
-// CreatePlan สร้าง "choice" ใหม่ให้ผู้ใช้เลือก (เช่น small = 500m/512MB)
-// data flow: JSON body → bind CreatePlanRequest → INSERT plans (is_active = true) → ตอบ plan ที่สร้าง
-// → ผู้ใช้จะเห็นทันทีที่ GET /api/plans
-func (h *AdminController) CreatePlan(c *gin.Context) {
-	var req dto.CreatePlanRequest
+// CreateRequestTemplate สร้าง "choice" ใหม่ให้ผู้ใช้เลือก (เช่น small = 500m/512MB)
+// data flow: JSON body → bind CreateRequestTemplateRequest → INSERT request_templates (is_active = true)
+// → ตอบ template ที่สร้าง → ผู้ใช้จะเห็นทันทีที่ GET /api/request-templates
+func (h *AdminController) CreateRequestTemplate(c *gin.Context) {
+	var req dto.CreateRequestTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
 
-	plan := entity.Plan{
-		Name:     req.Name,
-		CPUMilli: req.CPUMilli,
-		RAMMB:    req.RAMMB,
-		IsActive: true,
+	tmpl := entity.RequestTemplate{
+		Name:          req.Name,
+		CPULimitMilli: req.CPULimitMilli,
+		RAMLimitMB:    req.RAMLimitMB,
+		IsActive:      true,
 	}
-	if err := h.db.WithContext(c.Request.Context()).Create(&plan).Error; err != nil {
-		utils.Error(c, http.StatusConflict, "PLAN_EXISTS", "ชื่อ plan นี้มีอยู่แล้ว")
+	if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
+		utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้ว")
 		return
 	}
-	utils.OK(c, http.StatusCreated, plan)
+	utils.OK(c, http.StatusCreated, tmpl)
 }
 
 // ListNamespaces คืน namespace ทั้งหมดในระบบ พร้อมยอดใช้งานและจำนวนสมาชิก (หน้าภาพรวมของ admin)

@@ -40,9 +40,10 @@ func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName stri
 	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeleteNamespace)")
 }
 
-// DeployService (ยังไม่ทำ) — จะสร้าง Deployment (+ Service ถ้าต้อง expose) ใน namespace ที่กำหนด
+// DeployService (ยังไม่ทำ) — จะสร้าง Deployment + Service ชนิด NodePort ใน namespace ที่กำหนด
 // data flow (แผน): รับ entity.Service จาก ServiceManager.Create → ตั้ง resources.requests/limits
-// จาก CPUMilli ("300m") และ RAMMB ("2048Mi") → apply เข้า cluster
+// จาก CPUMilli ("300m") และ RAMMB ("2048Mi") → apply Deployment + Service(type=NodePort) เข้า cluster
+// → อ่าน nodePort ที่ k8s สุ่มจ่ายให้ (หรือระบุเองถ้าอยากคุมเลข) → เซ็ตกลับที่ svc.NodePort ก่อน return
 func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
 	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeployService)")
 }

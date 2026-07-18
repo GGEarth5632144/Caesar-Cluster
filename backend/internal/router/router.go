@@ -21,10 +21,10 @@ import (
 // โครง route:
 //
 //	public       : GET /health, POST /api/register, POST /api/login
-//	ต้อง login   : GET /api/me, GET /api/plans,
+//	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
 //	               GET|POST /api/services, DELETE /api/services/:id
-//	admin only   : POST /api/admin/eligible-students, POST /api/admin/plans,
+//	admin only   : POST /api/admin/eligible-students, POST /api/admin/request-templates,
 //	               GET /api/admin/namespaces, PATCH /api/admin/namespaces/:id/quota
 //
 // ลำดับที่ผู้ใช้ต้องเดิน: register → login → สร้าง/เข้าร่วม namespace → deploy service
@@ -38,7 +38,7 @@ func Setup(
 	authCtl := controller.NewAuthController(db, cfg.JWTSecret)
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
 	svcCtl := controller.NewServiceController(db, svcMgr)
-	planCtl := controller.NewPlanController(db)
+	tmplCtl := controller.NewRequestTemplateController(db)
 	adminCtl := controller.NewAdminController(db, nsMgr)
 
 	r := gin.Default()
@@ -70,7 +70,7 @@ func Setup(
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret))
 		{
 			protected.GET("/me", authCtl.Me)
-			protected.GET("/plans", planCtl.List)
+			protected.GET("/request-templates", tmplCtl.List)
 
 			protected.POST("/namespaces", nsCtl.Create)
 			protected.POST("/namespaces/join", nsCtl.Join)
@@ -84,7 +84,7 @@ func Setup(
 		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret), middlewares.AdminOnly())
 		{
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
-			admin.POST("/plans", adminCtl.CreatePlan)
+			admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
 			admin.GET("/namespaces", adminCtl.ListNamespaces)
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
 		}

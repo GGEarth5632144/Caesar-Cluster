@@ -33,7 +33,7 @@ cd backend
 cp .env.example .env
 docker compose up -d      # postgres (port 5433)
 
-go run ./cmd/seed         # ** จำเป็น ** สร้าง roles + admin + plans ตั้งต้น
+go run ./cmd/seed         # ** จำเป็น ** สร้าง roles + admin + request_templates ตั้งต้น
 go run ./cmd/server       # http://localhost:8080
 ```
 
@@ -103,12 +103,12 @@ eligible_students (= "match")   รายชื่อ นศ. ที่มีส
         │
         │ namespace_id  (1 คน = 1 space, NULL ได้ถ้ายังไม่มี)
         ▼
-   namespaces  ◄── owner_id ── users      << หน่วยที่ถือโควตา
+   namespaces  ◄── contributor_id ── users      << หน่วยที่ถือโควตา
         │            type = solo | group
         │            cpu_limit_milli / ram_limit_mb / max_services
         ▼
-    services ──────► plans         ("choices" ที่ admin สร้างไว้ให้เลือก)
-      cpu_milli / ram_mb = snapshot ที่ก๊อปมาจาก plan ตอนสร้าง
+    services ──────► request_templates  ("choices" ที่ admin สร้างไว้ให้เลือก)
+      cpu_milli / ram_mb = snapshot ที่ก๊อปมาจาก template ตอนสร้าง
 ```
 
 **สิ่งที่จงใจ *ไม่* เก็บใน DB:**
@@ -125,7 +125,7 @@ eligible_students (= "match")   รายชื่อ นศ. ที่มีส
 ```
 cmd/
   server/         entry point ของ API server
-  seed/           ยัดข้อมูลตั้งต้น (roles, admin, plans) — idempotent
+  seed/           ยัดข้อมูลตั้งต้น (roles, admin, request_templates) — idempotent
 internal/
   config/         อ่าน env + เปิด DB + AutoMigrate + FK
   entity/         struct ที่ map กับตาราง (schema มาจาก tag ที่นี่ ไม่มีไฟล์ .sql แล้ว)
@@ -175,12 +175,12 @@ internal/
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/api/me` | ดู `namespace_id` ว่ามี space แล้วยัง |
-| GET | `/api/plans` | choices ที่ admin เปิดไว้ |
+| GET | `/api/request-templates` | choices ที่ admin เปิดไว้ |
 | POST | `/api/namespaces` | สร้าง space (`type`: `solo` \| `group`) |
 | POST | `/api/namespaces/join` | เข้าร่วม space แบบ `group` |
 | GET | `/api/namespaces/me` | space ของฉัน + ยอดใช้งาน + จำนวนสมาชิก |
 | GET | `/api/services` | service ทั้งหมดใน space |
-| POST | `/api/services` | deploy (เลือก `plan_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
+| POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
 
 ### Admin เท่านั้น
@@ -188,7 +188,7 @@ internal/
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | POST | `/api/admin/eligible-students` | import รายชื่อ นศ. (ทีละหลายคนได้) |
-| POST | `/api/admin/plans` | สร้าง choice ใหม่ |
+| POST | `/api/admin/request-templates` | สร้าง choice ใหม่ |
 | GET | `/api/admin/namespaces` | ภาพรวมทุก space + ยอดใช้งาน |
 | PATCH | `/api/admin/namespaces/:id/quota` | ปรับโควตา (group ≤ 8 core) |
 
@@ -220,7 +220,8 @@ admin import รายชื่อ → user register → login
    พอต่อ k8s จริง = user รันอะไรก็ได้บนเครื่อง (เช่น ขุดเหรียญ) **ต้องมี allowlist หรือบังคับ registry ของเรา**
 2. 🔴 **Pod security** — บังคับ `runAsNonRoot`, ห้าม privileged, drop capabilities
 3. 🔴 **เขียน `KubernetesProvisioner` จริง** — Namespace + ResourceQuota + LimitRange + NetworkPolicy (default-deny กัน traffic ข้าม namespace) + Deployment
-4. 🟠 **ผู้ใช้เข้าถึง service ตัวเองยังไง** — ยังไม่มี port / Service / Ingress ในโมเดลเลย
+4. 🟠 **ผู้ใช้เข้าถึง service ตัวเองยังไง** — schema มี `services.node_port` แล้ว (เลือกทาง NodePort)
+   แต่ `KubernetesProvisioner.DeployService` ยังไม่ implement จริง เลยยังไม่มีใครเซ็ตค่านี้ (ดูข้อ 3)
 5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop
 6. 🟠 **persistent storage** (volume) — ยังไม่มี
 7. 🟡 ลบ namespace / ออกจากกลุ่ม

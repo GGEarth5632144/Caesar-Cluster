@@ -21,9 +21,9 @@ const adminPassword = "changeme123"
 // ทุกขั้น idempotent — รันซ้ำได้ไม่พัง ไม่เกิดข้อมูลซ้ำ
 //
 // data flow: config.Load → ConnectDB (สร้าง schema ให้ก่อน) → เขียน 3 อย่างลง DB:
-//  1. roles (user, admin)         — Register ต้องใช้ role "user" ไม่งั้นสมัครไม่ได้
-//  2. admin คนแรก                 — ต้องมีแถวใน eligible_students ก่อน เพราะติด FK
-//  3. plans ตั้งต้น (choices)      — ให้ผู้ใช้มีตัวเลือกใช้ตั้งแต่แรก admin เพิ่มทีหลังได้
+//  1. roles (user, admin)                — Register ต้องใช้ role "user" ไม่งั้นสมัครไม่ได้
+//  2. admin คนแรก                        — ต้องมีแถวใน eligible_students ก่อน เพราะติด FK
+//  3. request_templates ตั้งต้น (choices) — ให้ผู้ใช้มีตัวเลือกใช้ตั้งแต่แรก admin เพิ่มทีหลังได้
 //
 // รัน: go run ./cmd/seed
 func main() {
@@ -32,7 +32,7 @@ func main() {
 
 	seedRoles(db)
 	seedAdmin(db)
-	seedPlans(db)
+	seedRequestTemplates(db)
 
 	log.Println("seed เสร็จแล้ว ✓")
 }
@@ -97,19 +97,19 @@ func seedAdmin(db *gorm.DB) {
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
 }
 
-// seedPlans ใส่ choices ตั้งต้นให้ผู้ใช้เลือกตอน deploy
+// seedRequestTemplates ใส่ choices ตั้งต้นให้ผู้ใช้เลือกตอนยื่น request หรือ deploy service
 //
-// data flow: INSERT plans แบบ ON CONFLICT DO NOTHING (ชนกันที่ name) → admin เพิ่ม/แก้เองทีหลังได้
+// data flow: INSERT request_templates แบบ ON CONFLICT DO NOTHING (ชนกันที่ name) → admin เพิ่ม/แก้เองทีหลังได้
 // สเปกสูงสุดที่ตั้งได้คือ 3000m/2048MB ซึ่งเท่ากับเพดานของ service 1 ตัวพอดี (300% / 2 GB)
-func seedPlans(db *gorm.DB) {
-	plans := []entity.Plan{
-		{Name: "small", CPUMilli: 500, RAMMB: 512, IsActive: true},    // 50%
-		{Name: "medium", CPUMilli: 1000, RAMMB: 1024, IsActive: true}, // 100%
-		{Name: "large", CPUMilli: 2000, RAMMB: 2048, IsActive: true},  // 200%
-		{Name: "max", CPUMilli: 3000, RAMMB: 2048, IsActive: true},    // 300% = เพดานต่อ service
+func seedRequestTemplates(db *gorm.DB) {
+	templates := []entity.RequestTemplate{
+		{Name: "small", CPULimitMilli: 500, RAMLimitMB: 512, IsActive: true},    // 50%
+		{Name: "medium", CPULimitMilli: 1000, RAMLimitMB: 1024, IsActive: true}, // 100%
+		{Name: "large", CPULimitMilli: 2000, RAMLimitMB: 2048, IsActive: true},  // 200%
+		{Name: "max", CPULimitMilli: 3000, RAMLimitMB: 2048, IsActive: true},    // 300% = เพดานต่อ service
 	}
-	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&plans).Error; err != nil {
-		log.Fatalf("seed plans ไม่สำเร็จ: %v", err)
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&templates).Error; err != nil {
+		log.Fatalf("seed request templates ไม่สำเร็จ: %v", err)
 	}
-	log.Println("plans ตั้งต้นพร้อมแล้ว (small, medium, large, max) ✓")
+	log.Println("request templates ตั้งต้นพร้อมแล้ว (small, medium, large, max) ✓")
 }

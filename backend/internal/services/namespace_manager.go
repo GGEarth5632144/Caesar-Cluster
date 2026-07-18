@@ -59,7 +59,7 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name, nsType 
 	ns := &entity.Namespace{
 		Name:          name,
 		Type:          nsType,
-		OwnerID:       userID,
+		ContributorID: userID,
 		CPULimitMilli: entity.DefaultCPULimitMilli,
 		RAMLimitMB:    entity.DefaultRAMLimitMB,
 		MaxServices:   entity.DefaultMaxServices,

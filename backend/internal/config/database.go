@@ -18,7 +18,8 @@ import (
 // ถ้าขั้นไหนพังจะ log.Fatal ทันที (fail fast) — server ไม่ควรขึ้นถ้า schema ยังไม่พร้อม
 //
 // ลำดับของ AutoMigrate สำคัญ: roles/eligible_students ต้องมาก่อน users (users อ้างถึงทั้งคู่)
-// และ namespaces ต้องมาก่อน services
+// namespaces/request_templates ต้องมาก่อน services (services อ้างทั้งคู่)
+// ipc_monitors ต้องมาก่อน user_containers (user_containers อ้าง ipc_id)
 func ConnectDB(dbURL string) *gorm.DB {
 	db, err := gorm.Open(postgres.Open(dbURL), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
@@ -33,8 +34,14 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.EligibleStudent{},
 		&entity.User{},
 		&entity.Namespace{},
-		&entity.Plan{},
+		&entity.RequestTemplate{},
 		&entity.Service{},
+		&entity.IPCMonitor{},
+		&entity.UserContainer{},
+		&entity.Request{},
+		&entity.UserAlert{},
+		&entity.SystemAlert{},
+		&entity.AuditLog{},
 	); err != nil {
 		log.Fatalf("automigrate failed: %v", err)
 	}
@@ -56,7 +63,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 // FK ที่สำคัญที่สุดคือ users.student_id → eligible_students.student_id:
 // มันบังคับกฎ "สมัครได้เฉพาะ นศ. ที่อยู่ในรายชื่อ" ที่ระดับ DB ต่อให้โค้ดลืมเช็คก็ยัง insert ไม่ผ่าน
 //
-// users.namespace_id กับ namespaces.owner_id อ้างถึงกันไปมา (วงกลม) — ไม่เป็นไรใน Postgres
+// users.namespace_id กับ namespaces.contributor_id อ้างถึงกันไปมา (วงกลม) — ไม่เป็นไรใน Postgres
 // เพราะตอนใช้จริงเราสร้าง user ก่อน (namespace_id = NULL) แล้วค่อยสร้าง namespace แล้วค่อยอัปเดตกลับ
 func addForeignKeys(db *gorm.DB) error {
 	fks := []struct {
@@ -80,9 +87,9 @@ func addForeignKeys(db *gorm.DB) error {
 			      FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE SET NULL`,
 		},
 		{
-			name: "fk_namespaces_owner_id",
-			ddl: `ALTER TABLE namespaces ADD CONSTRAINT fk_namespaces_owner_id
-			      FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE`,
+			name: "fk_namespaces_contributor_id",
+			ddl: `ALTER TABLE namespaces ADD CONSTRAINT fk_namespaces_contributor_id
+			      FOREIGN KEY (contributor_id) REFERENCES users(id) ON DELETE CASCADE`,
 		},
 		{
 			// ลบ namespace → service ข้างในหายตามทั้งหมด (โควตาถูกคืนไปในตัว)
@@ -96,11 +103,35 @@ func addForeignKeys(db *gorm.DB) error {
 			      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE`,
 		},
 		{
-			// plan ถูกลบ → service ยังอยู่ได้ (มี snapshot cpu/ram ของตัวเองอยู่แล้ว) แค่ plan_id เป็น NULL
-			name: "fk_services_plan_id",
-			ddl: `ALTER TABLE services ADD CONSTRAINT fk_services_plan_id
-			      FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE SET NULL`,
+			// template ถูกลบ → service ยังอยู่ได้ (มี snapshot cpu/ram ของตัวเองอยู่แล้ว) แค่ request_template_id เป็น NULL
+			name: "fk_services_request_template_id",
+			ddl: `ALTER TABLE services ADD CONSTRAINT fk_services_request_template_id
+			      FOREIGN KEY (request_template_id) REFERENCES request_templates(id) ON DELETE SET NULL`,
 		},
+		{
+			// ลบ namespace → แถว monitoring ของ container ที่เคยอยู่ในนั้นหายตามไปด้วย
+			name: "fk_user_containers_namespace_id",
+			ddl: `ALTER TABLE user_containers ADD CONSTRAINT fk_user_containers_namespace_id
+			      FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE`,
+		},
+		{
+			// ลบเครื่อง IPC ออกจากระบบ → แถว monitoring ของ container ที่เคยรันอยู่บนเครื่องนั้นหายตามไปด้วย
+			name: "fk_user_containers_ipc_id",
+			ddl: `ALTER TABLE user_containers ADD CONSTRAINT fk_user_containers_ipc_id
+			      FOREIGN KEY (ipc_id) REFERENCES ipc_monitors(id) ON DELETE CASCADE`,
+		},
+		{
+			name: "fk_user_alerts_user_id",
+			ddl: `ALTER TABLE user_alerts ADD CONSTRAINT fk_user_alerts_user_id
+			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		{
+			name: "fk_requests_user_id",
+			ddl: `ALTER TABLE requests ADD CONSTRAINT fk_requests_user_id
+			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		// audit_logs และ system_alerts ไม่มี FK ตั้งใจ — เก็บเป็น snapshot ล้วนๆ (ดูเหตุผลใน audit_log.go)
+		// request_templates ไม่มี FK ไป users — เป็น choice กลาง ไม่ผูกกับ user คนใดคนหนึ่ง (ดูเหตุผลใน request_template.go)
 	}
 
 	for _, fk := range fks {
