@@ -1,4 +1,3 @@
-import type { LucideIcon } from "lucide-react";
 import {
   Home,
   User,
@@ -11,20 +10,23 @@ import {
 
 export interface NavItem {
   label: string;
-  icon: LucideIcon;
-  badge?: number;
-  /** true = มีหน้าจริงให้กดไปแล้ว, false = ยังเป็นแค่ placeholder ในเมนู */
-  active?: boolean;
+  icon: any;
+  path: string; // <-- ต้องมีตัวนี้
+  badge?: number; // <-- เพิ่มตัวเลือกสำหรับ badge
 }
 
 export const userNavItems: NavItem[] = [
-  { label: "General Dashboard", icon: Home, active: true },
-  { label: "Profile", icon: User },
-  { label: "Settings", icon: Settings },
-  { label: "Personal Dashboard", icon: LayoutDashboard },
-  { label: "My VMs", icon: Box },
-  { label: "Alerts", icon: Bell, badge: 3 },
-  { label: "Request Resources", icon: FileText },
+  { label: "General Dashboard", icon: Home, path: "/" },
+  { label: "Profile", icon: User, path: "/profile" },
+  { label: "Settings", icon: Settings, path: "/settings" },
+  {
+    label: "Personal Dashboard",
+    icon: LayoutDashboard,
+    path: "/personal-dashboard",
+  },
+  { label: "My VMs", icon: Box, path: "/my-vms" },
+  { label: "Alerts", icon: Bell, badge: 3, path: "/alerts" },
+  { label: "Request Resources", icon: FileText, path: "/request-resources" },
 ];
 
 export default userNavItems;

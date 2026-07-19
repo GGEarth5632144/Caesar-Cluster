@@ -1,20 +1,22 @@
-import { useNavigate } from "react-router-dom";
+import { Outlet, useNavigate, useLocation } from "react-router-dom";
 
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
 import { useAuthStore } from "@/store/authStore";
 import userNavItems from "@/pages/User_Navigate";
 import adminNavItems from "@/pages/Admin_Navigate";
-import UserDashboard from "@/pages/UserDashboard";
-import AdminDashboard from "@/pages/AdminDashboard";
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
+  const location = useLocation(); 
+  
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin"; 
   const navItems = isAdmin ? adminNavItems : userNavItems;
+  const currentItem = navItems.find((item) => item.path === location.pathname);
+  const pageTitle = currentItem ? currentItem.label : "General Dashboard";
 
   const handleLogout = () => {
     logout();
@@ -31,10 +33,10 @@ export default function DashboardLayout() {
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Topbar title="General Dashboard" userName={user?.real_name ?? "User"} />
+        <Topbar title={pageTitle} userName={user?.real_name ?? "User"} />
 
         <main className="flex-1 overflow-auto p-6">
-          {isAdmin ? <AdminDashboard /> : <UserDashboard />}
+          <Outlet />
         </main>
       </div>
     </div>

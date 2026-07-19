@@ -1,10 +1,15 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Search, LogOut } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import type { NavItem } from "@/pages/User_Navigate";
+export interface NavItem {
+  label: string;
+  icon: any;
+  path: string; // <-- ต้องมีตัวนี้
+  badge?: number; // <-- เพิ่มตัวเลือกสำหรับ badge
+}
 
 interface SidebarProps {
   navItems: NavItem[];
@@ -20,6 +25,9 @@ export default function Sidebar({
   onLogout,
 }: SidebarProps) {
   const initials = userName.trim().slice(0, 2).toUpperCase() || "U";
+  
+  // เพิ่ม useLocation เพื่อดึง URL ปัจจุบันมาเช็คสถานะ Active
+  const location = useLocation();
 
   return (
     <aside className="flex h-screen w-64 shrink-0 flex-col bg-[#BB6653] text-white">
@@ -46,15 +54,21 @@ export default function Sidebar({
       <nav className="flex-1 space-y-1 px-3 py-2">
         {navItems.map((item) => {
           const Icon = item.icon;
+          
+          // เช็คว่า URL ปัจจุบันตรงกับ path ของเมนูนี้หรือไม่
+          const isActive = location.pathname === item.path;
+          
+          // ลบ cursor-not-allowed ออก และเพิ่ม hover effect เข้าไปแทน
           const itemClassName = cn(
             "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors",
-            item.active
+            isActive
               ? "bg-[#F08B51] text-white"
-              : "cursor-not-allowed text-white/85"
+              : "text-white/85 hover:bg-white/10 hover:text-white" 
           );
 
-          const content = (
-            <>
+          return (
+            // เปลี่ยนมาใช้ Link ทั้งหมด และดึง item.path มาใช้
+            <Link key={item.label} to={item.path || "/"} className={itemClassName}>
               <Icon size={16} className="shrink-0" />
               <span className="flex-1 text-sm">{item.label}</span>
               {item.badge ? (
@@ -62,22 +76,7 @@ export default function Sidebar({
                   {item.badge}
                 </Badge>
               ) : null}
-            </>
-          );
-
-          if (item.active) {
-            return (
-              <Link key={item.label} to="/" className={itemClassName}>
-                {content}
-              </Link>
-            );
-          }
-
-          // ยังไม่มีหน้าจริงรองรับ path พวกนี้ เลยปิดการกดไว้ก่อน
-          return (
-            <button key={item.label} type="button" disabled className={itemClassName}>
-              {content}
-            </button>
+            </Link>
           );
         })}
       </nav>
@@ -95,7 +94,7 @@ export default function Sidebar({
         <button
           type="button"
           onClick={onLogout}
-          className="text-white/80 hover:text-white"
+          className="text-white/80 hover:text-white transition-colors"
           aria-label="ออกจากระบบ"
         >
           <LogOut size={16} />

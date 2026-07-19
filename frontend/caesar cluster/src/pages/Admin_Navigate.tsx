@@ -1,4 +1,5 @@
 import {
+  Home,
   User,
   Server,
   Users,
@@ -8,16 +9,21 @@ import {
   ScrollText,
 } from "lucide-react";
 
-import type { NavItem } from "./User_Navigate";
+export interface NavItem {
+  label: string;
+  icon: any;
+  path: string; // <-- ต้องมีตัวนี้
+}
 
 export const adminNavItems: NavItem[] = [
-  { label: "Profile", icon: User },
-  { label: "VM Management", icon: Server },
-  { label: "User Management", icon: Users },
-  { label: "Make Option", icon: Sliders },
-  { label: "Alert", icon: Bell },
-  { label: "Request", icon: FileText },
-  { label: "Audit Log", icon: ScrollText },
+  { label: "General Dashboard", icon: Home, path: "/"},
+  { label: "Profile", icon: User, path: "/profile" },
+  { label: "VM Management", icon: Server, path: "/vm-management" },
+  { label: "User Management", icon: Users, path: "/user-management" },
+  { label: "Make Option", icon: Sliders, path: "/make-option" },
+  { label: "Alert", icon: Bell, path: "/alert" },
+  { label: "Request", icon: FileText, path: "/request" },
+  { label: "Audit Log", icon: ScrollText, path: "/audit-log" },
 ];
 
 export default adminNavItems;
