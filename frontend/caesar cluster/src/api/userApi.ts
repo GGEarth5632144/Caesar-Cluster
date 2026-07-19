@@ -19,4 +19,9 @@ export const userApi = {
     const response = await axiosClient.post<User>('/users', userData);
     return response.data;
   },
+
+  getme: async () => {
+    const response = await axiosClient.get<User>('/me');
+    return response.data;
+  }
 };
