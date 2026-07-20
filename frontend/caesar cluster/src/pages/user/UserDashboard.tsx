@@ -22,7 +22,7 @@ function NoVmState() {
   const [selected, setSelected] = useState<VmType | null>(null);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-4 py-10 text-center">
+    <div className="flex min-h-full flex-col items-center justify-center gap-3 px-4 py-10 text-center">
       <h1 className="text-5xl font-bold text-[#211a14]">Welcome to Caesar Cluster</h1>
       <p className="max-w-2xl text-lg text-[#211a14]/60">
         You don't have any virtual machines yet. Create your first VM to get a
