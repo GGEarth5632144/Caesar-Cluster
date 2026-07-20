@@ -84,7 +84,12 @@ func Setup(
 		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret), middlewares.AdminOnly())
 		{
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
-			admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
+
+            admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
+            admin.PATCH("/request-templates/:id", adminCtl.UpdateRequestTemplate)
+            admin.DELETE("/request-templates/:id", adminCtl.DeleteRequestTemplate)
+			admin.GET("/request-templates", adminCtl.ListAllRequestTemplates)
+
 			admin.GET("/namespaces", adminCtl.ListNamespaces)
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
 		}

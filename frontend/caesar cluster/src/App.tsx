@@ -8,6 +8,7 @@ import Profile from "@/pages/Profile";
 import { useAuthStore } from "@/store/authStore";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import UserDashboard from "@/pages/user/UserDashboard";
+import AdminRequest from "@/pages/admin/AdminRequest"; 
 // import VmManagement from "@/pages/VmManagement"; // หน้าอื่นๆ ของ Admin
 
 function App() {
@@ -37,6 +38,7 @@ function App() {
               <>
                 <Route index element={<AdminDashboard />} />
                 <Route path="profile" element={<Profile />} />
+                <Route path="admin-request" element={<AdminRequest />} />
               </>
             )}
           </Route>
