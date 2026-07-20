@@ -9,11 +9,7 @@ import {
   ScrollText,
 } from "lucide-react";
 
-export interface NavItem {
-  label: string;
-  icon: any;
-  path: string; // <-- ต้องมีตัวนี้
-}
+import type { NavItem } from "@/types/nav";
 
 export const adminNavItems: NavItem[] = [
   { label: "General Dashboard", icon: Home, path: "/"},

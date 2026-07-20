@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
@@ -20,10 +21,12 @@ const adminPassword = "changeme123"
 //
 // ทุกขั้น idempotent — รันซ้ำได้ไม่พัง ไม่เกิดข้อมูลซ้ำ
 //
-// data flow: config.Load → ConnectDB (สร้าง schema ให้ก่อน) → เขียน 3 อย่างลง DB:
+// data flow: config.Load → ConnectDB (สร้าง schema ให้ก่อน) → เขียน 4 อย่างลง DB:
 //  1. roles (user, admin)                — Register ต้องใช้ role "user" ไม่งั้นสมัครไม่ได้
 //  2. admin คนแรก                        — ต้องมีแถวใน eligible_students ก่อน เพราะติด FK
 //  3. request_templates ตั้งต้น (choices) — ให้ผู้ใช้มีตัวเลือกใช้ตั้งแต่แรก admin เพิ่มทีหลังได้
+//  4. eligible_students ทดสอบ (B6600001-B6600010) — ไว้ทดสอบ flow สมัครสมาชิกโดยไม่ต้องยิง
+//     POST /api/admin/eligible-students เองก่อนทุกครั้ง
 //
 // รัน: go run ./cmd/seed
 func main() {
@@ -33,6 +36,7 @@ func main() {
 	seedRoles(db)
 	seedAdmin(db)
 	seedRequestTemplates(db)
+	seedTestEligibleStudents(db)
 
 	log.Println("seed เสร็จแล้ว ✓")
 }
@@ -112,4 +116,31 @@ func seedRequestTemplates(db *gorm.DB) {
 		log.Fatalf("seed request templates ไม่สำเร็จ: %v", err)
 	}
 	log.Println("request templates ตั้งต้นพร้อมแล้ว (small, medium, large, max) ✓")
+}
+
+// seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600010 ลงตาราง eligible_students
+// ไว้ให้ทีม frontend/QA ทดสอบหน้า Register ได้เลยโดยไม่ต้องยิง POST /api/admin/eligible-students เอง
+//
+// จงใจใส่ major ไม่เหมือนกันหมด (8 คนแรกเป็น CPE, 2 คนสุดท้ายไม่ใช่)
+// เพื่อให้ทดสอบด่านที่ 2 ของ Register ได้ด้วย (เจอ student_id แต่ไม่ใช่ CPE → 403 NOT_CPE)
+// ส่วนด่านที่ 1 (หา student_id ไม่เจอเลย) ทดสอบได้จาก student_id ไหนก็ได้ที่ไม่อยู่ใน 10 ตัวนี้
+//
+// data flow: INSERT eligible_students แบบ ON CONFLICT DO NOTHING (รันซ้ำได้ ไม่พัง)
+func seedTestEligibleStudents(db *gorm.DB) {
+	rows := make([]entity.EligibleStudent, 0, 10)
+	for i := 1; i <= 8; i++ {
+		rows = append(rows, entity.EligibleStudent{
+			StudentID: fmt.Sprintf("B66%05d", i),
+			Major:     entity.MajorCPE,
+		})
+	}
+	rows = append(rows,
+		entity.EligibleStudent{StudentID: "B6600009", Major: "Electrical Engineering"},
+		entity.EligibleStudent{StudentID: "B6600010", Major: "Mechanical Engineering"},
+	)
+
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
+		log.Fatalf("seed test eligible students ไม่สำเร็จ: %v", err)
+	}
+	log.Println("eligible_students ทดสอบพร้อมแล้ว (B6600001-B6600008 = CPE, B6600009-B6600010 = ไม่ใช่ CPE) ✓")
 }

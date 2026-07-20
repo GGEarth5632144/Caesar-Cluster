@@ -27,12 +27,14 @@ func NewAuthController(db *gorm.DB, jwtSecret string) *AuthController {
 	return &AuthController{db: db, jwtSecret: jwtSecret}
 }
 
-// Register สมัครผู้ใช้ใหม่ — เปิดให้เฉพาะ นศ. ที่อยู่ในรายชื่อที่ admin import ไว้เท่านั้น
+// Register สมัครผู้ใช้ใหม่ — เปิดให้เฉพาะ นศ. สาขา CPE ที่มีอยู่ในฐานข้อมูลจริงเท่านั้น
 //
 // data flow:
 //   - JSON body → bind เป็น RegisterRequest
-//   - เช็ค student_id กับตาราง eligible_students (ตาราง "match") → ไม่มีในรายชื่อ → 403 NOT_ELIGIBLE
-//   - หา role "user" จากตาราง roles เพื่อเอา role_id
+//   - ด่าน 1: เช็คว่ามี student_id นี้อยู่ในตาราง eligible_students ไหม (คือฐานข้อมูล นศ. ที่รู้จัก
+//     ไม่ใช่แค่ CPE — ทุกสาขา) → ไม่เจอ → 403 STUDENT_NOT_FOUND
+//   - ด่าน 2: เจอแล้วเช็คต่อว่า major ของคนนั้นตรงกับ entity.MajorCPE ไหม → ไม่ตรง → 403 NOT_CPE
+//   - ผ่านทั้ง 2 ด่านแล้วค่อยหา role "user" จากตาราง roles เพื่อเอา role_id
 //   - hash รหัสผ่านด้วย bcrypt → INSERT users (namespace_id ยังเป็น NULL — ไปสร้าง space ทีหลัง)
 //   - ตอบข้อมูล user กลับ (ไม่ส่ง password)
 //
@@ -47,16 +49,23 @@ func (h *AuthController) Register(c *gin.Context) {
 
 	db := h.db.WithContext(c.Request.Context())
 
-	// ด่านแรก: ต้องเป็น นศ. ที่อยู่ในรายชื่อที่อนุญาตไว้จริงๆ
+	// ด่านที่ 1: ต้องเป็น student_id ที่มีอยู่ในฐานข้อมูลจริง (ทุกสาขา)
 	var eligible entity.EligibleStudent
 	if err := db.Where("student_id = ?", req.StudentID).First(&eligible).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			utils.Error(c, http.StatusForbidden, "NOT_ELIGIBLE",
-				"รหัสนักศึกษานี้ไม่อยู่ในรายชื่อที่มีสิทธิ์ใช้งานระบบ")
+			utils.Error(c, http.StatusForbidden, "STUDENT_NOT_FOUND",
+				"ไม่พบรหัสนักศึกษานี้ในฐานข้อมูล")
 			return
 		}
 		log.Printf("register: query eligible error: %v", err)
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+		return
+	}
+
+	// ด่านที่ 2: เจอ student_id แล้ว แต่สมัครได้เฉพาะสาขา CPE เท่านั้น
+	if eligible.Major != entity.MajorCPE {
+		utils.Error(c, http.StatusForbidden, "NOT_CPE",
+			"ระบบนี้เปิดให้เฉพาะนักศึกษาสาขาวิศวกรรมคอมพิวเตอร์ (CPE) เท่านั้น")
 		return
 	}
 

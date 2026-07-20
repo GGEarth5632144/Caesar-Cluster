@@ -3,17 +3,11 @@ import {
   User,
   Settings,
   LayoutDashboard,
-  Box,
   Bell,
   FileText,
 } from "lucide-react";
 
-export interface NavItem {
-  label: string;
-  icon: any;
-  path: string; // <-- ต้องมีตัวนี้
-  badge?: number; // <-- เพิ่มตัวเลือกสำหรับ badge
-}
+import type { NavItem } from "@/types/nav";
 
 export const userNavItems: NavItem[] = [
   { label: "General Dashboard", icon: Home, path: "/" },
@@ -23,10 +17,15 @@ export const userNavItems: NavItem[] = [
     label: "Personal Dashboard",
     icon: LayoutDashboard,
     path: "/personal-dashboard",
+    requiresVm: true,
   },
-  { label: "My VMs", icon: Box, path: "/my-vms" },
-  { label: "Alerts", icon: Bell, badge: 3, path: "/alerts" },
-  { label: "Request Resources", icon: FileText, path: "/request-resources" },
+  { label: "Alerts", icon: Bell, badge: 3, path: "/alerts", requiresVm: true },
+  {
+    label: "Request Resources",
+    icon: FileText,
+    path: "/request-resources",
+    requiresVm: true,
+  },
 ];
 
 export default userNavItems;
