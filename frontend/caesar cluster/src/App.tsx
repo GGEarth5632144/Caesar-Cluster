@@ -8,8 +8,8 @@ import Profile from "@/pages/Profile";
 
 // นำเข้า State และหน้า Dashboard ของแต่ละ Role
 import { useAuthStore } from "@/store/authStore";
-import AdminDashboard from "@/pages/AdminDashboard";
-import UserDashboard from "@/pages/UserDashboard";
+import AdminDashboard from "@/pages/admin/AdminDashboard";
+import UserDashboard from "@/pages/user/UserDashboard";
 // import VmManagement from "@/pages/VmManagement"; // หน้าอื่นๆ ของ Admin
 
 function App() {
