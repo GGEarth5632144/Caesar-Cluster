@@ -27,13 +27,18 @@ export default function Sidebar({
   return (
     <aside className="flex h-screen w-80 shrink-0 flex-col bg-[#BB6653] text-white">
       <div className="flex items-center gap-3 border-b border-white/15 px-6 py-6">
-        <div className="flex size-11 items-center justify-center rounded-xl bg-[#FFF8E8] text-base font-bold text-[#BB6653]">
-          C
-        </div>
-        <div className="leading-tight">
-          <p className="text-base font-semibold">Caesar Cluster</p>
-          <p className="text-xs text-white/70">Cloud for CPE</p>
-        </div>
+        <Link
+          to="/"
+          className="flex items-center gap-3 border-white/15"
+        >
+          <div className="flex size-11 items-center justify-center rounded-xl bg-[#FFF8E8] text-base font-bold text-[#BB6653]">
+            C
+          </div>
+          <div className="leading-tight">
+            <p className="text-base font-semibold">Caesar Cluster</p>
+            <p className="text-xs text-white/70">Cloud for CPE</p>
+          </div>
+        </Link>
       </div>
 
       <div className="px-5 py-4">
@@ -58,12 +63,16 @@ export default function Sidebar({
             "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors",
             isActive
               ? "bg-[#F08B51] text-white"
-              : "text-white/85 hover:bg-white/10 hover:text-white"
+              : "text-white/85 hover:bg-white/10 hover:text-white",
           );
 
           return (
             // เปลี่ยนมาใช้ Link ทั้งหมด และดึง item.path มาใช้
-            <Link key={item.label} to={item.path || "/"} className={itemClassName}>
+            <Link
+              key={item.label}
+              to={item.path || "/"}
+              className={itemClassName}
+            >
               <Icon size={20} className="shrink-0" />
               <span className="flex-1 text-base">{item.label}</span>
               {item.badge ? (

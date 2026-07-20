@@ -1,5 +1,5 @@
 import { Bell, Search } from "lucide-react";
-
+import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 
@@ -24,18 +24,20 @@ export default function Topbar({ title, userName }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-5">
-        <button
-          type="button"
-          className="text-white/90 hover:text-white"
+        <Link 
+          to="/alert" 
+          className="cursor-pointer text-white/90 hover:text-white transition-colors"
           aria-label="การแจ้งเตือน"
         >
           <Bell size={22} />
-        </button>
-        <Avatar>
-          <AvatarFallback className="bg-[#F08B51] text-white">
-            {initials}
-          </AvatarFallback>
-        </Avatar>
+        </Link>
+        <Link to="/profile">
+          <Avatar>
+            <AvatarFallback className="bg-[#F08B51] text-white">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+        </Link>
       </div>
     </header>
   );
