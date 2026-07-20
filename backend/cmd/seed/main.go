@@ -15,6 +15,9 @@ import (
 const adminStudentID = "admin"
 const adminPassword = "changeme123"
 
+const StudentID = "B6618452"
+const userPassword = "Banana1234"
+
 // seed ยัดข้อมูลตั้งต้นที่ระบบต้องมีถึงจะทำงานได้ แยกจาก AutoMigrate โดยตั้งใจ
 // (schema เกิดตอน server start เสมอ ส่วน seed data รันเองเมื่อต้องการ)
 //
@@ -32,6 +35,7 @@ func main() {
 
 	seedRoles(db)
 	seedAdmin(db)
+	seeduser(db)
 	seedRequestTemplates(db)
 
 	log.Println("seed เสร็จแล้ว ✓")
@@ -77,7 +81,7 @@ func seedAdmin(db *gorm.DB) {
 		log.Fatalf("seed eligible admin ไม่สำเร็จ: %v", err)
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	hashadmin, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("hash ไม่สำเร็จ: %v", err)
 	}
@@ -87,7 +91,7 @@ func seedAdmin(db *gorm.DB) {
 		RoleID:    adminRole.ID,
 		RealName:  "System Admin",
 		NickName:  "admin",
-		Password:  string(hash),
+		Password:  string(hashadmin),
 	}
 	if err := db.Create(&admin).Error; err != nil {
 		log.Fatalf("seed admin ไม่สำเร็จ: %v", err)
@@ -95,8 +99,45 @@ func seedAdmin(db *gorm.DB) {
 
 	log.Printf("สร้าง admin เริ่มต้นแล้ว — student_id=%s password=%s", adminStudentID, adminPassword)
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
+
 }
 
+func seeduser(db *gorm.DB) {
+	var userRole entity.Role
+	if err := db.Where("name = ?", entity.RoleUser).First(&userRole).Error; err != nil {
+		log.Fatalf("หา role user ไม่เจอ: %v", err)
+	}
+
+	var count int64
+	db.Model(&entity.User{}).Where("role_id = ?", userRole.ID).Count(&count)
+	if count > 0 {
+		log.Println("มี user อยู่แล้ว ข้าม seed user")
+		return
+	}
+
+	eligible := entity.EligibleStudent{StudentID: StudentID, Major: "CPE"}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible).Error; err != nil {
+		log.Fatalf("seed eligible user ไม่สำเร็จ: %v", err)
+	}
+
+	hashuser, err := bcrypt.GenerateFromPassword([]byte(userPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("hash ไม่สำเร็จ: %v", err)
+	}
+	user := entity.User{
+		StudentID: StudentID,
+		RoleID:    userRole.ID,
+		RealName:  "Nattanant",
+		NickName:  "Earth",
+		Password:  string(hashuser),
+	}
+	if err := db.Create(&user).Error; err != nil {
+		log.Fatalf("seed user ไม่สำเร็จ: %v", err)
+	}
+
+	log.Printf("สร้าง user เริ่มต้นแล้ว — student_id=%s password=%s", StudentID, userPassword)
+	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
+}
 // seedRequestTemplates ใส่ choices ตั้งต้นให้ผู้ใช้เลือกตอนยื่น request หรือ deploy service
 //
 // data flow: INSERT request_templates แบบ ON CONFLICT DO NOTHING (ชนกันที่ name) → admin เพิ่ม/แก้เองทีหลังได้
