@@ -46,7 +46,7 @@ export default function Sidebar({
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1.5 px-4 py-2">
+      <nav className="flex-1 overflow-y-auto space-y-1.5 px-4 py-2">
         {navItems.map((item) => {
           const Icon = item.icon;
 
@@ -76,7 +76,7 @@ export default function Sidebar({
         })}
       </nav>
 
-      <div className="flex items-center gap-3 border-t border-white/15 px-5 py-5">
+      <div className="mt-auto shrink-0 flex items-center gap-3 border-t border-white/15 px-5 py-5">
         <Avatar>
           <AvatarFallback className="bg-[#F08B51] text-white">
             {initials}

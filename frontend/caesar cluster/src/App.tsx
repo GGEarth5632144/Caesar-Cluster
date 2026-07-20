@@ -5,8 +5,6 @@ import Register from "@/pages/Register";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import DashboardLayout from "@/layouts/DashboardLayout";
 import Profile from "@/pages/Profile";
-
-// นำเข้า State และหน้า Dashboard ของแต่ละ Role
 import { useAuthStore } from "@/store/authStore";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import UserDashboard from "@/pages/user/UserDashboard";
@@ -15,7 +13,7 @@ import UserDashboard from "@/pages/user/UserDashboard";
 function App() {
   // ดึงข้อมูล user จาก Zustand
   const user = useAuthStore((state) => state.user);
-  
+
   // สร้างเงื่อนไข Role (1 = User, 2 = Admin)
   const isUser = String(user?.role) === "user";
   const isAdmin = String(user?.role) === "admin";
@@ -24,19 +22,16 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />       
-        
+        <Route path="/register" element={<Register />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<DashboardLayout />}>
-            
             {/* ---------------- ROUTE สำหรับ USER (Role 1) ---------------- */}
             {isUser && (
               <>
                 <Route index element={<UserDashboard />} />
-                <Route path="profile" element={<Profile />} /> 
+                <Route path="profile" element={<Profile />} />
               </>
             )}
-
             {/* ---------------- ROUTE สำหรับ ADMIN (Role 2) ---------------- */}
             {isAdmin && (
               <>
@@ -44,8 +39,7 @@ function App() {
                 <Route path="profile" element={<Profile />} />
               </>
             )}
-            
-          </Route>         
+          </Route>
         </Route>
       </Routes>
     </BrowserRouter>
