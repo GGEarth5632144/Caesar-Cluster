@@ -67,23 +67,28 @@ func (h *AdminController) AddEligibleStudents(c *gin.Context) {
 // data flow: JSON body → bind CreateRequestTemplateRequest → INSERT request_templates (is_active = true)
 // → ตอบ template ที่สร้าง → ผู้ใช้จะเห็นทันทีที่ GET /api/request-templates
 func (h *AdminController) CreateRequestTemplate(c *gin.Context) {
-	var req dto.CreateRequestTemplateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
-		return
-	}
+    var req dto.CreateRequestTemplateRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+        return
+    }
 
-	tmpl := entity.RequestTemplate{
-		Name:          req.Name,
-		CPULimitMilli: req.CPULimitMilli,
-		RAMLimitMB:    req.RAMLimitMB,
-		IsActive:      true,
-	}
-	if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
-		utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้ว")
-		return
-	}
-	utils.OK(c, http.StatusCreated, tmpl)
+    tmpl := entity.RequestTemplate{
+        OptionName:      req.OptionName, 
+        Category:        req.Category,
+        Description:     req.Description,
+        RelateSubject:   req.RelateSubject,
+        CPULimitMilli:   req.CPULimitMilli,
+        RAMLimitMB:      req.RAMLimitMB,
+        StorageGB:       req.StorageGB, 
+        IsActive:        false,
+    }
+    
+    if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
+        utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้วหรือข้อมูลไม่ถูกต้อง")
+        return
+    }
+    utils.OK(c, http.StatusCreated, tmpl)
 }
 
 // ListNamespaces คืน namespace ทั้งหมดในระบบ พร้อมยอดใช้งานและจำนวนสมาชิก (หน้าภาพรวมของ admin)
