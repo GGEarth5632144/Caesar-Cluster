@@ -35,7 +35,6 @@ const userPassword = "Banana1234"
 func main() {
 	cfg := config.Load()
 	db := config.ConnectDB(cfg.DBUrl)
-
 	seedRoles(db)
 	seedAdmin(db)
 	seeduser(db)
@@ -57,6 +56,46 @@ func seedRoles(db *gorm.DB) {
 		log.Fatalf("seed roles ไม่สำเร็จ: %v", err)
 	}
 	log.Println("roles พร้อมแล้ว (user, admin) ✓")
+}
+
+func seedRequestTemplates(db *gorm.DB) {
+	templates := []entity.RequestTemplate{
+		{
+			OptionName:      "Cyber Range Node",
+			Category:        "Security",
+			Description:     "เครื่องจำลองเครือข่ายสำหรับทดสอบความปลอดภัยไซเบอร์",
+			RelateSubject:   "Cyber Security",
+			CPULimitMilli:   2000, // 2 Core
+			RAMLimitMB:      4096, // 4 GB
+			StorageGB:       20,   // 20 GB
+			IsActive:        false,
+		},
+		{
+			OptionName:      "AI Vision Model",
+			Category:        "Deep Learning",
+			Description:     "เครื่องสเปกสูงสำหรับเทรนโมเดล YOLO และ Vision Transformers",
+			RelateSubject:   "Deep Learning",
+			CPULimitMilli:   4000, // 4 Core
+			RAMLimitMB:      8192, // 8 GB
+			StorageGB:       50,   // 50 GB
+			IsActive:        false,
+		},
+		{
+			OptionName:      "Basic Web Service",
+			Category:        "Web",
+			Description:     "เครื่องสำหรับรัน Full-Stack Web (React, Go, Node.js)",
+			RelateSubject:   "System Analysis",
+			CPULimitMilli:   1000, // 1 Core
+			RAMLimitMB:      2048, // 2 GB
+			StorageGB:       15,   // 15 GB
+			IsActive:        false,
+		},
+	}
+
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&templates).Error; err != nil {
+		log.Fatalf("seed request templates ไม่สำเร็จ: %v", err)
+	}
+	log.Println("request templates พร้อมแล้ว [OK]")
 }
 
 // seedAdmin สร้าง admin คนแรกของระบบ (ข้ามถ้ามี admin อยู่แล้ว)
@@ -141,22 +180,6 @@ func seeduser(db *gorm.DB) {
 
 	log.Printf("สร้าง user เริ่มต้นแล้ว — student_id=%s password=%s", StudentID, userPassword)
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
-}
-// seedRequestTemplates ใส่ choices ตั้งต้นให้ผู้ใช้เลือกตอนยื่น request หรือ deploy service
-//
-// data flow: INSERT request_templates แบบ ON CONFLICT DO NOTHING (ชนกันที่ name) → admin เพิ่ม/แก้เองทีหลังได้
-// สเปกสูงสุดที่ตั้งได้คือ 3000m/2048MB ซึ่งเท่ากับเพดานของ service 1 ตัวพอดี (300% / 2 GB)
-func seedRequestTemplates(db *gorm.DB) {
-	templates := []entity.RequestTemplate{
-		{Name: "small", CPULimitMilli: 500, RAMLimitMB: 512, IsActive: true},    // 50%
-		{Name: "medium", CPULimitMilli: 1000, RAMLimitMB: 1024, IsActive: true}, // 100%
-		{Name: "large", CPULimitMilli: 2000, RAMLimitMB: 2048, IsActive: true},  // 200%
-		{Name: "max", CPULimitMilli: 3000, RAMLimitMB: 2048, IsActive: true},    // 300% = เพดานต่อ service
-	}
-	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&templates).Error; err != nil {
-		log.Fatalf("seed request templates ไม่สำเร็จ: %v", err)
-	}
-	log.Println("request templates ตั้งต้นพร้อมแล้ว (small, medium, large, max) ✓")
 }
 
 // seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600010 ลงตาราง eligible_students
