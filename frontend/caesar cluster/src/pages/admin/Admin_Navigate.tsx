@@ -18,7 +18,7 @@ export const adminNavItems: NavItem[] = [
   { label: "User Management", icon: Users, path: "/user-management" },
   { label: "Make Option", icon: Sliders, path: "/make-option" },
   { label: "Alert", icon: Bell, path: "/alert" },
-  { label: "Request", icon: FileText, path: "/request" },
+  { label: "Request", icon: FileText, path: "/admin-request" },
   { label: "Audit Log", icon: ScrollText, path: "/audit-log" },
 ];
 

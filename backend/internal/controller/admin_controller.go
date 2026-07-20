@@ -91,6 +91,77 @@ func (h *AdminController) CreateRequestTemplate(c *gin.Context) {
     utils.OK(c, http.StatusCreated, tmpl)
 }
 
+// UpdateRequestTemplate แก้ไขข้อมูล Template หรือเปิด/ปิดสถานะ (PATCH)
+// data flow: อ่าน id จาก path + JSON body → ค้นหาใน DB → อัปเดตข้อมูล → ตอบข้อมูลที่อัปเดตแล้ว
+func (h *AdminController) UpdateRequestTemplate(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	var req dto.UpdateRequestTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	// ค้นหา Template เดิมก่อน
+	var tmpl entity.RequestTemplate
+	if err := h.db.WithContext(c.Request.Context()).First(&tmpl, id).Error; err != nil {
+		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบ template นี้ในระบบ")
+		return
+	}
+
+	// อัปเดตเฉพาะฟิลด์ที่มีการส่งค่ามา (ใช้ Map เพื่อให้รองรับการอัปเดตแบบ Partial หรือบางฟิลด์)
+	updates := make(map[string]interface{})
+	
+	if req.OptionName != nil { updates["name"] = *req.OptionName }
+	if req.Category != nil { updates["category"] = *req.Category }
+	if req.Description != nil { updates["description"] = *req.Description }
+	if req.RelateSubject != nil { updates["relate_subject"] = *req.RelateSubject }
+	if req.CPULimitMilli != nil { updates["cpu_limit_milli"] = *req.CPULimitMilli }
+	if req.RAMLimitMB != nil { updates["ram_limit_mb"] = *req.RAMLimitMB }
+	if req.StorageGB != nil { updates["storage_gb"] = *req.StorageGB }
+	if req.IsActive != nil { updates["is_active"] = *req.IsActive } // สำคัญมาก สำหรับ Checkbox เปิด/ปิด
+
+	if err := h.db.WithContext(c.Request.Context()).Model(&tmpl).Updates(updates).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อัปเดตข้อมูลไม่สำเร็จ")
+		return
+	}
+
+	// ดึงข้อมูลล่าสุดกลับมาตอบกลับ
+	h.db.First(&tmpl, id)
+	utils.OK(c, http.StatusOK, tmpl)
+}
+
+func (h *AdminController) ListAllRequestTemplates(c *gin.Context) {
+	var templates []entity.RequestTemplate
+	// ไม่ต้องใส่ Where("is_active = true") เพื่อดึงมาทั้งหมด
+	if err := h.db.WithContext(c.Request.Context()).Order("id").Find(&templates).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, templates)
+}
+
+// DeleteRequestTemplate ลบ Template ออกจากระบบ (DELETE)
+func (h *AdminController) DeleteRequestTemplate(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	// ลบข้อมูลจากฐานข้อมูล
+	if err := h.db.WithContext(c.Request.Context()).Delete(&entity.RequestTemplate{}, id).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบข้อมูลไม่สำเร็จ")
+		return
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"message": "ลบเทมเพลตสำเร็จ"})
+}
+
 // ListNamespaces คืน namespace ทั้งหมดในระบบ พร้อมยอดใช้งานและจำนวนสมาชิก (หน้าภาพรวมของ admin)
 // data flow: NamespaceManager.ListAll (SELECT namespaces + SUM ทรัพยากร + COUNT สมาชิกของแต่ละอัน) → ตอบ array
 func (h *AdminController) ListNamespaces(c *gin.Context) {
