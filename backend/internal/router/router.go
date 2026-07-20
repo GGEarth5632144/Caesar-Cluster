@@ -40,6 +40,7 @@ func Setup(
 	svcCtl := controller.NewServiceController(db, svcMgr)
 	tmplCtl := controller.NewRequestTemplateController(db)
 	adminCtl := controller.NewAdminController(db, nsMgr)
+	reqCtl := controller.NewRequestController(db)
 
 	r := gin.Default()
 
@@ -72,6 +73,9 @@ func Setup(
 			protected.GET("/me", authCtl.Me)
 			protected.GET("/request-templates", tmplCtl.List)
 
+			protected.GET("/requests", reqCtl.ListMine)
+			protected.POST("/requests", reqCtl.Create)
+
 			protected.POST("/namespaces", nsCtl.Create)
 			protected.POST("/namespaces/join", nsCtl.Join)
 			protected.GET("/namespaces/me", nsCtl.Mine)
@@ -92,6 +96,10 @@ func Setup(
 
 			admin.GET("/namespaces", adminCtl.ListNamespaces)
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
+
+			admin.GET("/requests", adminCtl.ListAllRequests)
+			admin.PATCH("/requests/:id/approve", adminCtl.Approve)
+			admin.PATCH("/requests/:id/deny", adminCtl.Deny)
 		}
 	}
 

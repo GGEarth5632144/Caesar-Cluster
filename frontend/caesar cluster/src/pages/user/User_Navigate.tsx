@@ -24,7 +24,6 @@ export const userNavItems: NavItem[] = [
     label: "Request Resources",
     icon: FileText,
     path: "/request-resources",
-    requiresVm: true,
   },
 ];
 

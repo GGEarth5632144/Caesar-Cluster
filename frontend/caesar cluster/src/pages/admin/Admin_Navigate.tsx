@@ -6,6 +6,7 @@ import {
   Sliders,
   Bell,
   FileText,
+  Inbox,
   ScrollText,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ export const adminNavItems: NavItem[] = [
   { label: "Make Option", icon: Sliders, path: "/make-option" },
   { label: "Alert", icon: Bell, path: "/alert" },
   { label: "Request", icon: FileText, path: "/admin-request" },
+  { label: "VM Approvals", icon: Inbox, path: "/admin-approvals" },
   { label: "Audit Log", icon: ScrollText, path: "/audit-log" },
 ];
 
