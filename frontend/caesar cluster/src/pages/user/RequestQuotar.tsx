@@ -25,16 +25,31 @@ function initialsOf(name: string) {
 function statusBadge(status: AppService["status"]) {
   switch (status) {
     case "running":
-      return { label: "Running", dot: "bg-green-600", text: "text-green-700", bg: "bg-green-50" };
+      return {
+        label: "Running",
+        dot: "bg-green-600",
+        text: "text-green-700",
+        bg: "bg-green-50",
+      };
     case "creating":
-      return { label: "Deploying...", dot: "bg-[#F08B51] animate-pulse", text: "text-[#F08B51]", bg: "bg-[#FFF8E8]" };
+      return {
+        label: "Deploying...",
+        dot: "bg-[#F08B51] animate-pulse",
+        text: "text-[#F08B51]",
+        bg: "bg-[#FFF8E8]",
+      };
     case "failed":
     default:
-      return { label: "Failed", dot: "bg-red-500", text: "text-red-600", bg: "bg-red-50" };
+      return {
+        label: "Failed",
+        dot: "bg-red-500",
+        text: "text-red-600",
+        bg: "bg-red-50",
+      };
   }
 }
 
-export default function MyServices() {
+export default function RequestQuotar() {
   const [services, setServices] = useState<AppService[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,15 +140,19 @@ export default function MyServices() {
                       {initialsOf(svc.name)}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-[#211a14] truncate">{svc.name}</p>
-                      <p className="text-xs text-[#211a14]/45 truncate">{svc.image}</p>
+                      <p className="font-semibold text-[#211a14] truncate">
+                        {svc.name}
+                      </p>
+                      <p className="text-xs text-[#211a14]/45 truncate">
+                        {svc.image}
+                      </p>
                     </div>
                   </div>
                   <span
                     className={cn(
                       "inline-flex shrink-0 items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap",
                       badge.bg,
-                      badge.text
+                      badge.text,
                     )}
                   >
                     <span className={cn("size-1.5 rounded-full", badge.dot)} />
@@ -148,7 +167,9 @@ export default function MyServices() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Layers size={14} className="text-[#BB6653]" />
-                    {svc.ram_mb >= 1024 ? `${(svc.ram_mb / 1024).toFixed(1)} GB` : `${svc.ram_mb} MB`}
+                    {svc.ram_mb >= 1024
+                      ? `${(svc.ram_mb / 1024).toFixed(1)} GB`
+                      : `${svc.ram_mb} MB`}
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Network size={14} className="text-[#BB6653]" />
@@ -164,7 +185,11 @@ export default function MyServices() {
                       onClick={() => handleDelete(svc.id)}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-500 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
                     >
-                      {isDeleting ? <Loader2 size={13} className="animate-spin" /> : "Confirm delete"}
+                      {isDeleting ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        "Confirm delete"
+                      )}
                     </button>
                     <button
                       type="button"
@@ -221,7 +246,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
   const [image, setImage] = useState("");
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"preset" | "custom">("preset");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
+    null,
+  );
   const [customCores, setCustomCores] = useState("0.5");
   const [customRamMb, setCustomRamMb] = useState("512");
 
@@ -242,7 +269,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
   const canSubmit =
     image.trim().length >= 3 &&
     name.trim().length >= 3 &&
-    (mode === "preset" ? selectedTemplateId !== null : Number(customCores) > 0 && Number(customRamMb) > 0);
+    (mode === "preset"
+      ? selectedTemplateId !== null
+      : Number(customCores) > 0 && Number(customRamMb) > 0);
 
   const handleSubmit = async () => {
     if (!canSubmit || submitting) return;
@@ -273,7 +302,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl">
         <div className="flex items-center justify-between px-6 py-5 border-b border-black/5">
           <div>
-            <h2 className="text-lg font-bold text-[#211a14]">Deploy a new service</h2>
+            <h2 className="text-lg font-bold text-[#211a14]">
+              Deploy a new service
+            </h2>
             <p className="text-xs text-[#211a14]/50 mt-0.5">
               Point us at a container image — we handle the rest.
             </p>
@@ -324,7 +355,8 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               className="w-full rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
             />
             <p className="text-[11px] text-[#211a14]/40">
-              lowercase letters, numbers and hyphens only — must start/end with a letter or number
+              lowercase letters, numbers and hyphens only — must start/end with
+              a letter or number
             </p>
           </div>
 
@@ -340,7 +372,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                   onClick={() => setMode("preset")}
                   className={cn(
                     "px-3 py-1 rounded-md transition-colors",
-                    mode === "preset" ? "bg-white text-[#211a14] shadow-sm" : "text-[#211a14]/40"
+                    mode === "preset"
+                      ? "bg-white text-[#211a14] shadow-sm"
+                      : "text-[#211a14]/40",
                   )}
                 >
                   Preset
@@ -351,7 +385,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                   onClick={() => setMode("custom")}
                   className={cn(
                     "px-3 py-1 rounded-md transition-colors",
-                    mode === "custom" ? "bg-white text-[#211a14] shadow-sm" : "text-[#211a14]/40"
+                    mode === "custom"
+                      ? "bg-white text-[#211a14] shadow-sm"
+                      : "text-[#211a14]/40",
                   )}
                 >
                   Custom
@@ -382,16 +418,24 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                           "relative text-left rounded-xl border p-3 transition-all bg-white",
                           isSelected
                             ? "border-[#BB6653] ring-2 ring-[#BB6653]/10"
-                            : "border-black/10 hover:border-[#F08B51]/50"
+                            : "border-black/10 hover:border-[#F08B51]/50",
                         )}
                       >
                         {isSelected && (
-                          <Check size={14} strokeWidth={3} className="absolute top-2 right-2 text-[#BB6653]" />
+                          <Check
+                            size={14}
+                            strokeWidth={3}
+                            className="absolute top-2 right-2 text-[#BB6653]"
+                          />
                         )}
-                        <p className="text-xs font-bold text-[#211a14] pr-4 truncate">{tpl.option_name}</p>
+                        <p className="text-xs font-bold text-[#211a14] pr-4 truncate">
+                          {tpl.option_name}
+                        </p>
                         <p className="text-[11px] text-[#211a14]/50 mt-1">
                           {(tpl.cpu_limit_milli / 1000).toFixed(1)} cores ·{" "}
-                          {tpl.ram_limit_mb >= 1024 ? `${(tpl.ram_limit_mb / 1024).toFixed(1)} GB` : `${tpl.ram_limit_mb} MB`}
+                          {tpl.ram_limit_mb >= 1024
+                            ? `${(tpl.ram_limit_mb / 1024).toFixed(1)} GB`
+                            : `${tpl.ram_limit_mb} MB`}
                         </p>
                       </button>
                     );
@@ -401,7 +445,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-[#211a14]/50">CPU (cores)</label>
+                  <label className="text-[11px] text-[#211a14]/50">
+                    CPU (cores)
+                  </label>
                   <input
                     type="number"
                     step="0.1"
@@ -414,7 +460,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-[#211a14]/50">Memory (MB)</label>
+                  <label className="text-[11px] text-[#211a14]/50">
+                    Memory (MB)
+                  </label>
                   <input
                     type="number"
                     step="128"
@@ -448,7 +496,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               "inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition-all",
               canSubmit && !submitting
                 ? "bg-[#BB6653] hover:bg-[#F08B51]"
-                : "bg-[#211a14]/20 cursor-not-allowed shadow-none"
+                : "bg-[#211a14]/20 cursor-not-allowed shadow-none",
             )}
           >
             {submitting && <Loader2 size={14} className="animate-spin" />}

@@ -13,7 +13,7 @@ import AdminRequestQueue from "@/pages/admin/AdminRequestQueue";
 import AdminImportStudents from "@/pages/admin/AdminImportStudents";
 import RequestResources from "@/pages/user/RequestResources";
 import UserManagement from "@/pages/admin/Usermanagement";
-import MyServices from "@/pages/user/MyServices";
+import MyServices from "@/pages/user/RequestQuotar";
 import Service from "@/pages/admin/Service";
 import IPCmanagement from "@/pages/admin/IPCmanagement";
 import Alertadmin from "@/pages/admin/Alertadmin";
