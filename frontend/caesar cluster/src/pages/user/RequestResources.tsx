@@ -45,7 +45,7 @@ export default function RequestResources() {
   return (
     <div className="flex flex-col gap-6 text-left font-mono animate-in fade-in duration-200">
       <div>
-        <h1 className="text-4xl font-bold text-[#211a14]">Requests</h1>
+        <h1 className="text-4xl font-bold text-[#211a14]">My Requests</h1>
         <p className="max-w-2xl text-base text-[#211a14]/60 mt-1">
           Track your VM and quota requests, and their approval status.
         </p>

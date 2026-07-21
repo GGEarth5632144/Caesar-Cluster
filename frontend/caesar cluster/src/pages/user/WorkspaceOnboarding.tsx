@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { Package, User, Users, Cpu, Layers, HardDrive, ArrowLeft, Check, Loader2, Clock } from "lucide-react";
+import { Package, Cpu, Layers, HardDrive, ArrowLeft, Check, Loader2, Clock } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import axiosClient from "@/api/axiosClient";
@@ -8,11 +9,9 @@ import { getApiErrorMessage } from "@/api/authApi";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
 import type { RequestTemplate } from "@/api/adminrequest";
 
-type VmType = "solo" | "group";
-
 export default function WorkspaceOnboarding() {
+  const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2>(1);
-  const [selectedType, setSelectedType] = useState<VmType | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
 
   const [templates, setTemplates] = useState<RequestTemplate[]>([]);
@@ -60,21 +59,20 @@ export default function WorkspaceOnboarding() {
     }
   }, [step]);
 
-  const handleSelectType = (type: VmType) => {
-    setSelectedType(type);
+  const handleStart = () => {
     setStep(2);
   };
 
   const handleSubmitRequest = async () => {
     const template = templates.find((t) => t.id === selectedTemplateId);
-    if (!selectedType || !template) return;
+    if (!template) return;
 
     setIsSubmitting(true);
     setError(null);
     try {
       const created = await vmRequestApi.create({
         description: `ขอเปิดใช้งานเทมเพลต "${template.option_name}"`,
-        namespace_name: selectedType,
+        namespace_name: "solo",
         cpu_limit_milli: template.cpu_limit_milli,
         ram_limit_mb: template.ram_limit_mb,
       });
@@ -109,10 +107,10 @@ export default function WorkspaceOnboarding() {
         </p>
         <button
           type="button"
-          onClick={fetchLatestRequest}
+          onClick={() => navigate("/request-resources")}
           className="mt-2 rounded-xl bg-[#BB6653] px-6 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
         >
-          ตรวจสอบสถานะอีกครั้ง
+          ดูสถานะคำขอ
         </button>
       </div>
     );
@@ -151,29 +149,20 @@ export default function WorkspaceOnboarding() {
               </div>
               <h2 className="text-2xl font-semibold text-[#211a14]">Create your first VM</h2>
               <p className="max-w-lg text-base text-[#211a14]/60">
-                Choose whether this machine is just for you, or shared with a
-                group. This sets up your workspace.
+                Set up your workspace and pick a resource quota to get
+                started.
               </p>
             </div>
 
-            <div className="mt-10 grid gap-5 sm:grid-cols-2">
+            <div className="mt-10">
               <VmOptionCard
-                icon={User}
+                icon={Cpu}
                 iconBg="bg-[#FBDFDA]"
                 iconColor="text-[#BB6653]"
-                title="Personal VM"
-                description="Private machine only you can access."
-                selected={selectedType === "solo"}
-                onClick={() => handleSelectType("solo")}
-              />
-              <VmOptionCard
-                icon={Users}
-                iconBg="bg-[#DCEEDB]"
-                iconColor="text-[#5A8F5A]"
-                title="Group VM"
-                description="Shared machine your team can access."
-                selected={selectedType === "group"}
-                onClick={() => handleSelectType("group")}
+                title="Create VM"
+                description="Set up your workspace to start computing."
+                selected={false}
+                onClick={handleStart}
               />
             </div>
           </>
@@ -193,7 +182,7 @@ export default function WorkspaceOnboarding() {
               </button>
               <div>
                 <h2 className="text-xl font-bold text-[#211a14]">
-                  Configure your {selectedType === "solo" ? "Personal" : "Group"} VM
+                  Configure your VM
                 </h2>
                 <p className="text-sm text-[#211a14]/60">เลือกโควตาทรัพยากรที่ต้องการยื่นขอ</p>
               </div>

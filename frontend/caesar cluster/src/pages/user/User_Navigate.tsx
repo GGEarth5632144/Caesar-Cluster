@@ -21,7 +21,7 @@ export const userNavItems: NavItem[] = [
   },
   { label: "Alerts", icon: Bell, badge: 3, path: "/alerts", requiresVm: true },
   {
-    label: "Request Resources",
+    label: "My Requests",
     icon: FileText,
     path: "/request-resources",
   },
