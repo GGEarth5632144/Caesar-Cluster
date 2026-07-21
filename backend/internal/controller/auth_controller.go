@@ -27,14 +27,17 @@ func NewAuthController(db *gorm.DB, jwtSecret string) *AuthController {
 	return &AuthController{db: db, jwtSecret: jwtSecret}
 }
 
-// Register สมัครผู้ใช้ใหม่ — เปิดให้เฉพาะ นศ. สาขา CPE ที่มีอยู่ในฐานข้อมูลจริงเท่านั้น
+// Register สมัครผู้ใช้ใหม่ — เปิดให้เฉพาะ นศ. สาขา CPE ที่ยังมีสถานภาพเป็นนักศึกษาอยู่เท่านั้น
 //
 // data flow:
 //   - JSON body → bind เป็น RegisterRequest
 //   - ด่าน 1: เช็คว่ามี student_id นี้อยู่ในตาราง eligible_students ไหม (คือฐานข้อมูล นศ. ที่รู้จัก
 //     ไม่ใช่แค่ CPE — ทุกสาขา) → ไม่เจอ → 403 STUDENT_NOT_FOUND
 //   - ด่าน 2: เจอแล้วเช็คต่อว่า major ของคนนั้นตรงกับ entity.MajorCPE ไหม → ไม่ตรง → 403 NOT_CPE
-//   - ผ่านทั้ง 2 ด่านแล้วค่อยหา role "user" จากตาราง roles เพื่อเอา role_id
+//   - ด่าน 3: เช็คว่า enrollment_status ยังอยู่ใน entity.ActiveEnrollmentStatuses ไหม (จบ/ลาพัก/พ้นสภาพ
+//     สมัครไม่ได้) → ไม่ผ่าน → 403 NOT_ACTIVE_STUDENT
+//   - ผ่านทั้ง 3 ด่านแล้วค่อยหา role "user" จากตาราง roles เพื่อเอา role_id
+//   - แกะปีที่เข้าศึกษาจาก prefix ของ student_id (entity.EntryYearFromStudentID) เก็บไว้ที่ user.EntryYear
 //   - hash รหัสผ่านด้วย bcrypt → INSERT users (namespace_id ยังเป็น NULL — ไปสร้าง space ทีหลัง)
 //   - ตอบข้อมูล user กลับ (ไม่ส่ง password)
 //
@@ -69,6 +72,13 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
+	// ด่านที่ 3: สถานภาพต้องยังเป็นนักศึกษาอยู่ (ไม่ใช่จบ/ลาพัก/พ้นสภาพ)
+	if !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
+		utils.Error(c, http.StatusForbidden, "NOT_ACTIVE_STUDENT",
+			"สถานภาพนักศึกษาของรหัสนี้ไม่สามารถสมัครใช้งานได้")
+		return
+	}
+
 	var userRole entity.Role
 	if err := db.Where("name = ?", entity.RoleUser).First(&userRole).Error; err != nil {
 		log.Printf("register: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", entity.RoleUser, err)
@@ -82,11 +92,20 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
+	// ปีที่เข้าศึกษาแกะจาก prefix ของ student_id ครั้งเดียวตอนนี้ — ไม่ใช่ค่า critical (ผ่านด่านที่ 1
+	// มาแล้วแปลว่ารูปแบบรหัสน่าจะถูก) เลย error ได้แค่เก็บ log ไว้ ไม่ block การสมัคร
+	entryYear, err := entity.EntryYearFromStudentID(req.StudentID)
+	if err != nil {
+		log.Printf("register: แกะปีที่เข้าศึกษาจาก student_id %q ไม่สำเร็จ: %v", req.StudentID, err)
+	}
+
 	user := entity.User{
 		StudentID: req.StudentID,
 		RoleID:    userRole.ID,
 		RealName:  req.RealName,
 		NickName:  req.NickName,
+		Gmail:     req.Gmail,
+		EntryYear: entryYear,
 		Password:  string(hash),
 	}
 	if err := db.Create(&user).Error; err != nil {
@@ -99,6 +118,7 @@ func (h *AuthController) Register(c *gin.Context) {
 		"student_id": user.StudentID,
 		"real_name":  user.RealName,
 		"nick_name":  user.NickName,
+		"gmail":      user.Gmail,
 		"major":      eligible.Major,
 	})
 }
@@ -150,6 +170,11 @@ func (h *AuthController) Login(c *gin.Context) {
 		return
 	}
 
+	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
+	if err != nil {
+		log.Printf("login: คำนวณชั้นปีของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
+	}
+
 	utils.OK(c, http.StatusOK, gin.H{
 		"token": token,
 		"user": gin.H{
@@ -157,6 +182,8 @@ func (h *AuthController) Login(c *gin.Context) {
 			"student_id":   user.StudentID,
 			"real_name":    user.RealName,
 			"nick_name":    user.NickName,
+			"gmail":        user.Gmail,
+			"year_level":   yearLevel,
 			"role":         role.Name,
 			"namespace_id": user.NamespaceID,
 		},
@@ -172,11 +199,19 @@ func (h *AuthController) Me(c *gin.Context) {
 		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
 		return
 	}
+
+	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
+	if err != nil {
+		log.Printf("me: คำนวณชั้นปีของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
+	}
+
 	utils.OK(c, http.StatusOK, gin.H{
 		"id":           user.ID,
 		"student_id":   user.StudentID,
 		"real_name":    user.RealName,
 		"nick_name":    user.NickName,
+		"gmail":        user.Gmail,
+		"year_level":   yearLevel,
 		"role":         c.GetString("role"),
 		"namespace_id": user.NamespaceID,
 	})

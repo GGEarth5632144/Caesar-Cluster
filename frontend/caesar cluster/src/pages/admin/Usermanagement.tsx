@@ -1,20 +1,29 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Search, UserPlus, Edit2, Trash2, Cpu, Layers, Loader2, X ,Users} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { userManagementApi, type User, type UpdateUserDTO } from "@/api/adminuser"; 
+import { userManagementApi, type User, type UpdateUserDTO } from "@/api/adminuser";
+import {
+  eligibleStudentsApi,
+  enrollmentStatusLabel,
+  type EligibleStudent,
+} from "@/api/eligibleStudents";
 
 type YearTab = "all" | "1" | "2" | "3" | "4" | "5+" | "admin";
 
 export default function UserManagement() {
+  const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<YearTab>("all");
   const [searchTerm, setSearchTerm] = useState("");
-  
+
   // State สำหรับเก็บข้อมูล User ที่กำลังถูกแก้ไข (ถ้าเป็น null คือปิด Modal)
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  // เปิด/ปิด modal "ตรวจสอบรายชื่อผู้มีสิทธิ์"
+  const [showEligibleList, setShowEligibleList] = useState(false);
 
   const fetchUsers = async () => {
     try {
@@ -65,9 +74,9 @@ export default function UserManagement() {
       if (user.role_id === 2) return false; 
       
       if (activeTab === "5+") {
-        if (user.year < 5) return false;
+        if (user.year_level < 5) return false;
       } else {
-        if (user.year.toString() !== activeTab) return false;
+        if (user.year_level.toString() !== activeTab) return false;
       }
     }
 
@@ -101,13 +110,19 @@ export default function UserManagement() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] bg-transparent px-5 py-2 text-sm font-bold text-[#BB6653] shadow-sm hover:bg-[#BB6653]/10 transition-colors">
+          <button
+            onClick={() => setShowEligibleList(true)}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] bg-transparent px-5 py-2 text-sm font-bold text-[#BB6653] shadow-sm hover:bg-[#BB6653]/10 transition-colors"
+          >
             <Users size={18} />
             ตรวจสอบรายชื่อผู้มีสิทธิ์
           </button>
           
-          {/* ปุ่มเพิ่ม (ปุ่มหลัก สีทึบ) */}
-          <button className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#F08B51] transition-colors">
+          {/* ปุ่มเพิ่ม (ปุ่มหลัก สีทึบ) — พาไปหน้า Import Students เพื่ออัปโหลดไฟล์รายชื่อจากทะเบียน */}
+          <button
+            onClick={() => navigate("/admin-import-students")}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#F08B51] transition-colors"
+          >
             <UserPlus size={18} />
             เพิ่มรายชื่อผู้มีสิทธิ์
           </button>
@@ -245,7 +260,7 @@ export default function UserManagement() {
                           </span>
                         ) : (
                           <span className="inline-flex rounded-full bg-[#FFF8E8] px-2.5 py-1 text-xs font-bold text-[#BB6653]">
-                            Year {user.year}
+                            Year {user.year_level}
                           </span>
                         )}
                       </td>
@@ -279,12 +294,15 @@ export default function UserManagement() {
 
       {/* ---------------- Edit Modal ---------------- */}
       {editingUser && (
-        <EditUserModal 
-          user={editingUser} 
-          onClose={() => setEditingUser(null)} 
-          onSuccess={handleUpdateSuccess} 
+        <EditUserModal
+          user={editingUser}
+          onClose={() => setEditingUser(null)}
+          onSuccess={handleUpdateSuccess}
         />
       )}
+
+      {/* ---------------- ตรวจสอบรายชื่อผู้มีสิทธิ์ Modal ---------------- */}
+      {showEligibleList && <EligibleStudentsModal onClose={() => setShowEligibleList(false)} />}
     </div>
   );
 }
@@ -306,7 +324,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
     real_name: user.real_name,
     nick_name: user.nick_name || "",
     gmail: user.gmail || "",
-    year: user.year.toString(),
     role_id: user.role_id.toString(),
     cpu_limit: user.cpu_limit.toString(),
     ram_limit: user.ram_limit.toString(),
@@ -322,13 +339,13 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
     setIsSubmitting(true);
     
     try {
-      // แปลงข้อมูลตัวเลขก่อนส่งไป API
+      // แปลงข้อมูลตัวเลขก่อนส่งไป API — ไม่ส่ง year เพราะเป็นค่าที่คำนวณสดจาก student_id เสมอ
+      // (ดู entity.YearLevel ฝั่ง backend) แก้ตรงนี้ไปก็ไม่มีผล ไม่ใช่ฟิลด์ที่แก้ไขได้
       const payload: UpdateUserDTO = {
         student_id: formData.student_id,
         real_name: formData.real_name,
         nick_name: formData.nick_name,
         gmail: formData.gmail,
-        year: parseInt(formData.year, 10),
         role_id: parseInt(formData.role_id, 10),
         cpu_limit: parseInt(formData.cpu_limit, 10),
         ram_limit: parseInt(formData.ram_limit, 10),
@@ -393,10 +410,14 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
               <input name="nick_name" value={formData.nick_name} onChange={handleChange} className={inputClass} />
             </div>
 
-            {/* ชั้นปี */}
+            {/* ชั้นปี — คำนวณสดจาก student_id เสมอ แก้ไขตรงนี้ไม่ได้ (เปลี่ยน Student ID แล้วบันทึก ค่านี้จะขยับตาม) */}
             <div>
               <label className={labelClass}>Year</label>
-              <input name="year" type="number" min="1" max="10" value={formData.year} onChange={handleChange} required className={inputClass} />
+              <input
+                value={`Year ${user.year_level}`}
+                disabled
+                className={`${inputClass} disabled:bg-black/5 disabled:text-[#211a14]/60`}
+              />
             </div>
 
             {/* ตำแหน่ง (Role) */}
@@ -440,6 +461,135 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// Modal ตรวจสอบรายชื่อผู้มีสิทธิ์ (eligible_students ทั้งหมด — ทั้งที่ import มาแล้วและยัง)
+// ==========================================
+interface EligibleStudentsModalProps {
+  onClose: () => void;
+}
+
+function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
+  const [students, setStudents] = useState<EligibleStudent[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        const data = await eligibleStudentsApi.listAll();
+        setStudents(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Failed to fetch eligible students:", err);
+        setError("ไม่สามารถดึงรายชื่อผู้มีสิทธิ์ได้ โปรดลองใหม่อีกครั้ง");
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, []);
+
+  const filtered = students.filter((s) => {
+    if (!searchTerm) return true;
+    const lower = searchTerm.toLowerCase();
+    return (
+      s.student_id.toLowerCase().includes(lower) ||
+      s.real_name.toLowerCase().includes(lower) ||
+      s.major.toLowerCase().includes(lower)
+    );
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
+      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-[#FFF8E8] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-black/5 px-6 py-5">
+          <div>
+            <h2 className="text-lg font-bold text-[#211a14]">รายชื่อผู้มีสิทธิ์</h2>
+            <p className="mt-0.5 text-xs text-[#211a14]/50">
+              ทั้งหมดในตาราง eligible_students ({students.length} คน) — คือรายชื่อที่ import เข้ามาแล้ว
+              ไม่ว่าจะสมัครเข้าระบบจริงหรือยังก็ตาม
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-2 text-[#211a14]/50 transition-colors hover:bg-black/5"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="border-b border-black/5 px-6 py-4">
+          <div className="relative w-full sm:w-72">
+            <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
+              <Search size={16} className="text-[#BB6653]/60" />
+            </div>
+            <input
+              type="text"
+              placeholder="ค้นหารหัส/ชื่อ/สาขา"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-sm text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-[#BB6653]">
+              <Loader2 size={28} className="animate-spin" />
+              <p className="text-sm font-medium">กำลังโหลดข้อมูล...</p>
+            </div>
+          ) : error ? (
+            <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-sm text-red-600">
+              {error}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-neutral-500">
+              <Search className="size-8 text-[#BB6653]/30" />
+              <p>ไม่พบรายชื่อที่ค้นหา</p>
+            </div>
+          ) : (
+            <table className="w-full text-left text-sm text-[#211a14]">
+              <thead>
+                <tr className="border-b border-black/10 text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+                  <th className="pb-3 pr-3">รหัสประจำตัว</th>
+                  <th className="pb-3 pr-3">ชื่อ-สกุล</th>
+                  <th className="pb-3 pr-3">สาขาวิชา</th>
+                  <th className="pb-3">สถานภาพ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => {
+                  const isActive = s.enrollment_status === 10 || s.enrollment_status === 11;
+                  return (
+                    <tr key={s.student_id} className="border-b border-black/5 last:border-0">
+                      <td className="py-3 pr-3 font-medium">{s.student_id}</td>
+                      <td className="py-3 pr-3">{s.real_name || "—"}</td>
+                      <td className="py-3 pr-3 text-[#211a14]/70">{s.major}</td>
+                      <td className="py-3">
+                        <span
+                          className={cn(
+                            "inline-flex rounded-full px-2.5 py-1 text-xs font-bold",
+                            isActive ? "bg-green-50 text-green-700" : "bg-black/5 text-[#211a14]/60"
+                          )}
+                        >
+                          {enrollmentStatusLabel(s.enrollment_status)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </div>
   );

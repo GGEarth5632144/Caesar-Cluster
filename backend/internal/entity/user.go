@@ -23,7 +23,9 @@ type User struct {
 	NamespaceID *int      `gorm:"column:namespace_id;type:integer;index:idx_users_namespace" json:"namespace_id"`
 	Password    string    `gorm:"column:password;type:varchar(255);not null" json:"-"`
 	Gmail 		string 	  `gorm:"column:gmail;type:varchar(100);unique;not null" json:"gmail"`
-	Year		int 	  `gorm:"column:year;type:integer;not null" json:"year"`
+	// EntryYear = ปีที่เข้าศึกษา (พ.ศ.) แกะจาก prefix ของ StudentID ตอนสมัครครั้งเดียว (entity.EntryYearFromStudentID)
+	// เก็บไว้ได้เพราะเป็นข้อเท็จจริงที่ไม่เปลี่ยน — ต่างจาก "ชั้นปี" ที่ต้องคำนวณสดทุกครั้ง (ดู entity.YearLevel)
+	EntryYear	int 	  `gorm:"column:year;type:integer;not null;default:0" json:"year"`
 	CreatedAt   time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 	CPUlimit	int 	  `gorm:"column:cpu_limit;type:integer;not null;default:0" json:"cpu_limit"`
 	Ramlimit    int 	  `gorm:"column:ram_limit;type:integer;not null;default:0" json:"ram_limit"`

@@ -7,6 +7,8 @@ export interface AuthUser {
   student_id: string;
   real_name: string;
   nick_name: string;
+  gmail: string;
+  year_level: number;
   role: string;
   namespace_id: number | null;
 }
@@ -21,6 +23,7 @@ export interface RegisterResponse {
   student_id: string;
   real_name: string;
   nick_name: string;
+  gmail: string;
   major: string;
 }
 
@@ -47,6 +50,7 @@ export const authApi = {
     student_id: string;
     real_name: string;
     nick_name: string;
+    gmail: string;
     password: string;
   }) => {
     const response = await axiosClient.post<{ data: RegisterResponse }>('/register', payload);

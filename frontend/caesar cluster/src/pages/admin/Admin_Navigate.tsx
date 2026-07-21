@@ -8,6 +8,7 @@ import {
   BellRing,       // ใช้ BellRing ให้ดูเป็นการแจ้งเตือนที่ตื่นตัวขึ้น (หรือใช้ Bell ก็ได้)
   ScrollText,
   Settings,       // เปลี่ยนจาก User เป็น Settings (รูปเฟือง)
+  Upload,
 } from "lucide-react";
 
 import type { NavItem } from "@/types/nav";
@@ -25,6 +26,7 @@ export const adminNavItems: NavItem[] = [
   { label: "IPC Management", icon: Server, path: "/ipc-management" },//กำลังทำ
   { label: "Services", icon: Layers, path: "/services" },//กำลังทำ
   { label: "Quota", icon: Sliders, path: "/admin-approvals" },
+  { label: "Import Students", icon: Upload, path: "/admin-import-students" },
 
   // 4. การตรวจสอบย้อนหลัง และตั้งค่าระบบ (มักจะอยู่ล่างสุดเสมอ)
   { label: "Audit Log", icon: ScrollText, path: "/audit-log" },//กำลังทำ

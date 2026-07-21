@@ -1,18 +1,11 @@
 import { useNavigate } from "react-router-dom";
-import { Controller, useForm } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
 
@@ -21,7 +14,6 @@ const registerSchema = z
     student_id: z.string().min(1, "กรุณากรอกรหัสนักศึกษา"),
     first_name: z.string().min(1, "กรุณากรอกชื่อ"),
     last_name: z.string().min(1, "กรุณากรอกนามสกุล"),
-    year_of_study: z.string().min(1, "กรุณาเลือกชั้นปี"),
     gmail: z.string().email("อีเมลไม่ถูกต้อง"),
     password: z.string().min(8, "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร"),
     confirm_password: z.string().min(1, "กรุณายืนยันรหัสผ่าน"),
@@ -45,7 +37,6 @@ export default function Register() {
   const {
     register,
     handleSubmit,
-    control,
     setError,
     formState: { errors, isSubmitting },
   } = useForm<RegisterForm>({
@@ -54,7 +45,6 @@ export default function Register() {
       student_id: "",
       first_name: "",
       last_name: "",
-      year_of_study: "",
       gmail: "",
       password: "",
       confirm_password: "",
@@ -63,11 +53,11 @@ export default function Register() {
 
   const onSubmit = async (values: RegisterForm) => {
     try {
-      // backend ยังไม่มีคอลัมน์รับ year_of_study/gmail จึงเก็บไว้แค่ฝั่ง UI ก่อน ไม่ส่งไป backend
       await authApi.register({
         student_id: values.student_id,
         real_name: `${values.first_name} ${values.last_name}`.trim(),
         nick_name: values.last_name,
+        gmail: values.gmail,
         password: values.password,
       });
 
@@ -116,31 +106,6 @@ export default function Register() {
             <Input className={`mt-1 ${inputClass}`} {...register("last_name")} />
             {errors.last_name && (
               <p className="mt-1 text-sm text-white">{errors.last_name.message}</p>
-            )}
-          </div>
-
-          <div>
-            <label className={labelClass}>Year Of Study</label>
-            <Controller
-              name="year_of_study"
-              control={control}
-              render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
-                  <SelectTrigger className={`mt-1 w-full ${inputClass}`}>
-                    <SelectValue placeholder="Year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["1", "2", "3", "4"].map((year) => (
-                      <SelectItem key={year} value={year}>
-                        {year}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            {errors.year_of_study && (
-              <p className="mt-1 text-sm text-white">{errors.year_of_study.message}</p>
             )}
           </div>
 

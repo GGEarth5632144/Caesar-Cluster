@@ -1,5 +1,7 @@
 package dto
 
+import "backend/internal/entity"
+
 // RegisterRequest = body ของ POST /api/register
 // data flow: JSON จาก client → ShouldBindJSON ใน AuthController.Register
 // → เช็ค student_id กับตาราง eligible_students ก่อน → ถ้าผ่านค่อยสร้าง entity.User
@@ -27,4 +29,12 @@ type UpdateUserRequest struct {
 	RoleID    *int    `json:"role_id"`
 	CPUlimit  *int    `json:"cpu_limit"`
 	Ramlimit  *int    `json:"ram_limit"`
+}
+
+// UserWithYearLevel = entity.User + ชั้นปีที่คำนวณสดจาก student_id (entity.YearLevel)
+// ให้หน้า admin โชว์เป็น "Year 4" ได้ตรงๆ แทนที่จะโชว์ User.EntryYear (ปีที่เข้าศึกษา พ.ศ. เช่น 2566)
+// ซึ่งเป็นคนละความหมายกัน — ใช้ตอน ListUsers เท่านั้น (ดู AdminController.ListUsers)
+type UserWithYearLevel struct {
+	entity.User
+	YearLevel int `json:"year_level"`
 }

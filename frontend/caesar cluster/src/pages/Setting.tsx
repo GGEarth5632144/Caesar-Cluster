@@ -13,10 +13,8 @@ function splitName(fullName: string): [string, string] {
   return [parts[0], parts.slice(1).join(" ")];
 }
 
-// backend ยังไม่มีคอลัมน์เก็บ email/year_of_study/major (ดู note เดียวกันใน Register.tsx)
-// เลยโชว์เป็นค่า mock ไปก่อนจนกว่า /api/me จะคืนค่าพวกนี้จริง
-const MOCK_EMAIL = "example@gmail.com";
-const MOCK_YEAR_OF_STUDY = "4";
+// /api/me ยังไม่คืนค่า major กลับมา (เก็บอยู่แค่ใน eligible_students ไม่ได้ join กลับตอน login/me)
+// เลยโชว์เป็นค่า mock ไปก่อนจนกว่าจะมี endpoint ที่คืนค่านี้จริง — email/year_level ใช้ค่าจริงจาก user แล้ว
 const MOCK_MAJOR = "Computer Engineering";
   
 const readOnlyInputClass =
@@ -49,9 +47,9 @@ export default function Setting() {
             {user?.real_name || "User"}
           </h1>
           <p className="mt-1 text-sm font-medium text-[#BB6653]">
-            {user?.student_id} · Year {MOCK_YEAR_OF_STUDY} · {MOCK_MAJOR}
+            {user?.student_id} · Year {user?.year_level ?? "-"} · {MOCK_MAJOR}
           </p>
-          <p className="mt-1 text-sm text-[#211a14]/50">{MOCK_EMAIL}</p>
+          <p className="mt-1 text-sm text-[#211a14]/50">{user?.gmail}</p>
         </div>
       </div>
 
@@ -71,7 +69,7 @@ export default function Setting() {
           </div>
 
           <Field label="Email" readOnly className="mt-5">
-            <Input value={MOCK_EMAIL} disabled className={readOnlyInputClass} />
+            <Input value={user?.gmail ?? ""} disabled className={readOnlyInputClass} />
           </Field>
 
           <div className="mt-5 grid gap-5 sm:grid-cols-2">
@@ -79,7 +77,7 @@ export default function Setting() {
               <Input value={user?.student_id ?? ""} disabled className={readOnlyInputClass} />
             </Field>
             <Field label="Year of study" readOnly>
-              <Input value={MOCK_YEAR_OF_STUDY} disabled className={readOnlyInputClass} />
+              <Input value={user?.year_level ?? ""} disabled className={readOnlyInputClass} />
             </Field>
           </div>
 

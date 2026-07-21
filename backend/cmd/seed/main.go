@@ -119,7 +119,7 @@ func seedAdmin(db *gorm.DB) {
 	}
 
 	// admin ก็ต้องอยู่ในรายชื่อผู้มีสิทธิ์เหมือนกัน (ติด FK users.student_id → eligible_students)
-	eligible := entity.EligibleStudent{StudentID: adminStudentID, Major: "System"}
+	eligible := entity.EligibleStudent{StudentID: adminStudentID, Major: "System", EnrollmentStatus: 10}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible).Error; err != nil {
 		log.Fatalf("seed eligible admin ไม่สำเร็จ: %v", err)
 	}
@@ -135,7 +135,7 @@ func seedAdmin(db *gorm.DB) {
 		RealName:  "System Admin",
 		NickName:  "admin",
 		Gmail:	 "system@gmail.com",
-		Year:	   3,
+		EntryYear: 3,
 		Password:  string(hashadmin),
 	}
 	if err := db.Create(&admin).Error; err != nil {
@@ -160,7 +160,7 @@ func seeduser(db *gorm.DB) {
 		return
 	}
 
-	eligible := entity.EligibleStudent{StudentID: StudentID, Major: "CPE"}
+	eligible := entity.EligibleStudent{StudentID: StudentID, Major: entity.MajorCPE, EnrollmentStatus: 10}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible).Error; err != nil {
 		log.Fatalf("seed eligible user ไม่สำเร็จ: %v", err)
 	}
@@ -175,7 +175,7 @@ func seeduser(db *gorm.DB) {
 		RealName:  "Nattanant",
 		NickName:  "Earth",
 		Gmail:	 "Nattanant563214@gmail.com",
-		Year:	   4,
+		EntryYear: 4,
 		Password:  string(hashuser),
 	}
 	if err := db.Create(&user).Error; err != nil {
@@ -186,29 +186,33 @@ func seeduser(db *gorm.DB) {
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
 }
 
-// seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600010 ลงตาราง eligible_students
+// seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600011 ลงตาราง eligible_students
 // ไว้ให้ทีม frontend/QA ทดสอบหน้า Register ได้เลยโดยไม่ต้องยิง POST /api/admin/eligible-students เอง
 //
-// จงใจใส่ major ไม่เหมือนกันหมด (8 คนแรกเป็น CPE, 2 คนสุดท้ายไม่ใช่)
-// เพื่อให้ทดสอบด่านที่ 2 ของ Register ได้ด้วย (เจอ student_id แต่ไม่ใช่ CPE → 403 NOT_CPE)
-// ส่วนด่านที่ 1 (หา student_id ไม่เจอเลย) ทดสอบได้จาก student_id ไหนก็ได้ที่ไม่อยู่ใน 10 ตัวนี้
+// จงใจใส่ major/สถานภาพไม่เหมือนกันหมด (7 คนแรกเป็น CPE + สถานภาพ 10, คนที่ 8 เป็น CPE แต่สถานภาพ 40)
+// เพื่อให้ทดสอบด่านที่ 2 และ 3 ของ Register ได้ครบ:
+//   - ด่าน 1 (หา student_id ไม่เจอเลย) ทดสอบได้จาก student_id ไหนก็ได้ที่ไม่อยู่ใน 11 ตัวนี้
+//   - ด่าน 2 (เจอ student_id แต่ไม่ใช่ CPE → 403 NOT_CPE) ทดสอบด้วย B6600009-B6600010
+//   - ด่าน 3 (เจอ student_id + เป็น CPE แต่สถานภาพไม่ active → 403 NOT_ACTIVE_STUDENT) ทดสอบด้วย B6600008
 //
 // data flow: INSERT eligible_students แบบ ON CONFLICT DO NOTHING (รันซ้ำได้ ไม่พัง)
 func seedTestEligibleStudents(db *gorm.DB) {
 	rows := make([]entity.EligibleStudent, 0, 10)
-	for i := 1; i <= 8; i++ {
+	for i := 1; i <= 7; i++ {
 		rows = append(rows, entity.EligibleStudent{
-			StudentID: fmt.Sprintf("B66%05d", i),
-			Major:     entity.MajorCPE,
+			StudentID:        fmt.Sprintf("B66%05d", i),
+			Major:             entity.MajorCPE,
+			EnrollmentStatus: 10,
 		})
 	}
 	rows = append(rows,
-		entity.EligibleStudent{StudentID: "B6600009", Major: "Electrical Engineering"},
-		entity.EligibleStudent{StudentID: "B6600010", Major: "Mechanical Engineering"},
+		entity.EligibleStudent{StudentID: "B6600008", Major: entity.MajorCPE, EnrollmentStatus: 40},
+		entity.EligibleStudent{StudentID: "B6600009", Major: "Electrical Engineering", EnrollmentStatus: 10},
+		entity.EligibleStudent{StudentID: "B6600010", Major: "Mechanical Engineering", EnrollmentStatus: 10},
 	)
 
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
 		log.Fatalf("seed test eligible students ไม่สำเร็จ: %v", err)
 	}
-	log.Println("eligible_students ทดสอบพร้อมแล้ว (B6600001-B6600008 = CPE, B6600009-B6600010 = ไม่ใช่ CPE) ✓")
+	log.Println("eligible_students ทดสอบพร้อมแล้ว (B6600001-B6600007 = CPE active, B6600008 = CPE แต่จบแล้ว, B6600009-B6600010 = ไม่ใช่ CPE) ✓")
 }

@@ -10,6 +10,7 @@ import AdminDashboard from "@/pages/admin/AdminDashboard";
 import UserDashboard from "@/pages/user/UserDashboard";
 import AdminRequest from "@/pages/admin/AdminRequest";
 import AdminRequestQueue from "@/pages/admin/AdminRequestQueue";
+import AdminImportStudents from "@/pages/admin/AdminImportStudents";
 import RequestResources from "@/pages/user/RequestResources";
 import UserManagement from "@/pages/admin/Usermanagement";
 import MyServices from "@/pages/user/MyServices";
@@ -62,6 +63,7 @@ function App() {
                 <Route path="services" element={<Service />} />
                 <Route path="ipc-management" element={<IPCmanagement />} />
                 <Route path="audit-log" element={<Auditlog />} />
+                <Route path="admin-import-students" element={<AdminImportStudents />} />
               </>
             )}
           </Route>
