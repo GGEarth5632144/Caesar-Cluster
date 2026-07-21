@@ -4,7 +4,7 @@ import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import DashboardLayout from "@/layouts/DashboardLayout";
-import Profile from "@/pages/Profile";
+import Setting from "@/pages/Setting";
 import { useAuthStore } from "@/store/authStore";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import UserDashboard from "@/pages/user/UserDashboard";
@@ -33,7 +33,7 @@ function App() {
             {isUser && (
               <>
                 <Route index element={<UserDashboard />} />
-                <Route path="profile" element={<Profile />} />
+                <Route path="settings" element={<Setting />} />
                 <Route path="request-resources" element={<RequestResources />} />
                 <Route path="services" element={<MyServices />} />
               </>
@@ -42,7 +42,7 @@ function App() {
             {isAdmin && (
               <>
                 <Route index element={<AdminDashboard />} />
-                <Route path="profile" element={<Profile />} />
+                <Route path="settings" element={<Setting />} />
                 <Route path="admin-request" element={<AdminRequest />} />
                 <Route path="admin-approvals" element={<AdminRequestQueue />} />
               </>

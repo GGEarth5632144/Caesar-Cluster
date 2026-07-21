@@ -6,6 +6,7 @@ package dto
 type RegisterRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	RealName  string `json:"real_name" binding:"required"`
+	Gmail	  string `json:"gmail" binding:"required,email"`
 	NickName  string `json:"nick_name"`
 	Password  string `json:"password" binding:"required,min=8"`
 }
