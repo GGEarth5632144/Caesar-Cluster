@@ -17,3 +17,14 @@ type LoginRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	Password  string `json:"password" binding:"required"`
 }
+
+type UpdateUserRequest struct {
+	StudentID *string `json:"student_id"`
+	RealName  *string `json:"real_name"`
+	Gmail     *string `json:"gmail" binding:"omitempty,email"`
+	NickName  *string `json:"nick_name"`
+	Year      *int    `json:"year"`
+	RoleID    *int    `json:"role_id"`
+	CPUlimit  *int    `json:"cpu_limit"`
+	Ramlimit  *int    `json:"ram_limit"`
+}

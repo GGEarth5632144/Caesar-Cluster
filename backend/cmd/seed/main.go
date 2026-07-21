@@ -134,6 +134,8 @@ func seedAdmin(db *gorm.DB) {
 		RoleID:    adminRole.ID,
 		RealName:  "System Admin",
 		NickName:  "admin",
+		Gmail:	 "system@gmail.com",
+		Year:	   3,
 		Password:  string(hashadmin),
 	}
 	if err := db.Create(&admin).Error; err != nil {
@@ -172,6 +174,8 @@ func seeduser(db *gorm.DB) {
 		RoleID:    userRole.ID,
 		RealName:  "Nattanant",
 		NickName:  "Earth",
+		Gmail:	 "Nattanant563214@gmail.com",
+		Year:	   4,
 		Password:  string(hashuser),
 	}
 	if err := db.Create(&user).Error; err != nil {

@@ -11,6 +11,7 @@ import UserDashboard from "@/pages/user/UserDashboard";
 import AdminRequest from "@/pages/admin/AdminRequest";
 import AdminRequestQueue from "@/pages/admin/AdminRequestQueue";
 import RequestResources from "@/pages/user/RequestResources";
+import UserManagement from "@/pages/admin/Usermanagement";
 import MyServices from "@/pages/user/MyServices";
 // import VmManagement from "@/pages/VmManagement"; // หน้าอื่นๆ ของ Admin
 
@@ -34,7 +35,10 @@ function App() {
               <>
                 <Route index element={<UserDashboard />} />
                 <Route path="settings" element={<Setting />} />
-                <Route path="request-resources" element={<RequestResources />} />
+                <Route
+                  path="request-resources"
+                  element={<RequestResources />}
+                />
                 <Route path="services" element={<MyServices />} />
               </>
             )}
@@ -45,6 +49,7 @@ function App() {
                 <Route path="settings" element={<Setting />} />
                 <Route path="admin-request" element={<AdminRequest />} />
                 <Route path="admin-approvals" element={<AdminRequestQueue />} />
+                <Route path="user-management" element={<UserManagement />} />
               </>
             )}
           </Route>
