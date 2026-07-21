@@ -73,6 +73,7 @@ export default function WorkspaceOnboarding() {
       const created = await vmRequestApi.create({
         description: `ขอเปิดใช้งานเทมเพลต "${template.option_name}"`,
         namespace_name: "solo",
+        request_template_id: template.id,
         cpu_limit_milli: template.cpu_limit_milli,
         ram_limit_mb: template.ram_limit_mb,
       });

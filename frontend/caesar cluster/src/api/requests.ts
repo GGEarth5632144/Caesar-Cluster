@@ -6,14 +6,23 @@ export interface VmRequest {
   user_id: number;
   status: 'pending' | 'approved' | 'denied';
   namespace_name: string; // "solo" | "group" — ชนิดของ space ไม่ใช่ชื่อจริง
+  request_template_id: number | null;
   cpu_limit_milli: number;
   ram_limit_mb: number;
+  storage_gb: number; // snapshot จาก template ตอนยื่นคำขอ — 0 ถ้าไม่ได้อ้างอิง template ไหนเลย
   created_at: string;
+}
+
+// AdminVmRequest = VmRequest + ข้อมูลผู้ยื่นแบบย่อ (เฉพาะที่ GET /admin/requests คืนมาให้)
+export interface AdminVmRequest extends VmRequest {
+  requester_name: string;
+  requester_student_id: string;
 }
 
 export interface CreateVmRequestDTO {
   description?: string;
   namespace_name: 'solo' | 'group';
+  request_template_id?: number;
   cpu_limit_milli: number;
   ram_limit_mb: number;
 }
@@ -38,7 +47,7 @@ export const vmRequestApi = {
 
 export const adminVmRequestApi = {
   listAll: async () => {
-    const response = await axiosClient.get<ApiResponse<VmRequest[]>>('/admin/requests');
+    const response = await axiosClient.get<ApiResponse<AdminVmRequest[]>>('/admin/requests');
     return response.data.data;
   },
 

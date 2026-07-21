@@ -71,28 +71,28 @@ func (h *AdminController) AddEligibleStudents(c *gin.Context) {
 // data flow: JSON body → bind CreateRequestTemplateRequest → INSERT request_templates (is_active = true)
 // → ตอบ template ที่สร้าง → ผู้ใช้จะเห็นทันทีที่ GET /api/request-templates
 func (h *AdminController) CreateRequestTemplate(c *gin.Context) {
-    var req dto.CreateRequestTemplateRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
-        return
-    }
+	var req dto.CreateRequestTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
 
-    tmpl := entity.RequestTemplate{
-        OptionName:      req.OptionName, 
-        Category:        req.Category,
-        Description:     req.Description,
-        RelateSubject:   req.RelateSubject,
-        CPULimitMilli:   req.CPULimitMilli,
-        RAMLimitMB:      req.RAMLimitMB,
-        StorageGB:       req.StorageGB, 
-        IsActive:        false,
-    }
-    
-    if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
-        utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้วหรือข้อมูลไม่ถูกต้อง")
-        return
-    }
-    utils.OK(c, http.StatusCreated, tmpl)
+	tmpl := entity.RequestTemplate{
+		OptionName:    req.OptionName,
+		Category:      req.Category,
+		Description:   req.Description,
+		RelateSubject: req.RelateSubject,
+		CPULimitMilli: req.CPULimitMilli,
+		RAMLimitMB:    req.RAMLimitMB,
+		StorageGB:     req.StorageGB,
+		IsActive:      false,
+	}
+
+	if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
+		utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้วหรือข้อมูลไม่ถูกต้อง")
+		return
+	}
+	utils.OK(c, http.StatusCreated, tmpl)
 }
 
 // UpdateRequestTemplate แก้ไขข้อมูล Template หรือเปิด/ปิดสถานะ (PATCH)
@@ -119,15 +119,31 @@ func (h *AdminController) UpdateRequestTemplate(c *gin.Context) {
 
 	// อัปเดตเฉพาะฟิลด์ที่มีการส่งค่ามา (ใช้ Map เพื่อให้รองรับการอัปเดตแบบ Partial หรือบางฟิลด์)
 	updates := make(map[string]interface{})
-	
-	if req.OptionName != nil { updates["name"] = *req.OptionName }
-	if req.Category != nil { updates["category"] = *req.Category }
-	if req.Description != nil { updates["description"] = *req.Description }
-	if req.RelateSubject != nil { updates["relate_subject"] = *req.RelateSubject }
-	if req.CPULimitMilli != nil { updates["cpu_limit_milli"] = *req.CPULimitMilli }
-	if req.RAMLimitMB != nil { updates["ram_limit_mb"] = *req.RAMLimitMB }
-	if req.StorageGB != nil { updates["storage_gb"] = *req.StorageGB }
-	if req.IsActive != nil { updates["is_active"] = *req.IsActive } // สำคัญมาก สำหรับ Checkbox เปิด/ปิด
+
+	if req.OptionName != nil {
+		updates["name"] = *req.OptionName
+	}
+	if req.Category != nil {
+		updates["category"] = *req.Category
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.RelateSubject != nil {
+		updates["relate_subject"] = *req.RelateSubject
+	}
+	if req.CPULimitMilli != nil {
+		updates["cpu_limit_milli"] = *req.CPULimitMilli
+	}
+	if req.RAMLimitMB != nil {
+		updates["ram_limit_mb"] = *req.RAMLimitMB
+	}
+	if req.StorageGB != nil {
+		updates["storage_gb"] = *req.StorageGB
+	}
+	if req.IsActive != nil {
+		updates["is_active"] = *req.IsActive
+	} // สำคัญมาก สำหรับ Checkbox เปิด/ปิด
 
 	if err := h.db.WithContext(c.Request.Context()).Model(&tmpl).Updates(updates).Error; err != nil {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อัปเดตข้อมูลไม่สำเร็จ")
@@ -213,15 +229,47 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 	utils.OK(c, http.StatusOK, detail)
 }
 
-// ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) ให้ admin ดู
+// ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
+//
+// data flow: SELECT requests ทั้งหมด → เก็บ user_id ที่พบมาถามเป็นก้อนเดียว (กัน N+1 query)
+// → จับคู่กลับเป็น RequestWithRequester ทีละแถว (ตัวไหนหา user ไม่เจอ ปล่อยชื่อว่างไว้ ไม่ error ทั้งก้อน)
 func (h *AdminController) ListAllRequests(c *gin.Context) {
+	ctx := c.Request.Context()
+
 	var requests []entity.Request
-	if err := h.db.WithContext(c.Request.Context()).Order("created_at DESC").Find(&requests).Error; err != nil {
+	if err := h.db.WithContext(ctx).Order("created_at DESC").Find(&requests).Error; err != nil {
 		log.Printf("list requests error: %v", err)
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
 		return
 	}
-	utils.OK(c, http.StatusOK, requests)
+
+	userIDs := make([]int, 0, len(requests))
+	for _, r := range requests {
+		userIDs = append(userIDs, r.UserID)
+	}
+	var users []entity.User
+	if len(userIDs) > 0 {
+		if err := h.db.WithContext(ctx).Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+			log.Printf("list requests: load requesters error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
+			return
+		}
+	}
+	byID := make(map[int]entity.User, len(users))
+	for _, u := range users {
+		byID[u.ID] = u
+	}
+
+	out := make([]dto.RequestWithRequester, 0, len(requests))
+	for _, r := range requests {
+		view := dto.RequestWithRequester{Request: r}
+		if u, ok := byID[r.UserID]; ok {
+			view.RequesterName = u.RealName
+			view.RequesterStudentID = u.StudentID
+		}
+		out = append(out, view)
+	}
+	utils.OK(c, http.StatusOK, out)
 }
 
 // Approve อนุมัติคำขอ → สร้าง namespace จริงให้ผู้ยื่น (ใช้ NamespaceManager.Create ตัวเดียวกับที่

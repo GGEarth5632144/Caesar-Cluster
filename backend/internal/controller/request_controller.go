@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
@@ -59,13 +60,33 @@ func (h *RequestController) Create(c *gin.Context) {
 		return
 	}
 
+	// ถ้าอ้างอิง template มา ก๊อป storage_gb ของมันมาเก็บเป็น snapshot ไว้กับคำขอ
+	// (cpu/ram ยังเชื่อค่าที่ client ส่งมาเหมือนเดิม — WorkspaceOnboarding ก๊อปมาจาก template อยู่แล้ว)
+	var storageGB int
+	if req.RequestTemplateID != nil {
+		var tmpl entity.RequestTemplate
+		if err := h.db.WithContext(ctx).
+			Where("id = ? AND is_active = true", *req.RequestTemplateID).First(&tmpl).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.Error(c, http.StatusBadRequest, "TEMPLATE_NOT_FOUND", "ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
+				return
+			}
+			log.Printf("create request: find template error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+			return
+		}
+		storageGB = tmpl.StorageGB
+	}
+
 	request := entity.Request{
-		Description:   req.Description,
-		UserID:        userID,
-		Status:        entity.RequestPending,
-		NamespaceName: req.NamespaceName,
-		CPULimitMilli: req.CPULimitMilli,
-		RAMLimitMB:    req.RAMLimitMB,
+		Description:       req.Description,
+		UserID:            userID,
+		Status:            entity.RequestPending,
+		NamespaceName:     req.NamespaceName,
+		RequestTemplateID: req.RequestTemplateID,
+		CPULimitMilli:     req.CPULimitMilli,
+		RAMLimitMB:        req.RAMLimitMB,
+		StorageGB:         storageGB,
 	}
 	if err := h.db.WithContext(ctx).Create(&request).Error; err != nil {
 		log.Printf("create request error: %v", err)

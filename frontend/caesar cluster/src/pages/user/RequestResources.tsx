@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Clock, CheckCircle2, XCircle, Cpu, Layers, Loader2 } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
@@ -171,10 +171,6 @@ export default function RequestResources() {
                 </div>
 
                 <div className="mt-6 rounded-xl bg-[#FFF8E8]/40 px-5 py-4 text-sm font-medium text-[#211a14]/80 flex flex-wrap items-center gap-x-6 gap-y-2">
-                  <div className="capitalize font-bold text-[#BB6653]">
-                    {req.namespace_name} Space
-                  </div>
-                  <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
                   <div className="flex items-center gap-1">
                     <Cpu size={14} className="text-[#BB6653]" />
                     <span>{coreDisplay} cores</span>
@@ -184,6 +180,15 @@ export default function RequestResources() {
                     <Layers size={14} className="text-[#BB6653]" />
                     <span>{ramDisplay} RAM</span>
                   </div>
+                  {req.storage_gb > 0 && (
+                    <>
+                      <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
+                      <div className="flex items-center gap-1">
+                        <HardDrive size={14} className="text-[#BB6653]" />
+                        <span>{req.storage_gb} GB storage</span>
+                      </div>
+                    </>
+                  )}
                   {req.description && (
                     <>
                       <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
