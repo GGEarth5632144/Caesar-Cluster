@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -15,6 +16,9 @@ import (
 	"backend/internal/services"
 	"backend/internal/utils"
 )
+
+// errRequestNotPending = internal sentinel ใช้เทียบใน Approve เมื่อคำขอถูกจัดการไปแล้ว
+var errRequestNotPending = errors.New("request ถูกดำเนินการไปแล้ว")
 
 // AdminController รวม endpoint ฝั่ง admin ไว้ที่เดียว:
 // import รายชื่อ นศ. ที่มีสิทธิ์, สร้าง choices (plans), ดูภาพรวม namespace, ปรับโควตาให้กลุ่ม
@@ -67,28 +71,28 @@ func (h *AdminController) AddEligibleStudents(c *gin.Context) {
 // data flow: JSON body → bind CreateRequestTemplateRequest → INSERT request_templates (is_active = true)
 // → ตอบ template ที่สร้าง → ผู้ใช้จะเห็นทันทีที่ GET /api/request-templates
 func (h *AdminController) CreateRequestTemplate(c *gin.Context) {
-    var req dto.CreateRequestTemplateRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
-        return
-    }
+	var req dto.CreateRequestTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
 
-    tmpl := entity.RequestTemplate{
-        OptionName:      req.OptionName, 
-        Category:        req.Category,
-        Description:     req.Description,
-        RelateSubject:   req.RelateSubject,
-        CPULimitMilli:   req.CPULimitMilli,
-        RAMLimitMB:      req.RAMLimitMB,
-        StorageGB:       req.StorageGB, 
-        IsActive:        false,
-    }
-    
-    if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
-        utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้วหรือข้อมูลไม่ถูกต้อง")
-        return
-    }
-    utils.OK(c, http.StatusCreated, tmpl)
+	tmpl := entity.RequestTemplate{
+		OptionName:    req.OptionName,
+		Category:      req.Category,
+		Description:   req.Description,
+		RelateSubject: req.RelateSubject,
+		CPULimitMilli: req.CPULimitMilli,
+		RAMLimitMB:    req.RAMLimitMB,
+		StorageGB:     req.StorageGB,
+		IsActive:      false,
+	}
+
+	if err := h.db.WithContext(c.Request.Context()).Create(&tmpl).Error; err != nil {
+		utils.Error(c, http.StatusConflict, "TEMPLATE_EXISTS", "ชื่อ template นี้มีอยู่แล้วหรือข้อมูลไม่ถูกต้อง")
+		return
+	}
+	utils.OK(c, http.StatusCreated, tmpl)
 }
 
 // UpdateRequestTemplate แก้ไขข้อมูล Template หรือเปิด/ปิดสถานะ (PATCH)
@@ -115,15 +119,31 @@ func (h *AdminController) UpdateRequestTemplate(c *gin.Context) {
 
 	// อัปเดตเฉพาะฟิลด์ที่มีการส่งค่ามา (ใช้ Map เพื่อให้รองรับการอัปเดตแบบ Partial หรือบางฟิลด์)
 	updates := make(map[string]interface{})
-	
-	if req.OptionName != nil { updates["name"] = *req.OptionName }
-	if req.Category != nil { updates["category"] = *req.Category }
-	if req.Description != nil { updates["description"] = *req.Description }
-	if req.RelateSubject != nil { updates["relate_subject"] = *req.RelateSubject }
-	if req.CPULimitMilli != nil { updates["cpu_limit_milli"] = *req.CPULimitMilli }
-	if req.RAMLimitMB != nil { updates["ram_limit_mb"] = *req.RAMLimitMB }
-	if req.StorageGB != nil { updates["storage_gb"] = *req.StorageGB }
-	if req.IsActive != nil { updates["is_active"] = *req.IsActive } // สำคัญมาก สำหรับ Checkbox เปิด/ปิด
+
+	if req.OptionName != nil {
+		updates["name"] = *req.OptionName
+	}
+	if req.Category != nil {
+		updates["category"] = *req.Category
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.RelateSubject != nil {
+		updates["relate_subject"] = *req.RelateSubject
+	}
+	if req.CPULimitMilli != nil {
+		updates["cpu_limit_milli"] = *req.CPULimitMilli
+	}
+	if req.RAMLimitMB != nil {
+		updates["ram_limit_mb"] = *req.RAMLimitMB
+	}
+	if req.StorageGB != nil {
+		updates["storage_gb"] = *req.StorageGB
+	}
+	if req.IsActive != nil {
+		updates["is_active"] = *req.IsActive
+	} // สำคัญมาก สำหรับ Checkbox เปิด/ปิด
 
 	if err := h.db.WithContext(c.Request.Context()).Model(&tmpl).Updates(updates).Error; err != nil {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อัปเดตข้อมูลไม่สำเร็จ")
@@ -207,4 +227,133 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 		return
 	}
 	utils.OK(c, http.StatusOK, detail)
+}
+
+// ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
+//
+// data flow: SELECT requests ทั้งหมด → เก็บ user_id ที่พบมาถามเป็นก้อนเดียว (กัน N+1 query)
+// → จับคู่กลับเป็น RequestWithRequester ทีละแถว (ตัวไหนหา user ไม่เจอ ปล่อยชื่อว่างไว้ ไม่ error ทั้งก้อน)
+func (h *AdminController) ListAllRequests(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var requests []entity.Request
+	if err := h.db.WithContext(ctx).Order("created_at DESC").Find(&requests).Error; err != nil {
+		log.Printf("list requests error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
+		return
+	}
+
+	userIDs := make([]int, 0, len(requests))
+	for _, r := range requests {
+		userIDs = append(userIDs, r.UserID)
+	}
+	var users []entity.User
+	if len(userIDs) > 0 {
+		if err := h.db.WithContext(ctx).Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+			log.Printf("list requests: load requesters error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
+			return
+		}
+	}
+	byID := make(map[int]entity.User, len(users))
+	for _, u := range users {
+		byID[u.ID] = u
+	}
+
+	out := make([]dto.RequestWithRequester, 0, len(requests))
+	for _, r := range requests {
+		view := dto.RequestWithRequester{Request: r}
+		if u, ok := byID[r.UserID]; ok {
+			view.RequesterName = u.RealName
+			view.RequesterStudentID = u.StudentID
+		}
+		out = append(out, view)
+	}
+	utils.OK(c, http.StatusOK, out)
+}
+
+// Approve อนุมัติคำขอ → สร้าง namespace จริงให้ผู้ยื่น (ใช้ NamespaceManager.Create ตัวเดียวกับที่
+// ผู้ใช้สร้าง space เองใช้ — ได้ทั้งการเช็ค NOT NULL/unique ของคอลัมน์, ผูก users.namespace_id,
+// และเรียก Provisioner.EnsureNamespace ครบในที่เดียว ไม่ hand-roll insert เองอีก)
+//
+// data flow: ล็อกแถว requests ด้วย FOR UPDATE (กันแอดมิน 2 คนกด approve พร้อมกัน) → เช็คว่ายัง pending
+// → ปล่อยล็อก (ปิด transaction) → เรียก NamespaceManager.Create แยกนอก transaction เพราะมันคุยกับ
+// cluster จริงข้างใน (ไม่อยากถือ DB transaction ค้างไว้ระหว่างรอ network) → สำเร็จค่อย mark approved
+func (h *AdminController) Approve(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	ctx := c.Request.Context()
+
+	var req entity.Request
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&req, id).Error; err != nil {
+			return err
+		}
+		if req.Status != entity.RequestPending {
+			return errRequestNotPending
+		}
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบคำขอนี้")
+		case errors.Is(err, errRequestNotPending):
+			utils.Error(c, http.StatusConflict, "NOT_PENDING", "คำขอนี้ถูกดำเนินการไปแล้ว")
+		default:
+			log.Printf("approve request lock error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+		}
+		return
+	}
+
+	name := fmt.Sprintf("ns-user-%d", req.UserID)
+	ns, err := h.ns.Create(ctx, req.UserID, name, req.NamespaceName)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrAlreadyInNamespace):
+			utils.Error(c, http.StatusConflict, "ALREADY_IN_NAMESPACE", err.Error())
+		case errors.Is(err, services.ErrNameTaken):
+			utils.Error(c, http.StatusConflict, "NAME_TAKEN", err.Error())
+		default:
+			log.Printf("approve: provision namespace error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace ไม่สำเร็จ")
+		}
+		return
+	}
+
+	req.Status = entity.RequestApproved
+	if err := h.db.WithContext(ctx).Save(&req).Error; err != nil {
+		log.Printf("approve: namespace created (id=%d) but failed to mark request approved: %v", ns.ID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace สำเร็จแต่บันทึกสถานะคำขอไม่สำเร็จ กรุณาตรวจสอบ")
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"request": req, "namespace": ns})
+}
+
+// Deny ปฏิเสธคำขอ — แค่พลิกสถานะแบบ atomic (WHERE status = pending กันชนกับ Approve ที่วิ่งพร้อมกัน)
+func (h *AdminController) Deny(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	res := h.db.WithContext(c.Request.Context()).
+		Model(&entity.Request{}).
+		Where("id = ? AND status = ?", id, entity.RequestPending).
+		Update("status", entity.RequestDenied)
+	if res.Error != nil {
+		log.Printf("deny request error: %v", res.Error)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+		return
+	}
+	if res.RowsAffected == 0 {
+		utils.Error(c, http.StatusConflict, "NOT_PENDING", "ไม่พบคำขอนี้ หรือถูกดำเนินการไปแล้ว")
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"id": id, "status": entity.RequestDenied})
 }

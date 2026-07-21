@@ -2,7 +2,7 @@ import {
   Home,
   User,
   Settings,
-  LayoutDashboard,
+  Box,
   Bell,
   FileText,
 } from "lucide-react";
@@ -14,17 +14,16 @@ export const userNavItems: NavItem[] = [
   { label: "Profile", icon: User, path: "/profile" },
   { label: "Settings", icon: Settings, path: "/settings" },
   {
-    label: "Personal Dashboard",
-    icon: LayoutDashboard,
-    path: "/personal-dashboard",
+    label: "My Services",
+    icon: Box,
+    path: "/services",
     requiresVm: true,
   },
   { label: "Alerts", icon: Bell, badge: 3, path: "/alerts", requiresVm: true },
   {
-    label: "Request Resources",
+    label: "My Requests",
     icon: FileText,
     path: "/request-resources",
-    requiresVm: true,
   },
 ];
 

@@ -22,14 +22,18 @@ const (
 // ข้อมูลไหลออก: AdminController อ่านคำขอที่ status = pending มาอนุมัติ/ปฏิเสธ
 // ถ้า approve → ไปสร้าง Namespace จริงแล้วอัปเดต status กลับมาเป็น approved
 type Request struct {
-	ID            int       `gorm:"column:id;type:serial;primaryKey" json:"id"`
-	Description   string    `gorm:"column:description;type:text" json:"description"`
-	UserID        int       `gorm:"column:user_id;type:integer;not null;index:idx_requests_user" json:"user_id"`
-	Status        string    `gorm:"column:status;type:varchar(10);not null;default:pending;check:status IN ('pending','approved','denied')" json:"status"`
-	NamespaceName string    `gorm:"column:namespace_name;type:varchar(50);not null" json:"namespace_name"`
-	CPULimitMilli int       `gorm:"column:cpu_limit_milli;type:integer;not null;check:cpu_limit_milli > 0" json:"cpu_limit_milli"`
-	RAMLimitMB    int       `gorm:"column:ram_limit_mb;type:integer;not null;check:ram_limit_mb > 0" json:"ram_limit_mb"`
-	CreatedAt     time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
+	ID                int    `gorm:"column:id;type:serial;primaryKey" json:"id"`
+	Description       string `gorm:"column:description;type:text" json:"description"`
+	UserID            int    `gorm:"column:user_id;type:integer;not null;index:idx_requests_user" json:"user_id"`
+	Status            string `gorm:"column:status;type:varchar(10);not null;default:pending;check:status IN ('pending','approved','denied')" json:"status"`
+	NamespaceName     string `gorm:"column:namespace_name;type:varchar(50);not null" json:"namespace_name"`
+	RequestTemplateID *int   `gorm:"column:request_template_id;type:integer" json:"request_template_id"`
+	CPULimitMilli     int    `gorm:"column:cpu_limit_milli;type:integer;not null;check:cpu_limit_milli > 0" json:"cpu_limit_milli"`
+	RAMLimitMB        int    `gorm:"column:ram_limit_mb;type:integer;not null;check:ram_limit_mb > 0" json:"ram_limit_mb"`
+	// StorageGB เป็น snapshot ที่ก๊อปมาจาก RequestTemplate ตอนยื่นคำขอ (เหตุผลเดียวกับ Service.CPUMilli/RAMMB
+	// ดู request_template.go) เป็น 0 ได้ถ้าคำขอนี้ไม่ได้อ้างอิง template ใดเลย
+	StorageGB int       `gorm:"column:storage_gb;type:integer;not null;default:0" json:"storage_gb"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 }
 
 // TableName บอก GORM ให้ map struct นี้กับตาราง "requests"

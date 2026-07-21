@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 
 	"backend/internal/entity"
@@ -67,7 +68,11 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name, nsType 
 
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(ns).Error; err != nil {
-			return ErrNameTaken // ชนได้กรณีเดียวคือ unique ของ name
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation บน uni_namespaces_name
+				return ErrNameTaken
+			}
+			return err // สาเหตุอื่น (NOT NULL, check constraint, ฯลฯ) ให้ขึ้น error จริงแทนที่จะเดาว่าชื่อซ้ำ
 		}
 		// ผูกเจ้าของเข้ากับ space ที่เพิ่งสร้าง
 		return tx.Model(&entity.User{}).Where("id = ?", userID).
