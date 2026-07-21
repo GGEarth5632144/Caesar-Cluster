@@ -243,14 +243,18 @@ export default function UserManagement() {
                       </td>
 
                       <td className="px-3 py-4 text-[#211a14]/70">
-                        <div className="flex flex-col gap-1 text-xs">
-                          <span className="flex items-center gap-1.5">
-                            <Cpu size={13} className="text-[#BB6653]" /> {user.cpu_limit / 1000} Core
-                          </span>
-                          <span className="flex items-center gap-1.5">
-                            <Layers size={13} className="text-[#BB6653]" /> {user.ram_limit >= 1024 ? `${(user.ram_limit / 1024).toFixed(1)} GB` : `${user.ram_limit} MB`}
-                          </span>
-                        </div>
+                        {user.namespace_id ? (
+                          <div className="flex flex-col gap-1 text-xs">
+                            <span className="flex items-center gap-1.5">
+                              <Cpu size={13} className="text-[#BB6653]" /> {user.cpu_limit_milli / 1000} Core
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <Layers size={13} className="text-[#BB6653]" /> {(user.ram_limit_mb / 1024).toFixed(1)} GB
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-[#211a14]/40">ยังไม่มี space</span>
+                        )}
                       </td>
 
                       <td className="px-3 py-4 text-center">
@@ -325,8 +329,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
     nick_name: user.nick_name || "",
     gmail: user.gmail || "",
     role_id: user.role_id.toString(),
-    cpu_limit: user.cpu_limit.toString(),
-    ram_limit: user.ram_limit.toString(),
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -347,8 +349,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
         nick_name: formData.nick_name,
         gmail: formData.gmail,
         role_id: parseInt(formData.role_id, 10),
-        cpu_limit: parseInt(formData.cpu_limit, 10),
-        ram_limit: parseInt(formData.ram_limit, 10),
       };
 
       const updatedUser = await userManagementApi.update(user.id, payload);
@@ -429,16 +429,14 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
               </select>
             </div>
 
-            {/* CPU Limit */}
-            <div>
-              <label className={labelClass}>CPU Limit (Milli)</label>
-              <input name="cpu_limit" type="number" step="1000" value={formData.cpu_limit} onChange={handleChange} required className={inputClass} />
-            </div>
-
-            {/* RAM Limit */}
-            <div>
-              <label className={labelClass}>RAM Limit (MB)</label>
-              <input name="ram_limit" type="number" step="1024" value={formData.ram_limit} onChange={handleChange} required className={inputClass} />
+            {/* โควตา (Quota) — ผูกกับ namespace แล้ว ไม่ใช่ user แก้ที่หน้าจัดการ namespace แทน */}
+            <div className="sm:col-span-2">
+              <label className={labelClass}>Quota Limit</label>
+              <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-sm text-[#211a14]/60">
+                {user.namespace_id
+                  ? `${user.cpu_limit_milli / 1000} Core · ${(user.ram_limit_mb / 1024).toFixed(1)} GB — โควตาผูกกับ namespace ปรับได้ที่หน้าจัดการ Namespace`
+                  : "ผู้ใช้ยังไม่มี namespace — โควตาจะแสดงเมื่อสร้าง/เข้าร่วม space แล้ว"}
+              </div>
             </div>
 
           </div>

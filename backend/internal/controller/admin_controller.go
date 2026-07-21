@@ -558,9 +558,9 @@ func (h *AdminController) ListNamespaces(c *gin.Context) {
 // SetNamespaceQuota ปรับโควตาของ namespace (เช่น อัปกลุ่มจาก 3 core เป็น 8 core)
 //
 // data flow: อ่าน id จาก path + JSON body → bind SetQuotaRequest → NamespaceManager.SetQuota
-// (ตรวจเพดานตามชนิด space → UPDATE namespaces → sync ResourceQuota ขึ้น cluster) → ตอบ namespace ที่อัปเดตแล้ว
+// (ตรวจเพดาน → UPDATE namespaces → sync ResourceQuota ขึ้น cluster) → ตอบ namespace ที่อัปเดตแล้ว
 //
-// เพดาน: กลุ่มไม่เกิน 8 core / 8 GB, เดี่ยวไม่เกินค่า default (3 core / 2 GB)
+// เพดาน: ทุก namespace ไม่เกิน 8 core / 8 GB เท่ากันหมด
 func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -574,7 +574,7 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 		return
 	}
 
-	detail, err := h.ns.SetQuota(c.Request.Context(), id, req.CPULimitMilli, req.RAMLimitMB, req.MaxServices)
+	detail, err := h.ns.SetQuota(c.Request.Context(), id, req.CPULimitMilli, req.RAMLimitMB)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrNamespaceNotFound):
@@ -672,7 +672,7 @@ func (h *AdminController) Approve(c *gin.Context) {
 	}
 
 	name := fmt.Sprintf("ns-user-%d", req.UserID)
-	ns, err := h.ns.Create(ctx, req.UserID, name, req.NamespaceName)
+	ns, err := h.ns.Create(ctx, req.UserID, name)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrAlreadyInNamespace):
@@ -720,13 +720,37 @@ func (h *AdminController) Deny(c *gin.Context) {
 }
 
 // ListUsers คืนผู้ใช้งานทั้งหมด พร้อมชั้นปีที่คำนวณสดจาก student_id (ไม่ใช่ค่า User.EntryYear ที่เก็บดิบๆ)
-// data flow: SELECT users → คำนวณ YearLevel ทีละคนจาก student_id (แกะไม่ได้ เช่น account admin → 0)
-// → ห่อเป็น dto.UserWithYearLevel ตอบกลับ ให้หน้า User Management โชว์ "Year 4" ได้ตรงๆ
+// และโควตา CPU/RAM ของ namespace ที่ผู้ใช้สังกัด (โควตาผูกกับ namespace ไม่ใช่ user แล้ว)
+//
+// data flow: SELECT users → รวม namespace_id ที่พบมาถามเป็นก้อนเดียว (กัน N+1) → คำนวณ YearLevel
+// ทีละคนจาก student_id (แกะไม่ได้ เช่น account admin → 0) → ห่อเป็น dto.UserWithYearLevel ตอบกลับ
+// ให้หน้า User Management โชว์ "Year 4" + โควตาของ space ได้ตรงๆ (ผู้ใช้ที่ยังไม่มี space → โควตา 0)
 func (h *AdminController) ListUsers(c *gin.Context) {
+	ctx := c.Request.Context()
+
 	var users []entity.User
-	if err := h.db.WithContext(c.Request.Context()).Order("id").Find(&users).Error; err != nil {
+	if err := h.db.WithContext(ctx).Order("id").Find(&users).Error; err != nil {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลผู้ใช้งานไม่สำเร็จ")
 		return
+	}
+
+	// โหลดโควตาของทุก namespace ที่ผู้ใช้กลุ่มนี้สังกัดในทีเดียว (กัน N+1 query)
+	nsIDs := make([]int, 0, len(users))
+	for _, u := range users {
+		if u.NamespaceID != nil {
+			nsIDs = append(nsIDs, *u.NamespaceID)
+		}
+	}
+	var namespaces []entity.Namespace
+	if len(nsIDs) > 0 {
+		if err := h.db.WithContext(ctx).Where("id IN ?", nsIDs).Find(&namespaces).Error; err != nil {
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลผู้ใช้งานไม่สำเร็จ")
+			return
+		}
+	}
+	nsByID := make(map[int]entity.Namespace, len(namespaces))
+	for _, ns := range namespaces {
+		nsByID[ns.ID] = ns
 	}
 
 	now := time.Now()
@@ -736,7 +760,14 @@ func (h *AdminController) ListUsers(c *gin.Context) {
 		if err != nil {
 			yearLevel = 0 // เช่น account admin ที่ student_id ไม่ตรงรูปแบบ นศ. — โชว์ 0 แทนพัง
 		}
-		out = append(out, dto.UserWithYearLevel{User: u, YearLevel: yearLevel})
+		view := dto.UserWithYearLevel{User: u, YearLevel: yearLevel}
+		if u.NamespaceID != nil {
+			if ns, ok := nsByID[*u.NamespaceID]; ok {
+				view.CPULimitMilli = ns.CPULimitMilli
+				view.RAMLimitMB = ns.RAMLimitMB
+			}
+		}
+		out = append(out, view)
 	}
 	utils.OK(c, http.StatusOK, out)
 }
@@ -786,12 +817,6 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 	if req.RoleID != nil {
 		updates["role_id"] = *req.RoleID
 	}
-	if req.CPUlimit != nil {
-		updates["cpu_limit"] = *req.CPUlimit
-	}
-	if req.Ramlimit != nil {
-		updates["ram_limit"] = *req.Ramlimit
-	}
 
 	if err := h.db.WithContext(ctx).Model(&user).Updates(updates).Error; err != nil {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อัปเดตข้อมูลผู้ใช้งานไม่สำเร็จ")
@@ -800,13 +825,21 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 
 	h.db.First(&user, id) // ดึงข้อมูลล่าสุดมาตอบ
 
-	// ตอบพร้อม year_level เหมือน ListUsers — ไม่งั้นแถวนี้ในตารางฝั่ง frontend จะเห็น year_level
-	// หายไปทันทีหลังบันทึก (ถูกแทนที่ด้วย response ที่ไม่มีฟิลด์นี้)
+	// ตอบพร้อม year_level + โควตาของ namespace เหมือน ListUsers — ไม่งั้นแถวนี้ในตารางฝั่ง frontend
+	// จะเห็น year_level/quota หายไปทันทีหลังบันทึก (ถูกแทนที่ด้วย response ที่ไม่มีฟิลด์นี้)
 	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
 	if err != nil {
 		yearLevel = 0
 	}
-	utils.OK(c, http.StatusOK, dto.UserWithYearLevel{User: user, YearLevel: yearLevel})
+	view := dto.UserWithYearLevel{User: user, YearLevel: yearLevel}
+	if user.NamespaceID != nil {
+		var ns entity.Namespace
+		if err := h.db.WithContext(ctx).First(&ns, *user.NamespaceID).Error; err == nil {
+			view.CPULimitMilli = ns.CPULimitMilli
+			view.RAMLimitMB = ns.RAMLimitMB
+		}
+	}
+	utils.OK(c, http.StatusOK, view)
 }
 
 // DeleteUser ลบผู้ใช้งาน (DELETE)

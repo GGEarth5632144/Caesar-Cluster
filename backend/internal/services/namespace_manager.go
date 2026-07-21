@@ -14,7 +14,6 @@ import (
 var (
 	ErrAlreadyInNamespace = errors.New("คุณมี namespace อยู่แล้ว (1 คน = 1 space)")
 	ErrNamespaceNotFound  = errors.New("ไม่พบ namespace นี้")
-	ErrNotGroupNamespace  = errors.New("namespace นี้เป็นแบบเดี่ยว เข้าร่วมไม่ได้")
 	ErrNameTaken          = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
 	ErrQuotaOutOfRange    = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
 )
@@ -44,11 +43,11 @@ func NewNamespaceManager(db *gorm.DB, quota *QuotaService, prov Provisioner) *Na
 // data flow:
 //   - รับ userID + ชื่อ + ชนิด (solo/group) จาก NamespaceController
 //   - เช็คก่อนว่า user ยังไม่มี space (กติกา 1 คน = 1 space) → ถ้ามีแล้ว → ErrAlreadyInNamespace
-//   - ใน transaction: INSERT namespaces (โควตาตั้งต้น 3000m/2048MB/2 services) แล้ว UPDATE users.namespace_id
+//   - ใน transaction: INSERT namespaces (โควตาตั้งต้น 3000m/2048MB) แล้ว UPDATE users.namespace_id
 //   - นอก transaction: เรียก prov.EnsureNamespace ไปสร้าง namespace + ResourceQuota จริงบน cluster
 //
 // ถ้าสร้างบน cluster ไม่สำเร็จ จะ rollback ด้วยการลบ row ทิ้ง — ไม่ปล่อยให้ DB มี space ที่ไม่มีอยู่จริง
-func (m *NamespaceManager) Create(ctx context.Context, userID int, name, nsType string) (*entity.Namespace, error) {
+func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) (*entity.Namespace, error) {
 	var user entity.User
 	if err := m.db.WithContext(ctx).First(&user, userID).Error; err != nil {
 		return nil, err
@@ -59,11 +58,9 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name, nsType 
 
 	ns := &entity.Namespace{
 		Name:          name,
-		Type:          nsType,
 		ContributorID: userID,
 		CPULimitMilli: entity.DefaultCPULimitMilli,
 		RAMLimitMB:    entity.DefaultRAMLimitMB,
-		MaxServices:   entity.DefaultMaxServices,
 	}
 
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -94,7 +91,7 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name, nsType 
 //
 // data flow:
 //   - รับ userID + namespaceID จาก NamespaceController
-//   - เช็คว่า user ยังไม่มี space, และ namespace ปลายทางมีจริง + เป็นชนิด group เท่านั้น
+//   - เช็คว่า user ยังไม่มี space, และ namespace ปลายทางมีจริง
 //   - UPDATE users.namespace_id → จบ (ไม่ต้องแตะ cluster เพราะ namespace มีอยู่แล้ว)
 //
 // member_count เพิ่มขึ้นเองโดยอัตโนมัติ เพราะเรานับจาก COUNT(users) ไม่ได้เก็บตัวเลขไว้
@@ -113,9 +110,6 @@ func (m *NamespaceManager) Join(ctx context.Context, userID, namespaceID int) (*
 			return nil, ErrNamespaceNotFound
 		}
 		return nil, err
-	}
-	if ns.Type != entity.NamespaceGroup {
-		return nil, ErrNotGroupNamespace
 	}
 
 	if err := m.db.WithContext(ctx).Model(&entity.User{}).Where("id = ?", userID).
@@ -169,15 +163,15 @@ func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, erro
 	return out, nil
 }
 
-// SetQuota ให้ admin ปรับโควตาของ namespace (เช่น อัปกลุ่มจาก 3 core เป็น 8 core)
+// SetQuota ให้ admin ปรับโควตาของ namespace (เช่น อัปจาก 3 core เป็น 8 core)
 //
-// data flow: รับ namespaceID + โควตาใหม่จาก AdminController → ตรวจว่าไม่เกินเพดานตามชนิดของ space
+// data flow: รับ namespaceID + โควตาใหม่จาก AdminController → ตรวจว่าไม่เกินเพดานที่อนุญาต
 // → UPDATE namespaces → sync โควตาใหม่ขึ้น cluster ผ่าน prov.EnsureNamespace
 //
-// เพดาน: กลุ่มขยายได้ถึง 8 core / 8 GB, ส่วนเดี่ยวขยายไม่เกินค่า default (3 core / 2 GB)
+// เพดาน: ทุก namespace ขยายได้ถึง 8 core / 8 GB เท่ากันหมด (หลังเลิกแยกชนิด solo/group)
 // ไม่เช็คว่าโควตาใหม่ต่ำกว่ายอดที่ใช้อยู่หรือไม่ — ปล่อยให้ลดได้ (service เดิมยังรันอยู่
 // แต่จะ deploy เพิ่มไม่ได้จนกว่าจะลบของเก่าออก) ซึ่งเป็นพฤติกรรมเดียวกับ ResourceQuota ของ k8s
-func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, ramMB, maxServices int) (*NamespaceDetail, error) {
+func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, ramMB int) (*NamespaceDetail, error) {
 	var ns entity.Namespace
 	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -186,23 +180,17 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, err
 	}
 
-	maxCPU, maxRAM := entity.DefaultCPULimitMilli, entity.DefaultRAMLimitMB
-	if ns.Type == entity.NamespaceGroup {
-		maxCPU, maxRAM = entity.MaxCPULimitMilliGroup, entity.MaxRAMLimitMBGroup
-	}
-	if cpuMilli > maxCPU || ramMB > maxRAM {
-		return nil, fmt.Errorf("%w: %s ตั้งได้สูงสุด %dm CPU / %d MB",
-			ErrQuotaOutOfRange, ns.Type, maxCPU, maxRAM)
+	if cpuMilli > entity.MaxCPULimitMilli || ramMB > entity.MaxRAMLimitMB {
+		return nil, fmt.Errorf("%w: ตั้งได้สูงสุด %dm CPU / %d MB",
+			ErrQuotaOutOfRange, entity.MaxCPULimitMilli, entity.MaxRAMLimitMB)
 	}
 
 	ns.CPULimitMilli = cpuMilli
 	ns.RAMLimitMB = ramMB
-	ns.MaxServices = maxServices
 	if err := m.db.WithContext(ctx).Model(&entity.Namespace{}).Where("id = ?", ns.ID).
 		Updates(map[string]any{
 			"cpu_limit_milli": cpuMilli,
 			"ram_limit_mb":    ramMB,
-			"max_services":    maxServices,
 		}).Error; err != nil {
 		return nil, err
 	}

@@ -130,8 +130,7 @@ eligible_students (= "match")   รายชื่อ นศ. ที่มีส
         │ namespace_id  (1 คน = 1 space, NULL ได้ถ้ายังไม่มี)
         ▼
    namespaces  ◄── contributor_id ── users      << หน่วยที่ถือโควตา
-        │            type = solo | group
-        │            cpu_limit_milli / ram_limit_mb / max_services
+        │            cpu_limit_milli / ram_limit_mb
         ▼
     services ──────► request_templates  ("choices" ที่ admin สร้างไว้ให้เลือก)
       cpu_milli / ram_mb = snapshot ที่ก๊อปมาจาก template ตอนสร้าง

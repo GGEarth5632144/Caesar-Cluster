@@ -79,8 +79,6 @@ func (h *ServiceController) Create(c *gin.Context) {
 		switch {
 		case errors.Is(err, services.ErrQuotaExceeded):
 			utils.Error(c, http.StatusConflict, "QUOTA_EXCEEDED", err.Error())
-		case errors.Is(err, services.ErrServiceLimit):
-			utils.Error(c, http.StatusConflict, "SERVICE_LIMIT", err.Error())
 		case errors.Is(err, services.ErrServiceTooLarge):
 			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
 		case errors.Is(err, services.ErrRequestTemplateNotFound):

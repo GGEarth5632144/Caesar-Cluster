@@ -18,8 +18,8 @@ func NewMockProvisioner() *MockProvisioner { return &MockProvisioner{} }
 // EnsureNamespace จำลองการสร้าง namespace + ResourceQuota
 // data flow: รับ namespace ที่ NamespaceManager เพิ่งบันทึกลง DB → log โควตาที่จะไปตั้งบน cluster → คืน nil
 func (m *MockProvisioner) EnsureNamespace(ctx context.Context, ns *entity.Namespace) error {
-	log.Printf("[MOCK] สร้าง namespace '%s' (%s) quota: %dm CPU / %d MB / %d services",
-		ns.Name, ns.Type, ns.CPULimitMilli, ns.RAMLimitMB, ns.MaxServices)
+	log.Printf("[MOCK] สร้าง namespace '%s' quota: %dm CPU / %d MB",
+		ns.Name, ns.CPULimitMilli, ns.RAMLimitMB)
 	return nil
 }
 
