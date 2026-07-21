@@ -9,11 +9,9 @@ export interface NamespaceUsage {
 export interface NamespaceDetail {
   id: number;
   name: string;
-  type: 'solo' | 'group';
   contributor_id: number;
   cpu_limit_milli: number;
   ram_limit_mb: number;
-  max_services: number;
   created_at: string;
   usage: NamespaceUsage;
   member_count: number;

@@ -176,7 +176,7 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
                 <td className="py-4 font-medium">{item.option_name}</td>
                 <td className="py-4">{item.relate_subject}</td>
                 <td className="py-4 text-[#211a14]/70">
-                  {item.cpu_limit_milli / 1000} Core / {item.ram_limit_mb / 1000} GB
+                  {item.cpu_limit_milli / 1000} Core / {Math.floor(item.ram_limit_mb / 1000)} GB
                 </td>
                 <td className="py-4 text-center text-[#BB6653]">
                   <div className="flex justify-center">

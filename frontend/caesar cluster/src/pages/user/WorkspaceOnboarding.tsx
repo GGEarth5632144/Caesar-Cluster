@@ -13,6 +13,8 @@ export default function WorkspaceOnboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  // รายละเอียดคำขอที่ผู้ใช้เขียนเอง — จะถูกส่งเป็น description ไปให้ admin เห็นใน AdminRequestQueue
+  const [description, setDescription] = useState("");
 
   const [templates, setTemplates] = useState<RequestTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,15 +65,18 @@ export default function WorkspaceOnboarding() {
     setStep(2);
   };
 
+  const canSubmit =
+    !!selectedTemplateId && description.trim().length > 0 && !loading && !isSubmitting;
+
   const handleSubmitRequest = async () => {
     const template = templates.find((t) => t.id === selectedTemplateId);
-    if (!template) return;
+    if (!template || !description.trim()) return;
 
     setIsSubmitting(true);
     setError(null);
     try {
       const created = await vmRequestApi.create({
-        description: `ขอเปิดใช้งานเทมเพลต "${template.option_name}"`,
+        description: description.trim(),
         namespace_name: "solo",
         request_template_id: template.id,
         cpu_limit_milli: template.cpu_limit_milli,
@@ -280,14 +285,30 @@ export default function WorkspaceOnboarding() {
               </div>
             )}
 
+            {!loading && !error && (
+              <div className="space-y-3">
+                <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+                  2. Request Details
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  disabled={isSubmitting}
+                  rows={4}
+                  placeholder="อธิบายเหตุผลหรือรายละเอียดที่ต้องการขอ เช่น ใช้สำหรับวิชา... / โปรเจกต์... เพื่อให้ admin พิจารณา"
+                  className="w-full resize-none rounded-2xl border border-black/10 bg-[#FFFDF6] px-4 py-3 text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none transition-colors focus:border-[#BB6653] focus:ring-2 focus:ring-[#BB6653]/10 disabled:opacity-60"
+                />
+              </div>
+            )}
+
             <div className="flex justify-end pt-2">
               <button
                 type="button"
-                disabled={!selectedTemplateId || loading || isSubmitting}
+                disabled={!canSubmit}
                 onClick={handleSubmitRequest}
                 className={cn(
                   "rounded-xl px-6 py-3 text-sm font-bold text-white shadow-md transition-all flex items-center gap-2",
-                  selectedTemplateId && !loading && !isSubmitting
+                  canSubmit
                     ? "bg-[#BB6653] hover:bg-[#F08B51]"
                     : "bg-[#211a14]/20 cursor-not-allowed shadow-none"
                 )}

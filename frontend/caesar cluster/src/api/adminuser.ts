@@ -11,8 +11,10 @@ export interface User {
   gmail: string;
   year: number; // ปีที่เข้าศึกษา (พ.ศ. เช่น 2566) — ค่าดิบ ไม่ใช่ชั้นปีปัจจุบัน อย่าเอาไปโชว์ตรงๆ ใช้ year_level แทน
   year_level: number; // ชั้นปีปัจจุบัน คำนวณสดจาก student_id ทุกครั้งที่เรียก (เช่น 4) — ใช้ตัวนี้โชว์
-  cpu_limit: number;
-  ram_limit: number;
+  // โควตาของ namespace ที่ผู้ใช้สังกัด (โควตาผูกกับ namespace ไม่ใช่ user แล้ว)
+  // ผู้ใช้ที่ยังไม่มี space จะได้ 0 ทั้งคู่ — cpu เป็น millicore, ram เป็น MB
+  cpu_limit_milli: number;
+  ram_limit_mb: number;
   created_at: string;
 }
 
@@ -25,8 +27,6 @@ export interface UpdateUserDTO {
   nick_name?: string;
   year?: number;
   role_id?: number;
-  cpu_limit?: number;
-  ram_limit?: number;
 }
 
 // สร้าง Type มารองรับรูปแบบที่ utils.OK ของ Go ส่งมา

@@ -43,7 +43,7 @@ func (h *NamespaceController) Create(c *gin.Context) {
 		return
 	}
 
-	ns, err := h.ns.Create(c.Request.Context(), c.GetInt("userID"), req.Name, req.Type)
+	ns, err := h.ns.Create(c.Request.Context(), c.GetInt("userID"), req.Name)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrAlreadyInNamespace):
@@ -64,7 +64,7 @@ func (h *NamespaceController) Create(c *gin.Context) {
 // data flow: JSON body → bind JoinNamespaceRequest → NamespaceManager.Join (UPDATE users.namespace_id)
 // → ตอบ namespace ที่เข้าร่วม
 //
-// เข้าได้เฉพาะ space ชนิด group เท่านั้น และต้องยังไม่มี space ของตัวเอง
+// เข้าได้ก็ต่อเมื่อยังไม่มี space ของตัวเอง (1 คน = 1 space)
 func (h *NamespaceController) Join(c *gin.Context) {
 	var req dto.JoinNamespaceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -79,8 +79,6 @@ func (h *NamespaceController) Join(c *gin.Context) {
 			utils.Error(c, http.StatusConflict, "ALREADY_IN_NAMESPACE", err.Error())
 		case errors.Is(err, services.ErrNamespaceNotFound):
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
-		case errors.Is(err, services.ErrNotGroupNamespace):
-			utils.Error(c, http.StatusConflict, "NOT_GROUP", err.Error())
 		default:
 			log.Printf("join namespace error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เข้าร่วมไม่สำเร็จ")

@@ -14,7 +14,6 @@ import (
 var (
 	ErrNoNamespace     = errors.New("ยังไม่มี namespace — ต้องสร้างหรือเข้ากลุ่มก่อน")
 	ErrQuotaExceeded   = errors.New("ทรัพยากรที่ขอเกินโควตาที่เหลือของ namespace")
-	ErrServiceLimit    = errors.New("จำนวน service ใน namespace เต็มแล้ว")
 	ErrServiceTooLarge = errors.New("สเปกที่ขอเกินเพดานของ service 1 ตัว")
 )
 
@@ -97,9 +96,6 @@ func (q *QuotaService) ReserveAndInsert(
 			return err
 		}
 
-		if used.ServiceCount >= ns.MaxServices {
-			return fmt.Errorf("%w: deploy ได้สูงสุด %d services", ErrServiceLimit, ns.MaxServices)
-		}
 		if used.UsedCPUMilli+cpuMilli > ns.CPULimitMilli {
 			return fmt.Errorf("%w: CPU เหลือ %dm แต่ขอ %dm",
 				ErrQuotaExceeded, ns.CPULimitMilli-used.UsedCPUMilli, cpuMilli)

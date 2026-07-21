@@ -27,8 +27,6 @@ type User struct {
 	// เก็บไว้ได้เพราะเป็นข้อเท็จจริงที่ไม่เปลี่ยน — ต่างจาก "ชั้นปี" ที่ต้องคำนวณสดทุกครั้ง (ดู entity.YearLevel)
 	EntryYear	int 	  `gorm:"column:year;type:integer;not null;default:0" json:"year"`
 	CreatedAt   time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
-	CPUlimit	int 	  `gorm:"column:cpu_limit;type:integer;not null;default:0" json:"cpu_limit"`
-	Ramlimit    int 	  `gorm:"column:ram_limit;type:integer;not null;default:0" json:"ram_limit"`
 }
 
 // TableName บอก GORM ให้ map struct นี้กับตาราง "users"

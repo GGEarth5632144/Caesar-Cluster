@@ -265,7 +265,7 @@ export default function AdminRequestQueue() {
                               <Cpu size={14} className="text-[#BB6653]" /> {req.cpu_limit_milli / 1000} Core
                             </span>
                             <span className="flex items-center gap-1.5">
-                              <Layers size={14} className="text-[#BB6653]" /> {req.ram_limit_mb} MB
+                              <Layers size={14} className="text-[#BB6653]" /> {Math.floor(req.ram_limit_mb / 1000)} GB
                             </span>
                           </div>
                         </td>
