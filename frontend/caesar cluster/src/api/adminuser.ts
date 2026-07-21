@@ -9,7 +9,8 @@ export interface User {
   nick_name: string;
   namespace_id: number | null;
   gmail: string;
-  year: number;
+  year: number; // ปีที่เข้าศึกษา (พ.ศ. เช่น 2566) — ค่าดิบ ไม่ใช่ชั้นปีปัจจุบัน อย่าเอาไปโชว์ตรงๆ ใช้ year_level แทน
+  year_level: number; // ชั้นปีปัจจุบัน คำนวณสดจาก student_id ทุกครั้งที่เรียก (เช่น 4) — ใช้ตัวนี้โชว์
   cpu_limit: number;
   ram_limit: number;
   created_at: string;

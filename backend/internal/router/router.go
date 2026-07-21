@@ -24,8 +24,8 @@ import (
 //	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
 //	               GET|POST /api/services, DELETE /api/services/:id
-//	admin only   : POST /api/admin/eligible-students, POST /api/admin/request-templates,
-//	               GET /api/admin/namespaces, PATCH /api/admin/namespaces/:id/quota
+//	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
+//	               POST /api/admin/request-templates, GET /api/admin/namespaces, PATCH /api/admin/namespaces/:id/quota
 //
 // ลำดับที่ผู้ใช้ต้องเดิน: register → login → สร้าง/เข้าร่วม namespace → deploy service
 func Setup(
@@ -87,7 +87,9 @@ func Setup(
 
 		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret), middlewares.AdminOnly())
 		{
+			admin.GET("/eligible-students", adminCtl.ListEligibleStudents)
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
+			admin.POST("/eligible-students/preview", adminCtl.PreviewEligibleStudents)
 
             admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
             admin.PATCH("/request-templates/:id", adminCtl.UpdateRequestTemplate)
