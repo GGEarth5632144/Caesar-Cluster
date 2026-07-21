@@ -1,6 +1,5 @@
 import {
   Home,
-  User,
   Settings,
   Box,
   Bell,
@@ -11,8 +10,6 @@ import type { NavItem } from "@/types/nav";
 
 export const userNavItems: NavItem[] = [
   { label: "General Dashboard", icon: Home, path: "/" },
-  { label: "Profile", icon: User, path: "/profile" },
-  { label: "Settings", icon: Settings, path: "/settings" },
   {
     label: "My Services",
     icon: Box,
@@ -25,6 +22,7 @@ export const userNavItems: NavItem[] = [
     icon: FileText,
     path: "/request-resources",
   },
+  { label: "Settings", icon: Settings, path: "/settings" }
 ];
 
 export default userNavItems;

@@ -18,11 +18,11 @@ function splitName(fullName: string): [string, string] {
 const MOCK_EMAIL = "example@gmail.com";
 const MOCK_YEAR_OF_STUDY = "4";
 const MOCK_MAJOR = "Computer Engineering";
-
+  
 const readOnlyInputClass =
   "disabled:bg-[#EFE6D2] disabled:text-[#211a14]/70 disabled:opacity-100";
 
-export default function Profile() {
+export default function Setting() {
   const user = useAuthStore((state) => state.user);
   const [initialFirstName, initialLastName] = splitName(user?.real_name ?? "");
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Eye, Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, X, Loader2 } from "lucide-react";
+import { Eye, Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, X, Loader2, Search, Calendar } from "lucide-react";
 import { adminVmRequestApi, type AdminVmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
@@ -21,16 +21,24 @@ function statusBadge(status: AdminVmRequest["status"]) {
     case "denied":
       return { label: "denied", icon: XCircle, className: "bg-red-50 text-red-600" };
     default:
-      return { label: "pending", icon: Clock, className: "bg-[#FFF8E8] text-[#F08B51]" };
+      return { label: "waiting", icon: Clock, className: "bg-[#FFF8E8] text-[#F08B51]" };
   }
 }
+
+type TabType = "pending" | "approved" | "denied";
 
 export default function AdminRequestQueue() {
   const [requests, setRequests] = useState<AdminVmRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
   const [actioningId, setActioningId] = useState<number | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
+
+  // States สำหรับระบบ Filter และ Tabs
+  const [activeTab, setActiveTab] = useState<TabType>("pending");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [cutoffDate, setCutoffDate] = useState(""); // เก็บรูปแบบ YYYY-MM-DDTHH:mm
 
   const fetchRequests = async () => {
     try {
@@ -78,21 +86,115 @@ export default function AdminRequestQueue() {
     }
   };
 
+  // -------------------------------------------------------------
+  // ระบบคัดกรองข้อมูล (Filter Logic)
+  // -------------------------------------------------------------
+  const filteredRequests = requests.filter((req) => {
+    // 1. กรองตาม Tab (Status)
+    if (req.status !== activeTab) return false;
+
+    // 2. กรองตามคำค้นหา (ชื่อ หรือ รหัสนักศึกษา)
+    if (searchTerm) {
+      const lowerSearch = searchTerm.toLowerCase();
+      const nameMatch = (req.requester_name || "").toLowerCase().includes(lowerSearch);
+      const studentIdMatch = (req.requester_student_id || "").toLowerCase().includes(lowerSearch);
+      if (!nameMatch && !studentIdMatch) return false;
+    }
+
+    // 3. กรองตามวันเวลา (Deadline)
+    if (cutoffDate) {
+      const reqDate = new Date(req.created_at).getTime();
+      const cutoff = new Date(cutoffDate).getTime();
+      if (reqDate > cutoff) return false;
+    }
+
+    return true;
+  });
+
   const detailRequest = requests.find((r) => r.id === detailId) ?? null;
   const pendingCount = requests.filter((r) => r.status === "pending").length;
 
   return (
     <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-6 font-mono">
       <div className="rounded-3xl bg-[#FFFDF6] p-6 shadow-sm sm:p-8">
+        
+        {/* ส่วนหัวของหน้า */}
         <div className="mb-6 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <h2 className="text-2xl font-bold text-[#BB6653]">VM Requests</h2>
           {!isLoading && !error && (
             <p className="text-sm text-[#211a14]/50">
-              {requests.length} total · {pendingCount} pending
+              {pendingCount} waiting
             </p>
           )}
         </div>
 
+        {/* แถบเครื่องมือ: Tabs และ Filters */}
+        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between rounded-2xl bg-white p-4 border border-black/5">
+          
+          {/* 1. Tabs */}
+          <div className="flex gap-2">
+            {(["pending", "approved", "denied"] as TabType[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "px-4 py-2 text-sm font-bold rounded-xl transition-colors capitalize",
+                  activeTab === tab
+                    ? "bg-[#BB6653] text-white"
+                    : "bg-[#FFF8E8] text-[#211a14]/60 hover:bg-[#F08B51]/20"
+                )}
+              >
+                {tab === "pending" ? "Waiting" : tab}
+                {tab === "pending" && pendingCount > 0 && (
+                  <span className="ml-2 inline-flex size-5 items-center justify-center rounded-full bg-white/20 text-xs">
+                    {pendingCount}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* 2. Filters (Search & Date) */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Search Input */}
+            <div className="relative w-full sm:w-56">
+              <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <Search size={16} className="text-[#BB6653]/60" />
+              </div>
+              <input
+                type="text"
+                placeholder="ค้นหาชื่อ, รหัสนักศึกษา..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full rounded-xl border border-black/10 bg-[#FFFDF6] py-2 pl-9 pr-3 text-sm text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
+              />
+            </div>
+
+            {/* Date Cutoff Input */}
+            <div className="relative w-full sm:w-56">
+              <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <Calendar size={16} className="text-[#BB6653]/60" />
+              </div>
+              <input
+                type="datetime-local"
+                value={cutoffDate}
+                onChange={(e) => setCutoffDate(e.target.value)}
+                title="เลือกวันเวลาสิ้นสุดการรับคำขอ"
+                className="w-full rounded-xl border border-black/10 bg-[#FFFDF6] py-2 pl-9 pr-3 text-sm text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
+              />
+              {cutoffDate && (
+                <button 
+                  onClick={() => setCutoffDate("")}
+                  className="absolute inset-y-0 right-3 flex items-center text-red-400 hover:text-red-600"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ตารางแสดงข้อมูล */}
         {isLoading ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-[#BB6653]">
             <Loader2 size={28} className="animate-spin" />
@@ -104,11 +206,11 @@ export default function AdminRequestQueue() {
           <div className="-mx-6 overflow-x-auto sm:mx-0">
             <table className="w-full min-w-[720px] table-fixed text-left text-sm text-[#211a14]">
               <colgroup>
+                <col className="w-[25%]" />
                 <col className="w-[20%]" />
                 <col className="w-[15%]" />
+                <col className="hidden w-[15%] md:table-column" />
                 <col className="w-[15%]" />
-                <col className="hidden w-[10%] md:table-column" />
-                <col className="w-[20%]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-black/10 text-xs font-bold uppercase tracking-wider text-[#BB6653]">
@@ -116,18 +218,21 @@ export default function AdminRequestQueue() {
                   <th className="px-3 pb-4">Resources</th>
                   <th className="px-3 pb-4 text-center">Status</th>
                   <th className="hidden px-3 pb-4 md:table-cell">Submitted</th>
-                  <th className="px-6 pb-4 text-center sm:px-3">Detail</th>
+                  <th className="px-6 pb-4 text-center sm:px-3">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {requests.length === 0 ? (
+                {filteredRequests.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-neutral-500">
-                      ยังไม่มีคำขอในระบบ
+                    <td colSpan={5} className="py-16 text-center text-neutral-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span className="text-4xl text-[#BB6653]/30">📭</span>
+                        <p>ไม่พบคำขอในหมวดหมู่นี้</p>
+                      </div>
                     </td>
                   </tr>
                 ) : (
-                  requests.map((req) => {
+                  filteredRequests.map((req) => {
                     const badge = statusBadge(req.status);
                     const BadgeIcon = badge.icon;
                     const initials = (req.requester_name || `U${req.user_id}`)
@@ -155,18 +260,13 @@ export default function AdminRequestQueue() {
                           </div>
                         </td>
                         <td className="px-3 py-5 text-[#211a14]/70">
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                          <div className="flex flex-col gap-1">
                             <span className="flex items-center gap-1.5">
                               <Cpu size={14} className="text-[#BB6653]" /> {req.cpu_limit_milli / 1000} Core
                             </span>
                             <span className="flex items-center gap-1.5">
                               <Layers size={14} className="text-[#BB6653]" /> {req.ram_limit_mb} MB
                             </span>
-                            {req.storage_gb > 0 && (
-                              <span className="flex items-center gap-1.5">
-                                <HardDrive size={14} className="text-[#BB6653]" /> {req.storage_gb} GB
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="px-3 py-5 text-center">
@@ -181,10 +281,9 @@ export default function AdminRequestQueue() {
                         <td className="px-6 py-5 text-center sm:px-3">
                           <button
                             onClick={() => setDetailId(req.id)}
-                            className="inline-flex size-9 items-center justify-center rounded-lg bg-[#FBDFDA] text-[#BB6653] hover:bg-[#F08B51] hover:text-white transition-colors"
-                            title="View Detail"
+                            className="inline-flex h-9 px-4 items-center justify-center rounded-lg bg-[#FBDFDA] text-[#BB6653] font-bold text-xs hover:bg-[#F08B51] hover:text-white transition-colors"
                           >
-                            <Eye size={17} />
+                            <Eye size={14} className="mr-1.5" /> DETAIL
                           </button>
                         </td>
                       </tr>
@@ -197,6 +296,7 @@ export default function AdminRequestQueue() {
         )}
       </div>
 
+      {/* Modal จัดการคำขอ (เหมือนเดิม) */}
       {detailRequest && (
         <RequestDetailModal
           request={detailRequest}
@@ -210,6 +310,9 @@ export default function AdminRequestQueue() {
   );
 }
 
+// ==========================================
+// ส่วน Modal (เหมือนเดิม)
+// ==========================================
 interface RequestDetailModalProps {
   request: AdminVmRequest;
   isActioning: boolean;
@@ -224,8 +327,8 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
   const BadgeIcon = badge.icon;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono">
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-2xl">
         <div className="flex items-center justify-between px-6 py-5 border-b border-black/5">
           <div>
             <h2 className="text-lg font-bold text-[#211a14]">{request.requester_name || `user #${request.user_id}`}</h2>
@@ -253,8 +356,8 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">Request</label>
-            <p className="text-sm text-[#211a14]/80 italic">
+            <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">Request Note</label>
+            <p className="text-sm text-[#211a14]/80 italic bg-white p-3 rounded-xl border border-black/5">
               {request.description || "— no note attached —"}
             </p>
           </div>
@@ -265,12 +368,12 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1">
+            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
               <Cpu size={16} className="text-[#BB6653]" />
               <span className="text-sm font-bold text-[#211a14]">{request.cpu_limit_milli / 1000}</span>
               <span className="text-[10px] text-[#211a14]/50 uppercase tracking-wide">Cores</span>
             </div>
-            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1">
+            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
               <Layers size={16} className="text-[#BB6653]" />
               <span className="text-sm font-bold text-[#211a14]">
                 {request.ram_limit_mb >= 1024 ? `${(request.ram_limit_mb / 1024).toFixed(1)}` : request.ram_limit_mb}
@@ -279,7 +382,7 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
                 {request.ram_limit_mb >= 1024 ? "GB RAM" : "MB RAM"}
               </span>
             </div>
-            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1">
+            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
               <HardDrive size={16} className="text-[#BB6653]" />
               <span className="text-sm font-bold text-[#211a14]">{request.storage_gb > 0 ? request.storage_gb : "—"}</span>
               <span className="text-[10px] text-[#211a14]/50 uppercase tracking-wide">Storage GB</span>
@@ -287,7 +390,7 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-black/5">
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-black/5 bg-white/50 rounded-b-3xl">
           {isPending ? (
             <>
               <button
@@ -303,15 +406,15 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
                 type="button"
                 onClick={onApprove}
                 disabled={isActioning}
-                className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50 shadow-md"
               >
                 {isActioning && <Loader2 size={14} className="animate-spin" />}
                 <CheckCircle2 size={15} /> Approve request
               </button>
             </>
           ) : (
-            <p className="text-sm text-[#211a14]/50">
-              This request has already been <span className="font-semibold">{request.status}</span>.
+            <p className="text-sm text-[#211a14]/50 w-full text-center">
+              This request has already been <span className={cn("font-bold capitalize", badge.className.split(' ')[1])}>{request.status}</span>.
             </p>
           )}
         </div>
