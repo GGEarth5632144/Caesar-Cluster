@@ -11,6 +11,7 @@ import UserDashboard from "@/pages/user/UserDashboard";
 import AdminRequest from "@/pages/admin/AdminRequest";
 import AdminRequestQueue from "@/pages/admin/AdminRequestQueue";
 import RequestResources from "@/pages/user/RequestResources";
+import MyServices from "@/pages/user/MyServices";
 // import VmManagement from "@/pages/VmManagement"; // หน้าอื่นๆ ของ Admin
 
 function App() {
@@ -34,6 +35,7 @@ function App() {
                 <Route index element={<UserDashboard />} />
                 <Route path="profile" element={<Profile />} />
                 <Route path="request-resources" element={<RequestResources />} />
+                <Route path="services" element={<MyServices />} />
               </>
             )}
             {/* ---------------- ROUTE สำหรับ ADMIN (Role 2) ---------------- */}

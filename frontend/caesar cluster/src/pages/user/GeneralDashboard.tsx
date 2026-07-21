@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Cpu, Layers, Loader2 } from "lucide-react";
+import { Cpu, Layers, HardDrive, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
@@ -17,6 +17,10 @@ const MOCK_NOTIFICATIONS: NotificationItem[] = [
   { id: 2, dotColor: "bg-orange-500", message: "Memory on ubuntu-web reached 80% of quota", time: "10 mins ago" },
   { id: 3, dotColor: "bg-blue-500", message: "kali-lab-01 successfully restarted", time: "1 hour ago" },
 ];
+
+// จำลองข้อมูล Storage — backend ยังไม่มี endpoint สำหรับ storage usage
+const MOCK_STORAGE_USED_GB = 60;
+const MOCK_STORAGE_LIMIT_GB = 200;
 
 function statusColor(percent: number) {
   if (percent >= 80) return { text: "text-red-600", bar: "bg-red-500" };
@@ -66,14 +70,16 @@ export default function GeneralDashboard({ user }: { user: any }) {
   const ramLimitGB = data.ram_limit_mb / 1024;
   const ramPercent = Math.round((ramUsedGB / ramLimitGB) * 100) || 0;
 
-  const userName = user?.nick_name || user?.real_name || "User Name";
+  const storagePercent = Math.round((MOCK_STORAGE_USED_GB / MOCK_STORAGE_LIMIT_GB) * 100) || 0;
+
+  const userName = user?.real_name || user?.nick_name || "User Name";
 
   return (
     <div className="flex flex-col gap-10 text-left font-mono animate-in fade-in duration-200">
 
       <h1 className="text-4xl font-bold text-[#211a14]">Welcome back, {userName}</h1>
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-6 sm:grid-cols-3">
 
         <div className="rounded-2xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm flex flex-col justify-between">
           <div>
@@ -113,6 +119,27 @@ export default function GeneralDashboard({ user }: { user: any }) {
             <div
               className={cn("h-full rounded-full transition-all duration-500", statusColor(ramPercent).bar)}
               style={{ width: `${Math.min(ramPercent, 100)}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs font-bold tracking-wider uppercase">
+              <span className="text-[#211a14]/50 flex items-center gap-1">
+                <HardDrive size={14} className="text-[#BB6653]" /> Storage
+              </span>
+              <span className={statusColor(storagePercent).text}>{storagePercent}%</span>
+            </div>
+            <p className="mt-4 text-4xl font-bold text-[#211a14]">
+              {MOCK_STORAGE_USED_GB}{" "}
+              <span className="text-xl font-medium text-[#211a14]/40">/ {MOCK_STORAGE_LIMIT_GB} GB</span>
+            </p>
+          </div>
+          <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-black/5">
+            <div
+              className={cn("h-full rounded-full transition-all duration-500", statusColor(storagePercent).bar)}
+              style={{ width: `${Math.min(storagePercent, 100)}%` }}
             />
           </div>
         </div>
