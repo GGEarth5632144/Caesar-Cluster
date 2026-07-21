@@ -357,3 +357,89 @@ func (h *AdminController) Deny(c *gin.Context) {
 	}
 	utils.OK(c, http.StatusOK, gin.H{"id": id, "status": entity.RequestDenied})
 }
+
+func (h *AdminController) ListUsers(c *gin.Context) {
+	var users []entity.User
+	if err := h.db.WithContext(c.Request.Context()).Order("id").Find(&users).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลผู้ใช้งานไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, users)
+}
+
+// UpdateUser แก้ไขข้อมูลผู้ใช้งาน (PATCH)
+// data flow: อ่าน id → ตรวจสอบ User → เตรียมข้อมูล Map อัปเดต → UPDATE users
+func (h *AdminController) UpdateUser(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	var req dto.UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	ctx := c.Request.Context()
+	var user entity.User
+	if err := h.db.WithContext(ctx).First(&user, id).Error; err != nil {
+		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้งานในระบบ")
+		return
+	}
+
+	updates := make(map[string]interface{})
+
+	if req.StudentID != nil {
+		// ถ้ามีการเปลี่ยนรหัสนักศึกษา ต้องยัดลง eligible_students กันติด FK ก่อน
+		eligible := entity.EligibleStudent{StudentID: *req.StudentID, Major: "Updated by Admin"}
+		h.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible)
+		updates["student_id"] = *req.StudentID
+	}
+	if req.RealName != nil {
+		updates["real_name"] = *req.RealName
+	}
+	if req.Gmail != nil {
+		updates["gmail"] = *req.Gmail
+	}
+	if req.NickName != nil {
+		updates["nick_name"] = *req.NickName
+	}
+	if req.Year != nil {
+		updates["year"] = *req.Year
+	}
+	if req.RoleID != nil {
+		updates["role_id"] = *req.RoleID
+	}
+	if req.CPUlimit != nil {
+		updates["cpu_limit"] = *req.CPUlimit
+	}
+	if req.Ramlimit != nil {
+		updates["ram_limit"] = *req.Ramlimit
+	}
+
+	if err := h.db.WithContext(ctx).Model(&user).Updates(updates).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อัปเดตข้อมูลผู้ใช้งานไม่สำเร็จ")
+		return
+	}
+
+	h.db.First(&user, id) // ดึงข้อมูลล่าสุดมาตอบ
+	utils.OK(c, http.StatusOK, user)
+}
+
+// DeleteUser ลบผู้ใช้งาน (DELETE)
+func (h *AdminController) DeleteUser(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	if err := h.db.WithContext(c.Request.Context()).Delete(&entity.User{}, id).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
+		return
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"message": "ลบผู้ใช้งานสำเร็จ"})
+}

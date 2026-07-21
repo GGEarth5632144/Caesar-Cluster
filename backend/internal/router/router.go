@@ -100,6 +100,10 @@ func Setup(
 			admin.GET("/requests", adminCtl.ListAllRequests)
 			admin.PATCH("/requests/:id/approve", adminCtl.Approve)
 			admin.PATCH("/requests/:id/deny", adminCtl.Deny)
+
+			admin.GET("/users", adminCtl.ListUsers)
+			admin.PATCH("/users/:id", adminCtl.UpdateUser)
+			admin.DELETE("/users/:id", adminCtl.DeleteUser)
 		}
 	}
 
