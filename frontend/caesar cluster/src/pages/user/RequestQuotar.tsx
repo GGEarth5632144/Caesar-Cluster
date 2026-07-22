@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { ServiceCardsSkeleton, TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
 import axiosClient from "@/api/axiosClient";
 import { serviceApi, type AppService } from "@/api/services";
 import { getApiErrorMessage } from "@/api/authApi";
@@ -118,10 +119,7 @@ export default function RequestQuotar() {
       )}
 
       {loading ? (
-        <div className="flex h-full min-h-[300px] flex-col items-center justify-center gap-3 text-[#BB6653]">
-          <Loader2 size={36} className="animate-spin" />
-          <p className="text-sm font-medium">Loading your services...</p>
-        </div>
+        <ServiceCardsSkeleton />
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {services.map((svc) => {
@@ -397,9 +395,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
 
             {mode === "preset" ? (
               loadingTemplates ? (
-                <div className="flex items-center justify-center gap-2 py-6 text-[#BB6653]">
-                  <Loader2 size={20} className="animate-spin" />
-                </div>
+                <TemplateGridSkeleton count={4} compact />
               ) : templates.length === 0 ? (
                 <p className="text-xs text-gray-400 py-4 text-center bg-black/[0.02] rounded-xl border border-dashed border-black/10">
                   ไม่มี preset เปิดใช้งานอยู่ในขณะนี้ — ลองใช้แท็บ Custom แทน

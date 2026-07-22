@@ -1,7 +1,9 @@
+import { Suspense } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
+import LogoLoader from "@/components/ui/LogoLoader";
 import { useAuthStore } from "@/store/authStore";
 import userNavItems from "@/pages/user/User_Navigate";
 import adminNavItems from "@/pages/admin/Admin_Navigate";
@@ -39,7 +41,10 @@ export default function DashboardLayout() {
         <Topbar title={pageTitle} userName={user?.real_name ?? "User"} />
 
         <main className="flex-1 overflow-auto p-10">
-          <Outlet />
+          {/* Suspense ระดับหน้า — คงแถบ Sidebar/Topbar ไว้ระหว่างโหลด chunk ของแต่ละหน้า */}
+          <Suspense fallback={<LogoLoader label="กำลังโหลดหน้า..." />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

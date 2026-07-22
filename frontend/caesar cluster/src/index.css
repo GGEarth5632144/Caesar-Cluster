@@ -129,6 +129,77 @@
     }
 }
 
+/* ================= Loaders (skeleton / logo) =================
+   ใช้ร่วมกันทุกหน้า — skeleton shimmer, logo pulse ring และจุดกระพริบ
+*/
+
+/* Skeleton: พื้นหลังโทนแบรนด์ + แถบแสงกวาดผ่าน (shimmer) */
+.cc-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: color-mix(in oklab, #BB6653 12%, transparent);
+}
+
+.cc-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, #FFFFFF 55%, transparent),
+    transparent
+  );
+  animation: cc-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes cc-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Logo loader: วงแหวนหมุนรอบโลโก้ + ตัวโลโก้เต้นเบาๆ */
+@keyframes cc-logo-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.92);
+    opacity: 0.85;
+  }
+}
+
+@keyframes cc-logo-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.cc-logo-pulse {
+  animation: cc-logo-pulse 1.4s ease-in-out infinite;
+}
+
+.cc-logo-dot {
+  animation: cc-logo-bounce 1.2s ease-in-out infinite;
+}
+
+/* ผู้ใช้ที่ตั้งค่าลดการเคลื่อนไหว — ปิด animation ทั้งหมด */
+@media (prefers-reduced-motion: reduce) {
+  .cc-skeleton::after,
+  .cc-logo-pulse,
+  .cc-logo-dot {
+    animation: none;
+  }
+}
+
 /* Scoll */
 ::-webkit-scrollbar {
   width: 6px; /* ปรับความกว้างให้บางลง */
