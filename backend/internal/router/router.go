@@ -21,7 +21,8 @@ import (
 //
 // โครง route:
 //
-//	public       : GET /health, POST /api/register, POST /api/login
+//	public       : GET /health, POST /api/register, POST /api/login,
+//	               POST /api/forgot-password (rate limited), POST /api/reset-password
 //	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
 //	               GET|POST /api/services, DELETE /api/services/:id
@@ -36,7 +37,7 @@ func Setup(
 	svcMgr *services.ServiceManager,
 ) *gin.Engine {
 
-	authCtl := controller.NewAuthController(db, cfg.JWTSecret)
+	authCtl := controller.NewAuthController(db, cfg)
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
 	svcCtl := controller.NewServiceController(db, svcMgr)
 	tmplCtl := controller.NewRequestTemplateController(db)
@@ -68,6 +69,10 @@ func Setup(
 	{
 		api.POST("/register", authCtl.Register)
 		api.POST("/login", authCtl.Login)
+
+		// รีเซ็ตรหัสผ่านผ่านอีเมล (public) — /forgot-password มี rate limit ต่อ IP กันสแปม/email-bombing
+		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)
+		api.POST("/reset-password", authCtl.ResetPassword)
 
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret))
 		{

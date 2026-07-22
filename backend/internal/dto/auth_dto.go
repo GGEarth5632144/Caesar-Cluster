@@ -29,6 +29,20 @@ type UpdateUserRequest struct {
 	RoleID    *int    `json:"role_id"`
 }
 
+// ForgotPasswordRequest = body ของ POST /api/forgot-password
+// data flow: JSON จาก client → AuthController.ForgotPassword → หา user จาก gmail → ส่งลิงก์รีเซ็ตไปทางอีเมล
+type ForgotPasswordRequest struct {
+	Gmail string `json:"gmail" binding:"required,email"`
+}
+
+// ResetPasswordRequest = body ของ POST /api/reset-password
+// data flow: JSON จาก client (token มาจาก query ในลิงก์อีเมล) → AuthController.ResetPassword
+// → ตรวจ token → ตั้งรหัสผ่านใหม่ (min=8 ให้ตรงกับ RegisterRequest.Password)
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
 // UserWithYearLevel = entity.User + ชั้นปีที่คำนวณสดจาก student_id (entity.YearLevel)
 // + โควตาของ namespace ที่ผู้ใช้สังกัด (โควตาผูกกับ namespace ไม่ใช่ user แล้ว)
 //

@@ -56,4 +56,22 @@ export const authApi = {
     const response = await axiosClient.post<{ data: RegisterResponse }>('/register', payload);
     return response.data.data;
   },
+
+  // ขอลิงก์รีเซ็ตรหัสผ่าน — backend ตอบ generic message เสมอ (ไม่บอกว่ามี email นี้ในระบบไหม)
+  forgotPassword: async (payload: { gmail: string }) => {
+    const response = await axiosClient.post<{ data: { message: string } }>(
+      '/forgot-password',
+      payload,
+    );
+    return response.data.data;
+  },
+
+  // ตั้งรหัสผ่านใหม่ด้วย token จากลิงก์ในอีเมล
+  resetPassword: async (payload: { token: string; new_password: string }) => {
+    const response = await axiosClient.post<{ data: { message: string } }>(
+      '/reset-password',
+      payload,
+    );
+    return response.data.data;
+  },
 };

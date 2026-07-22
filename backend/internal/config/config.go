@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -21,6 +22,11 @@ type Config struct {
 	FrontendOrigin string
 	Provisioner    string // mock | kubernetes
 	KubeConfig     string // path ไปยังไฟล์ kubeconfig (ว่าง = ใช้ in-cluster config ตอนรันใน k8s)
+
+	// ค่าสำหรับส่งอีเมลรีเซ็ตรหัสผ่านผ่าน Resend (https://resend.com)
+	ResendAPIKey         string // API key ของ Resend — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
+	MailFrom             string // ผู้ส่ง เช่น "Caesar Cluster <no-reply@your-domain>"
+	ResetTokenTTLMinutes int    // อายุของลิงก์รีเซ็ตรหัสผ่าน (นาที)
 }
 
 // Load อ่านค่า config จาก environment (โหลด .env ให้ก่อนถ้ามี)
@@ -36,9 +42,18 @@ func Load() *Config {
 		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
 		Provisioner:    getEnv("PROVISIONER", ProvisionerMock),
 		KubeConfig:     getEnv("KUBECONFIG", ""),
+
+		ResendAPIKey:         getEnv("RESEND_API_KEY", ""),
+		MailFrom:             getEnv("MAIL_FROM", "Caesar Cluster <onboarding@resend.dev>"),
+		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
 	}
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
+	}
+	// อีเมลไม่ใช่ค่าที่ทั้งระบบต้องมีถึงจะ start ได้ (ต่างจาก DB/JWT) — แค่เตือนถ้าลืมตั้ง
+	// เพราะจะกระทบเฉพาะฟีเจอร์รีเซ็ตรหัสผ่าน ไม่ควรบล็อกทั้ง server สำหรับคนที่ dev ส่วนอื่นอยู่
+	if cfg.ResendAPIKey == "" {
+		log.Println("คำเตือน: ไม่ได้ตั้ง RESEND_API_KEY — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
 	}
 	return cfg
 }
@@ -50,4 +65,18 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// getEnvInt อ่าน env ที่คาดว่าเป็นตัวเลข — ว่าง/พังจะคืน fallback (พร้อม log เตือนถ้าพัง)
+func getEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		log.Printf("ค่า env %s=%q ไม่ใช่ตัวเลข ใช้ค่า default %d แทน", key, v, fallback)
+		return fallback
+	}
+	return n
 }
