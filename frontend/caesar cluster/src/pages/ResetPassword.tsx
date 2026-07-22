@@ -7,7 +7,7 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
-
+import { PATHS } from "@/config/routes";
 const resetSchema = z
   .object({
     new_password: z.string().min(8, "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร"),
@@ -77,7 +77,7 @@ export default function ResetPassword() {
               ลิงก์รีเซ็ตรหัสผ่านไม่ถูกต้อง กรุณาขอลิงก์ใหม่อีกครั้ง
             </p>
             <Link
-              to="/forgot-password"
+              to={PATHS.forgotPassword}
               className="text-sm text-white hover:underline"
             >
               ขอลิงก์รีเซ็ตรหัสผ่านใหม่
@@ -87,7 +87,7 @@ export default function ResetPassword() {
           <div className="flex flex-col items-center gap-6 text-center">
             <p className="text-white">ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว</p>
             <Button
-              onClick={() => navigate("/login", { replace: true })}
+              onClick={() => navigate(PATHS.login, { replace: true })}
               className="h-11 w-full max-w-sm rounded-full bg-[#FFF8E8] text-base text-[#211a14] hover:bg-[#FFF8E8]/90"
             >
               ไปหน้าเข้าสู่ระบบ
@@ -138,7 +138,7 @@ export default function ResetPassword() {
                 {isSubmitting ? "กำลังบันทึก..." : "ตั้งรหัสผ่านใหม่"}
               </Button>
               <Link
-                to="/login"
+                to={PATHS.login}
                 className="text-sm text-white/90 hover:underline"
               >
                 กลับไปหน้าเข้าสู่ระบบ

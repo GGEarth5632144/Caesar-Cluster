@@ -9,7 +9,7 @@ import {
   enrollmentStatusLabel,
   type EligibleStudent,
 } from "@/api/eligibleStudents";
-
+import { PATHS } from "@/config/routes";
 type YearTab = "all" | "1" | "2" | "3" | "4" | "5+" | "admin";
 
 export default function UserManagement() {
@@ -121,7 +121,7 @@ export default function UserManagement() {
           
           {/* ปุ่มเพิ่ม (ปุ่มหลัก สีทึบ) — พาไปหน้า Import Students เพื่ออัปโหลดไฟล์รายชื่อจากทะเบียน */}
           <button
-            onClick={() => navigate("/admin-import-students")}
+            onClick={() => navigate(`/${PATHS.adminImportStudents}`)}
             className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#F08B51] transition-colors"
           >
             <UserPlus size={18} />

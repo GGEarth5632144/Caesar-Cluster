@@ -4,6 +4,7 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Eye, EyeOff } from "lucide-react";
+import { PATHS } from "@/config/routes";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,7 +130,7 @@ export default function Login() {
             Remember For 30 Days
           </label>
           <Link
-            to="/forgot-password"
+            to={PATHS.forgotPassword}
             className="text-left hover:underline sm:text-right"
           >
             Forgot Password
@@ -151,7 +152,7 @@ export default function Login() {
             {isSubmitting ? "กำลังเข้าสู่ระบบ..." : "Login"}
           </Button>
           <Link
-            to="/register"
+            to={PATHS.register}
             className={cn(
               buttonVariants({ variant: "secondary" }),
               "h-11 w-full max-w-sm rounded-full bg-[#FBE3E6] text-base text-[#211a14] hover:bg-[#FBE3E6]/90"

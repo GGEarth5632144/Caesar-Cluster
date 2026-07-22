@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
-
+import { PATHS } from "@/config/routes";
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
 import LogoLoader from "@/components/ui/LogoLoader";
@@ -25,7 +25,7 @@ export default function DashboardLayout() {
 
   const handleLogout = () => {
     logout();
-    navigate("/login", { replace: true });
+    navigate(PATHS.login);
   };
 
   return (

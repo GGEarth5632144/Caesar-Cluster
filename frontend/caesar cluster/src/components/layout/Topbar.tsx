@@ -2,7 +2,8 @@ import { Bell, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-
+import { PATHS } from "@/config/routes";
+import { useAuthStore } from "@/store/authStore";
 interface TopbarProps {
   title: string;
   userName: string;
@@ -10,6 +11,11 @@ interface TopbarProps {
 
 export default function Topbar({ title, userName }: TopbarProps) {
   const initials = getInitials(userName) || "U";
+
+  const user = useAuthStore((state) => state.user);
+
+  const isUser = String(user?.role) === "user";
+  const isAdmin = String(user?.role) === "admin";
 
   return (
     <header className="flex h-20 shrink-0 items-center gap-4 bg-[#BB6653] px-4 text-white sm:gap-6 sm:px-8">
@@ -26,14 +32,25 @@ export default function Topbar({ title, userName }: TopbarProps) {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-5">
-        <Link
-          to="/alert"
+        {isUser && (
+          <Link
+          to={PATHS.alertuser}
           className="cursor-pointer text-white/90 hover:text-white transition-colors"
           aria-label="การแจ้งเตือน"
-        >
-          <Bell size={22} />
-        </Link>
-        <Link to="/profile">
+          >
+            <Bell size={22} />
+          </Link>
+        )}
+        {isAdmin && (
+          <Link
+          to={PATHS.alertadmin}
+          className="cursor-pointer text-white/90 hover:text-white transition-colors"
+          aria-label="การแจ้งเตือน"
+          >
+            <Bell size={22} />
+          </Link>
+        )}
+        <Link to={PATHS.settings}>
           <Avatar>
             <AvatarFallback className="bg-[#F08B51] text-white">
               {initials}
