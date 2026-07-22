@@ -33,6 +33,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.Role{},
 		&entity.EligibleStudent{},
 		&entity.User{},
+		&entity.PasswordResetToken{}, // ต้องมาหลัง users (อ้าง user_id)
 		&entity.Namespace{},
 		&entity.RequestTemplate{},
 		&entity.Service{},
@@ -128,6 +129,12 @@ func addForeignKeys(db *gorm.DB) error {
 		{
 			name: "fk_requests_user_id",
 			ddl: `ALTER TABLE requests ADD CONSTRAINT fk_requests_user_id
+			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		{
+			// ลบ user → token รีเซ็ตรหัสผ่านของคนนั้นหายตามไปด้วย
+			name: "fk_password_reset_tokens_user_id",
+			ddl: `ALTER TABLE password_reset_tokens ADD CONSTRAINT fk_password_reset_tokens_user_id
 			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
 		},
 		// audit_logs และ system_alerts ไม่มี FK ตั้งใจ — เก็บเป็น snapshot ล้วนๆ (ดูเหตุผลใน audit_log.go)

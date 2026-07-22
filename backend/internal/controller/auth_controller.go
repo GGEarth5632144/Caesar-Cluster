@@ -1,9 +1,13 @@
 package controller
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,20 +15,29 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"backend/internal/config"
 	"backend/internal/dto"
 	"backend/internal/entity"
+	"backend/internal/mailer"
 	"backend/internal/utils"
 )
 
-// AuthController ดูแล register/login/me — ถือ db (query user) และ jwtSecret (เซ็น token)
+// AuthController ดูแล register/login/me + รีเซ็ตรหัสผ่าน
+// ถือ db (query user), cfg (JWT secret / อายุ token / origin), และ mailer (ส่งอีเมลรีเซ็ต)
 type AuthController struct {
-	db        *gorm.DB
-	jwtSecret string
+	db     *gorm.DB
+	cfg    *config.Config
+	mailer *mailer.Mailer
 }
 
 // NewAuthController ประกอบ controller พร้อม dependency — ถูกเรียกจาก router.Setup
-func NewAuthController(db *gorm.DB, jwtSecret string) *AuthController {
-	return &AuthController{db: db, jwtSecret: jwtSecret}
+// สร้าง mailer จาก config ในตัว (ไม่ต้อง thread ผ่าน main/router เพิ่ม)
+func NewAuthController(db *gorm.DB, cfg *config.Config) *AuthController {
+	return &AuthController{
+		db:     db,
+		cfg:    cfg,
+		mailer: mailer.New(cfg.ResendAPIKey, cfg.MailFrom),
+	}
 }
 
 // Register สมัครผู้ใช้ใหม่ — เปิดให้เฉพาะ นศ. สาขา CPE ที่ยังมีสถานภาพเป็นนักศึกษาอยู่เท่านั้น
@@ -164,7 +177,7 @@ func (h *AuthController) Login(c *gin.Context) {
 		"role": role.Name,
 		"exp":  time.Now().Add(24 * time.Hour).Unix(),
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(h.jwtSecret))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(h.cfg.JWTSecret))
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง token ไม่สำเร็จ")
 		return
@@ -215,4 +228,155 @@ func (h *AuthController) Me(c *gin.Context) {
 		"role":         c.GetString("role"),
 		"namespace_id": user.NamespaceID,
 	})
+}
+
+// genericForgotMsg = ข้อความที่ตอบกลับ /forgot-password เสมอ ไม่ว่าจะมี email นี้ในระบบหรือไม่
+// จงใจให้เหมือนกันทุกกรณีเพื่อกันการเดาว่ามีบัญชีนี้อยู่ไหม (user enumeration) —
+// หลักการเดียวกับ Login ที่ตอบ error เดียวสำหรับ "ไม่พบ user" กับ "รหัสผิด"
+const genericForgotMsg = "ถ้ามีบัญชีที่ใช้อีเมลนี้ เราได้ส่งลิงก์รีเซ็ตรหัสผ่านไปให้แล้ว กรุณาตรวจสอบกล่องอีเมล"
+
+// ForgotPassword รับอีเมล → ถ้ามี user จริงก็สร้าง token แล้วส่งลิงก์รีเซ็ตไปทางอีเมล
+//
+// data flow:
+//   - JSON body → bind ForgotPasswordRequest (ต้องเป็น email)
+//   - หา user จาก gmail — ไม่ว่าจะเจอหรือไม่ ตอบ genericForgotMsg (200) เหมือนกันเป๊ะ กันเดาว่ามีบัญชีไหม
+//   - ถ้าเจอ: generate token (ลบ token เก่าที่ยังไม่ใช้ทิ้งก่อน) → ประกอบลิงก์ FRONTEND_ORIGIN/reset-password?token=...
+//     → ส่งอีเมลผ่าน mailer
+//   - ถ้า mailer พัง (เช่นยังไม่ได้ตั้ง RESEND_API_KEY) แค่ log ไว้ ยังตอบ 200 generic ไม่รั่วให้ client รู้
+//
+// route นี้มี rate limit ต่อ IP (ดู router.Setup) กันสแปม/email-bombing
+func (h *AuthController) ForgotPassword(c *gin.Context) {
+	var req dto.ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	db := h.db.WithContext(c.Request.Context())
+
+	var user entity.User
+	err := db.Where("gmail = ?", req.Gmail).First(&user).Error
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("forgot-password: query user error: %v", err)
+		}
+		// ไม่เจอ user (หรือ query พัง) ก็ตอบ generic เหมือนกัน ไม่บอกให้ client รู้
+		utils.OK(c, http.StatusOK, gin.H{"message": genericForgotMsg})
+		return
+	}
+
+	plainToken, err := h.generateResetToken(db, user.ID)
+	if err != nil {
+		log.Printf("forgot-password: generate token ให้ user %d ไม่สำเร็จ: %v", user.ID, err)
+		utils.OK(c, http.StatusOK, gin.H{"message": genericForgotMsg})
+		return
+	}
+
+	resetLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/reset-password?token=" + plainToken
+	if err := h.mailer.SendPasswordResetEmail(
+		c.Request.Context(), user.Gmail, user.RealName, resetLink, h.cfg.ResetTokenTTLMinutes,
+	); err != nil {
+		log.Printf("forgot-password: ส่งอีเมลให้ user %d ไม่สำเร็จ: %v", user.ID, err)
+		// ยังตอบ 200 generic ตามเดิม ไม่รั่วรายละเอียดผ่าน error response
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"message": genericForgotMsg})
+}
+
+// ResetPassword ตั้งรหัสผ่านใหม่จาก token ที่อยู่ในลิงก์อีเมล
+//
+// data flow:
+//   - JSON body → bind ResetPasswordRequest (token + new_password min=8)
+//   - consumeResetToken: hash token → หาแถวที่ยังไม่ถูกใช้ + ยังไม่หมดอายุ → mark used → คืน user
+//     ไม่ผ่าน (ผิด/หมดอายุ/ใช้ไปแล้ว) → 400 INVALID_TOKEN (ข้อความเดียวไม่แยกสาเหตุ)
+//   - bcrypt hash รหัสใหม่ (เหมือน Register) → UPDATE users.password
+func (h *AuthController) ResetPassword(c *gin.Context) {
+	var req dto.ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	db := h.db.WithContext(c.Request.Context())
+
+	user, err := h.consumeResetToken(db, req.Token)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_TOKEN",
+			"ลิงก์รีเซ็ตรหัสผ่านไม่ถูกต้องหรือหมดอายุแล้ว")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "hash ไม่สำเร็จ")
+		return
+	}
+
+	if err := db.Model(&entity.User{}).Where("id = ?", user.ID).
+		Update("password", string(hash)).Error; err != nil {
+		log.Printf("reset-password: อัปเดตรหัสผ่านของ user %d ไม่สำเร็จ: %v", user.ID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ตั้งรหัสผ่านใหม่ไม่สำเร็จ")
+		return
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{
+		"message": "ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่",
+	})
+}
+
+// generateResetToken สุ่ม token ใหม่ให้ user แล้วเก็บแต่ hash ลง DB — คืน plain token ไว้ใส่ในลิงก์อีเมล
+//
+// ลบ token เก่าที่ยังไม่ถูกใช้ของ user นี้ทิ้งก่อน กันมีลิงก์ค้างหลายใบใช้ได้พร้อมกัน (ขอใหม่ = ลิงก์เก่าตายทันที)
+func (h *AuthController) generateResetToken(db *gorm.DB, userID int) (string, error) {
+	if err := db.Where("user_id = ? AND used_at IS NULL", userID).
+		Delete(&entity.PasswordResetToken{}).Error; err != nil {
+		return "", err
+	}
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	plainToken := hex.EncodeToString(raw)
+	tokenHash := hashToken(plainToken)
+
+	ttl := time.Duration(h.cfg.ResetTokenTTLMinutes) * time.Minute
+	row := entity.PasswordResetToken{
+		UserID:    userID,
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+	if err := db.Create(&row).Error; err != nil {
+		return "", err
+	}
+	return plainToken, nil
+}
+
+// consumeResetToken ตรวจ token ที่รับมา (plain) แล้ว mark ว่าใช้แล้ว — คืน user ที่ผูกกับ token นั้น
+// error ถ้า: token ไม่ตรง / หมดอายุ / ถูกใช้ไปแล้ว — ไม่แยกสาเหตุเพื่อไม่ให้เดาสถานะ token ได้
+func (h *AuthController) consumeResetToken(db *gorm.DB, plainToken string) (*entity.User, error) {
+	tokenHash := hashToken(plainToken)
+
+	var prt entity.PasswordResetToken
+	if err := db.Where("token_hash = ? AND used_at IS NULL AND expires_at > ?", tokenHash, time.Now()).
+		First(&prt).Error; err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	if err := db.Model(&prt).Update("used_at", &now).Error; err != nil {
+		return nil, err
+	}
+
+	var user entity.User
+	if err := db.First(&user, prt.UserID).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// hashToken คืน sha256 hex ของ token — ใช้ทั้งตอนสร้าง (เก็บลง DB) และตอนตรวจ (เทียบกับที่เก็บไว้)
+func hashToken(plainToken string) string {
+	sum := sha256.Sum256([]byte(plainToken))
+	return hex.EncodeToString(sum[:])
 }

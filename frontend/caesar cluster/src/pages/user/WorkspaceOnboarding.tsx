@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import type { LucideIcon } from "lucide-react";
-import { Package, Cpu, Layers, HardDrive, ArrowLeft, Check, Loader2, Clock } from "lucide-react";
+import { Cpu, Layers, HardDrive, ArrowLeft, ArrowRight, Check, Loader2, Clock } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import axiosClient from "@/api/axiosClient";
@@ -148,30 +147,25 @@ export default function WorkspaceOnboarding() {
       <div className="mt-8 w-full max-w-3xl rounded-3xl border border-black/5 bg-[#FFFDF6] p-12 transition-all shadow-sm">
 
         {step === 1 && (
-          <>
-            <div className="flex flex-col items-center gap-3 text-center">
-              <div className="flex size-20 items-center justify-center rounded-2xl bg-[#FBDFDA] text-[#BB6653]">
-                <Package size={34} />
-              </div>
-              <h2 className="text-2xl font-semibold text-[#211a14]">Create your first VM</h2>
-              <p className="max-w-lg text-base text-[#211a14]/60">
-                Set up your workspace and pick a resource quota to get
-                started.
+          <button
+            type="button"
+            onClick={handleStart}
+            className="group flex w-full flex-col items-center gap-4 rounded-2xl bg-[#BB6653] px-8 py-16 text-center shadow-lg shadow-[#BB6653]/25 transition-all hover:-translate-y-0.5 hover:bg-[#F08B51] hover:shadow-xl"
+          >
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-white/15 text-white">
+              <Cpu size={30} />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-white">Create VM</p>
+              <p className="mt-1.5 max-w-md text-base text-white/80">
+                Set up your workspace and pick a resource quota to get started.
               </p>
             </div>
-
-            <div className="mt-10">
-              <VmOptionCard
-                icon={Cpu}
-                iconBg="bg-[#FBDFDA]"
-                iconColor="text-[#BB6653]"
-                title="Create VM"
-                description="Set up your workspace to start computing."
-                selected={false}
-                onClick={handleStart}
-              />
-            </div>
-          </>
+            <span className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-5 py-2.5 text-sm font-bold text-white transition-colors group-hover:bg-white/25">
+              Get Started
+              <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+            </span>
+          </button>
         )}
 
         {step === 2 && (
@@ -322,44 +316,5 @@ export default function WorkspaceOnboarding() {
 
       </div>
     </div>
-  );
-}
-
-interface VmOptionCardProps {
-  icon: LucideIcon;
-  iconBg: string;
-  iconColor: string;
-  title: string;
-  description: string;
-  selected: boolean;
-  onClick: () => void;
-}
-
-function VmOptionCard({
-  icon: Icon,
-  iconBg,
-  iconColor,
-  title,
-  description,
-  selected,
-  onClick,
-}: VmOptionCardProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center gap-2.5 rounded-2xl border px-8 py-10 text-center transition-colors w-full",
-        selected
-          ? "border-[#BB6653] bg-[#FFF8E8]"
-          : "border-black/10 hover:border-black/20 hover:bg-black/[0.02]"
-      )}
-    >
-      <div className={cn("flex size-14 items-center justify-center rounded-xl", iconBg, iconColor)}>
-        <Icon size={26} />
-      </div>
-      <p className="text-lg font-semibold text-[#211a14]">{title}</p>
-      <p className="text-base text-[#211a14]/60">{description}</p>
-    </button>
   );
 }

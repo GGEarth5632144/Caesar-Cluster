@@ -128,9 +128,12 @@ export default function Login() {
             />
             Remember For 30 Days
           </label>
-          <button type="button" className="text-left hover:underline sm:text-right">
+          <Link
+            to="/forgot-password"
+            className="text-left hover:underline sm:text-right"
+          >
             Forgot Password
-          </button>
+          </Link>
         </div>
 
         {errors.root && (
