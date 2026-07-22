@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { PATHS } from "@/config/routes";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +57,7 @@ export default function ForgotPassword() {
               ถ้ามีบัญชีที่ใช้อีเมลนี้ เราได้ส่งลิงก์รีเซ็ตรหัสผ่านไปให้แล้ว
               กรุณาตรวจสอบกล่องอีเมลของคุณ
             </p>
-            <Link to="/login" className="text-sm text-white hover:underline">
+            <Link to={PATHS.login} className="text-sm text-white hover:underline">
               กลับไปหน้าเข้าสู่ระบบ
             </Link>
           </div>
@@ -91,7 +92,7 @@ export default function ForgotPassword() {
                 {isSubmitting ? "กำลังส่ง..." : "ส่งลิงก์รีเซ็ตรหัสผ่าน"}
               </Button>
               <Link
-                to="/login"
+                to={PATHS.login}
                 className="text-sm text-white/90 hover:underline"
               >
                 กลับไปหน้าเข้าสู่ระบบ

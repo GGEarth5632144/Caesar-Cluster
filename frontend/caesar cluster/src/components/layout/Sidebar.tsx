@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { NavItem } from "@/types/nav";
 
+
 interface SidebarProps {
   navItems: NavItem[];
   userName: string;
