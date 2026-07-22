@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, Loader2 } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RequestListSkeleton } from "@/components/ui/PageSkeletons";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 
@@ -33,15 +34,6 @@ export default function RequestResources() {
     });
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-full min-h-[400px] flex-col items-center justify-center gap-3 text-[#BB6653] font-mono">
-        <Loader2 size={36} className="animate-spin" />
-        <p className="text-sm font-medium">Loading your requests...</p>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-6 text-left font-mono animate-in fade-in duration-200">
       <div>
@@ -50,6 +42,8 @@ export default function RequestResources() {
           Track your VM and quota requests, and their approval status.
         </p>
       </div>
+
+      {loading && <RequestListSkeleton />}
 
       {error && (
         <div className="p-4 rounded-xl bg-red-50 text-red-600 text-sm border border-red-100 max-w-3xl">

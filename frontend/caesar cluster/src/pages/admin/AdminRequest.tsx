@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Plus, Edit2, Trash2, CheckSquare, Square, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { requestTemplateApi, type RequestTemplate, type CreateRequestTemplateDTO } from "../../api/adminrequest";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
 
 type ViewState = "list" | "create" | "edit";
 
@@ -70,7 +72,17 @@ export default function AdminRequest() {
       </div>
 
       {isLoading ? (
-        <div className="text-center py-10 text-neutral-500">กำลังโหลดข้อมูล...</div>
+        <div className="rounded-3xl bg-[#FFFDF6] p-8 shadow-sm">
+          <div className="mb-6 flex items-center justify-between">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-10 w-72 rounded-full" />
+          </div>
+          <table className="w-full text-left text-sm">
+            <tbody>
+              <TableRowsSkeleton rows={5} cols={5} />
+            </tbody>
+          </table>
+        </div>
       ) : (
         <>
           {currentView === "list" && (

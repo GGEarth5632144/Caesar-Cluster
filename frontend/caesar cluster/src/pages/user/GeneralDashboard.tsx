@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { Cpu, Layers, HardDrive, Loader2 } from "lucide-react";
+import { Cpu, Layers, HardDrive } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DashboardStatsSkeleton } from "@/components/ui/PageSkeletons";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 
@@ -46,12 +47,7 @@ export default function GeneralDashboard({ user }: { user: any }) {
   }, []);
 
   if (loading) {
-    return (
-      <div className="flex h-full min-h-[400px] flex-col items-center justify-center gap-3 text-[#BB6653]">
-        <Loader2 size={36} className="animate-spin" />
-        <p className="text-sm font-medium font-mono">Loading cluster metrics...</p>
-      </div>
-    );
+    return <DashboardStatsSkeleton />;
   }
 
   if (error || !data) {

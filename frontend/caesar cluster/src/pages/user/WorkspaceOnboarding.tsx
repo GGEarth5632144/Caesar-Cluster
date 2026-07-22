@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Cpu, Layers, HardDrive, ArrowLeft, ArrowRight, Check, Loader2, Clock } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import LogoLoader from "@/components/ui/LogoLoader";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
 import axiosClient from "@/api/axiosClient";
 import { getApiErrorMessage } from "@/api/authApi";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
@@ -91,12 +94,7 @@ export default function WorkspaceOnboarding() {
   };
 
   if (checkingRequests) {
-    return (
-      <div className="flex h-full min-h-[400px] flex-col items-center justify-center gap-3 text-[#BB6653] font-mono">
-        <Loader2 size={36} className="animate-spin" />
-        <p className="text-sm font-medium">Checking your request status...</p>
-      </div>
-    );
+    return <LogoLoader label="Checking your request status..." />;
   }
 
   // มีคำขอที่ยังไม่ถูกดำเนินการ (pending) → โชว์หน้ารอ admin อนุมัติแทนฟอร์ม
@@ -189,9 +187,9 @@ export default function WorkspaceOnboarding() {
             </div>
 
             {loading && (
-              <div className="flex flex-col items-center justify-center py-12 gap-3 text-[#BB6653]">
-                <Loader2 size={32} className="animate-spin" />
-                <p className="text-sm font-medium">กำลังโหลดเทมเพลต Quota ทั้งหมด...</p>
+              <div className="space-y-3">
+                <Skeleton className="h-3 w-40" />
+                <TemplateGridSkeleton count={4} />
               </div>
             )}
 
