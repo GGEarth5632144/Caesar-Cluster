@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, UserPlus, Edit2, Trash2, Cpu, Layers, Loader2, X ,Users} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TableRowsSkeleton, SimpleRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { userManagementApi, type User, type UpdateUserDTO } from "@/api/adminuser";
 import {
   eligibleStudentsApi,
@@ -182,14 +183,7 @@ export default function UserManagement() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr>
-                  <td colSpan={5} className="py-16 text-center text-[#BB6653]">
-                    <div className="flex flex-col items-center justify-center gap-3">
-                      <Loader2 size={28} className="animate-spin" />
-                      <p className="text-sm font-medium">กำลังโหลดข้อมูล...</p>
-                    </div>
-                  </td>
-                </tr>
+                <TableRowsSkeleton rows={6} cols={5} />
               ) : error ? (
                 <tr>
                   <td colSpan={5} className="py-10">
@@ -540,10 +534,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-16 text-[#BB6653]">
-              <Loader2 size={28} className="animate-spin" />
-              <p className="text-sm font-medium">กำลังโหลดข้อมูล...</p>
-            </div>
+            <SimpleRowsSkeleton rows={7} cols={4} />
           ) : error ? (
             <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-sm text-red-600">
               {error}

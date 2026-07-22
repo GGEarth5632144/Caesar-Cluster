@@ -3,6 +3,7 @@ import { Eye, Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, X, Loader2, 
 import { adminVmRequestApi, type AdminVmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
+import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
 
 function formatDateTime(dateString: string) {
   return new Date(dateString).toLocaleDateString("th-TH", {
@@ -196,9 +197,19 @@ export default function AdminRequestQueue() {
 
         {/* ตารางแสดงข้อมูล */}
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-[#BB6653]">
-            <Loader2 size={28} className="animate-spin" />
-            <p className="text-sm font-medium">กำลังโหลดข้อมูล...</p>
+          <div className="-mx-6 overflow-x-auto sm:mx-0">
+            <table className="w-full min-w-[720px] table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[25%]" />
+                <col className="w-[20%]" />
+                <col className="w-[15%]" />
+                <col className="w-[15%]" />
+                <col className="w-[15%]" />
+              </colgroup>
+              <tbody>
+                <TableRowsSkeleton rows={5} cols={5} />
+              </tbody>
+            </table>
           </div>
         ) : error ? (
           <div className="p-4 rounded-xl bg-red-50 text-red-600 text-sm border border-red-100">{error}</div>
