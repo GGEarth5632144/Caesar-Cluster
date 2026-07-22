@@ -12,25 +12,26 @@ import {
 } from "lucide-react";
 
 import type { NavItem } from "@/types/nav";
+import { PATHS } from "@/config/routes"; // นำเข้า PATHS
 
 export const adminNavItems: NavItem[] = [
   // 1. ภาพรวม
   { label: "General Dashboard", icon: Home, path: "/" },//กำลังทำ
   
   // 2. สิ่งที่แอดมินต้องจัดการ/ตรวจสอบเป็นอันดับแรก
-  { label: "Request", icon: Inbox, path: "/admin-request" },
-  { label: "Alert", icon: BellRing, path: "/alertadmin" },//กำลังทำ
+  { label: "Request", icon: Inbox, path: `/${PATHS.adminRequest}` },
+  { label: "Alert", icon: BellRing, path: `/${PATHS.alertadmin}` },//กำลังทำ
 
   // 3. การจัดการทรัพยากรหลักในระบบ (เรียงจากคน -> เครื่อง -> เซอร์วิส -> โควตา)
-  { label: "User Management", icon: Users, path: "/user-management" },
-  { label: "IPC Management", icon: Server, path: "/ipc-management" },//กำลังทำ
-  { label: "Services", icon: Layers, path: "/services" },//กำลังทำ
-  { label: "Quota", icon: Sliders, path: "/admin-approvals" },
-  { label: "Import Students", icon: Upload, path: "/admin-import-students" },
+  { label: "User Management", icon: Users, path: `/${PATHS.userManagement}` },
+  { label: "IPC Management", icon: Server, path: `/${PATHS.ipcManagement}` },//กำลังทำ
+  { label: "Services", icon: Layers, path: `/${PATHS.services}` },//กำลังทำ
+  { label: "Quota", icon: Sliders, path: `/${PATHS.adminApprovals}` },
+  { label: "Import Students", icon: Upload, path: `/${PATHS.adminImportStudents}` },
 
   // 4. การตรวจสอบย้อนหลัง และตั้งค่าระบบ (มักจะอยู่ล่างสุดเสมอ)
-  { label: "Audit Log", icon: ScrollText, path: "/audit-log" },//กำลังทำ
-  { label: "Settings", icon: Settings, path: "/settings" },//กำลังทำ
+  { label: "Audit Log", icon: ScrollText, path: `/${PATHS.auditLog}` },//กำลังทำ
+  { label: "Settings", icon: Settings, path: `/${PATHS.settings}` },//กำลังทำ
 ];
 
 export default adminNavItems;

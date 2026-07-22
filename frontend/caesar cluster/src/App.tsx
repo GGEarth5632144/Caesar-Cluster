@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { PATHS } from "@/config/routes";
 
 import ProtectedRoute from "@/components/ProtectedRoute";
 import DashboardLayout from "@/layouts/DashboardLayout";
@@ -39,45 +40,45 @@ function App() {
   const isUser = String(user?.role) === "user";
   const isAdmin = String(user?.role) === "admin";
 
-  return (
+return (
     <BrowserRouter>
-      {/* fallback ระดับบนสุด — ครอบหน้า auth และตัว layout ระหว่างโหลด chunk */}
       <Suspense fallback={<LogoLoader fullScreen label="กำลังโหลด..." />}>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
+          {/* ---------------- Public Routes ---------------- */}
+          <Route path={PATHS.login} element={<Login />} />
+          <Route path={PATHS.register} element={<Register />} />
+          <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
+          <Route path={PATHS.resetPassword} element={<ResetPassword />} />
+          
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<DashboardLayout />}>
+              
               {/* ---------------- ROUTE สำหรับ USER (Role 1) ---------------- */}
               {isUser && (
                 <>
                   <Route index element={<UserDashboard />} />
-                  <Route path="settings" element={<Setting />} />
-                  <Route
-                    path="request-resources"
-                    element={<RequestResources />}
-                  />
-                  <Route path="services" element={<MyServices />} />
-                  <Route path="alertuser" element={<Alertuser />} />
-                  <Route path="my-service" element={<Myservice />} />
-                  <Route path="create-service" element={<Createservice />} />
+                  <Route path={PATHS.settings} element={<Setting />} />
+                  <Route path={PATHS.requestResources} element={<RequestResources />} />
+                  <Route path={PATHS.services} element={<MyServices />} />
+                  <Route path={PATHS.alertuser} element={<Alertuser />} />
+                  <Route path={PATHS.myService} element={<Myservice />} />
+                  <Route path={PATHS.createService} element={<Createservice />} />
                 </>
               )}
+              
               {/* ---------------- ROUTE สำหรับ ADMIN (Role 2) ---------------- */}
               {isAdmin && (
                 <>
                   <Route index element={<AdminDashboard />} />
-                  <Route path="settings" element={<Setting />} />
-                  <Route path="admin-request" element={<AdminRequest />} />
-                  <Route path="admin-approvals" element={<AdminRequestQueue />} />
-                  <Route path="user-management" element={<UserManagement />} />
-                  <Route path="alertadmin" element={<Alertadmin />} />
-                  <Route path="services" element={<Service />} />
-                  <Route path="ipc-management" element={<IPCmanagement />} />
-                  <Route path="audit-log" element={<Auditlog />} />
-                  <Route path="admin-import-students" element={<AdminImportStudents />} />
+                  <Route path={PATHS.settings} element={<Setting />} />
+                  <Route path={PATHS.adminRequest} element={<AdminRequest />} />
+                  <Route path={PATHS.adminApprovals} element={<AdminRequestQueue />} />
+                  <Route path={PATHS.userManagement} element={<UserManagement />} />
+                  <Route path={PATHS.alertadmin} element={<Alertadmin />} />
+                  <Route path={PATHS.services} element={<Service />} />
+                  <Route path={PATHS.ipcManagement} element={<IPCmanagement />} />
+                  <Route path={PATHS.auditLog} element={<Auditlog />} />
+                  <Route path={PATHS.adminImportStudents} element={<AdminImportStudents />} />
                 </>
               )}
             </Route>
