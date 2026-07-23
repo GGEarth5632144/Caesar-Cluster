@@ -10,6 +10,7 @@ import {
   type EligibleStudent,
 } from "@/api/eligibleStudents";
 import { PATHS } from "@/config/routes";
+import { notify, confirmAction } from "@/lib/modal";
 type YearTab = "all" | "1" | "2" | "3" | "4" | "5+" | "admin";
 
 export default function UserManagement() {
@@ -51,14 +52,20 @@ export default function UserManagement() {
   }, []);
 
   const handleDelete = async (id: number, name: string) => {
-    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบผู้ใช้งาน "${name}"?\nการกระทำนี้ไม่สามารถย้อนกลับได้`)) return;
-    
+    const confirmed = await confirmAction({
+      title: `ลบผู้ใช้งาน "${name}"?`,
+      description: "การกระทำนี้ไม่สามารถย้อนกลับได้",
+      confirmText: "ลบผู้ใช้งาน",
+      destructive: true,
+    });
+    if (!confirmed) return;
+
     try {
       await userManagementApi.delete(id);
       setUsers((prev) => prev.filter((user) => user.id !== id));
     } catch (err) {
       console.error("Failed to delete user:", err);
-      alert("เกิดข้อผิดพลาดในการลบผู้ใช้งาน");
+      notify.error("เกิดข้อผิดพลาดในการลบผู้ใช้งาน");
     }
   };
 
@@ -349,7 +356,7 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
       onSuccess(updatedUser);
     } catch (err) {
       console.error("Failed to update user:", err);
-      alert("เกิดข้อผิดพลาดในการอัปเดตข้อมูล");
+      notify.error("เกิดข้อผิดพลาดในการอัปเดตข้อมูล");
     } finally {
       setIsSubmitting(false);
     }

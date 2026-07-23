@@ -3,6 +3,7 @@ import { Plus, Edit2, Trash2, CheckSquare, Square, Search, ChevronLeft, ChevronR
 import { requestTemplateApi, type RequestTemplate, type CreateRequestTemplateDTO } from "../../api/adminrequest";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
+import { notify, confirmAction } from "@/lib/modal";
 
 type ViewState = "list" | "create" | "edit";
 
@@ -39,7 +40,7 @@ export default function AdminRequest() {
       );
     } catch (error) {
       console.error("อัปเดตสถานะไม่สำเร็จ:", error);
-      alert("ไม่สามารถเปลี่ยนสถานะได้");
+      notify.error("ไม่สามารถเปลี่ยนสถานะได้");
     }
   };
 
@@ -310,7 +311,7 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
       onSuccess();
     } catch (error) {
       console.error("บันทึกข้อมูลไม่สำเร็จ:", error);
-      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+      notify.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
     } finally {
       setIsSubmitting(false);
     }
@@ -318,9 +319,14 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
 
   const handleDelete = async () => {
     if (!initialData) return;
-    
-    const confirmDelete = window.confirm("คุณต้องการลบ Template นี้ใช่หรือไม่?");
-    if (!confirmDelete) return;
+
+    const confirmed = await confirmAction({
+      title: "ลบ Template นี้ใช่หรือไม่?",
+      description: "การกระทำนี้ไม่สามารถย้อนกลับได้",
+      confirmText: "ลบ Template",
+      destructive: true,
+    });
+    if (!confirmed) return;
 
     try {
       setIsSubmitting(true);
@@ -328,7 +334,7 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
       onSuccess();
     } catch (error) {
       console.error("ลบข้อมูลไม่สำเร็จ:", error);
-      alert("เกิดข้อผิดพลาดในการลบข้อมูล");
+      notify.error("เกิดข้อผิดพลาดในการลบข้อมูล");
       setIsSubmitting(false);
     }
   };

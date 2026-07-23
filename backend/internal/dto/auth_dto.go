@@ -15,9 +15,11 @@ type RegisterRequest struct {
 
 // LoginRequest = body ของ POST /api/login
 // data flow: JSON จาก client → ShouldBindJSON ใน AuthController.Login → ใช้ค้นหา user + เทียบรหัสผ่าน
+// Remember = ติ๊ก "Remember For 30 Days" มาไหม — คุม exp ของ JWT ที่ออกให้ (ดู AuthController.Login)
 type LoginRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	Password  string `json:"password" binding:"required"`
+	Remember  bool   `json:"remember"`
 }
 
 type UpdateUserRequest struct {
