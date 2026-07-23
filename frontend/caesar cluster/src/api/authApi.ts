@@ -41,7 +41,7 @@ export function getApiErrorMessage(err: unknown, fallback: string) {
 }
 
 export const authApi = {
-  login: async (payload: { student_id: string; password: string }) => {
+  login: async (payload: { student_id: string; password: string; remember: boolean }) => {
     const response = await axiosClient.post<{ data: LoginResponse }>('/login', payload);
     return response.data.data;
   },

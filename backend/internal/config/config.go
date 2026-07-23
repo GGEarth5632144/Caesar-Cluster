@@ -23,6 +23,9 @@ type Config struct {
 	Provisioner    string // mock | kubernetes
 	KubeConfig     string // path ไปยังไฟล์ kubeconfig (ว่าง = ใช้ in-cluster config ตอนรันใน k8s)
 
+	JWTTTLHours        int // อายุ JWT ปกติ (ชม.) — ไม่ติ๊ก remember ตอน login
+	JWTRememberTTLDays int // อายุ JWT ตอนติ๊ก "Remember For 30 Days" (วัน)
+
 	// ค่าสำหรับส่งอีเมลรีเซ็ตรหัสผ่านผ่าน Resend (https://resend.com)
 	ResendAPIKey         string // API key ของ Resend — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
 	MailFrom             string // ผู้ส่ง เช่น "Caesar Cluster <no-reply@your-domain>"
@@ -42,6 +45,9 @@ func Load() *Config {
 		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
 		Provisioner:    getEnv("PROVISIONER", ProvisionerMock),
 		KubeConfig:     getEnv("KUBECONFIG", ""),
+
+		JWTTTLHours:        getEnvInt("JWT_TTL_HOURS", 24),
+		JWTRememberTTLDays: getEnvInt("JWT_REMEMBER_TTL_DAYS", 30),
 
 		ResendAPIKey:         getEnv("RESEND_API_KEY", ""),
 		MailFrom:             getEnv("MAIL_FROM", "Caesar Cluster <onboarding@resend.dev>"),

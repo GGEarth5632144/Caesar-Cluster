@@ -126,6 +126,8 @@
     }
   html {
     @apply font-sans;
+    /* จองพื้นที่ scrollbar ไว้เสมอ กัน layout เลื่อน/กระพริบตอน modal ล็อก-ปลดล็อก scroll ของ body */
+    scrollbar-gutter: stable;
     }
 }
 
