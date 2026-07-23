@@ -8,6 +8,7 @@ import {
   type ConfirmEligibleStudentsResponse,
 } from "@/api/eligibleStudents";
 import { getApiErrorMessage } from "@/api/authApi";
+import { PATHS } from "@/config/routes";
 
 type ViewState = "upload" | "preview" | "done";
 
@@ -141,7 +142,7 @@ export default function AdminImportStudents() {
           <DoneView
             result={result}
             onImportAnother={handleReset}
-            onGoToUserManagement={() => navigate("/user-management")}
+            onGoToUserManagement={() => navigate(`/${PATHS.userManagement}`)}
           />
         )}
       </div>

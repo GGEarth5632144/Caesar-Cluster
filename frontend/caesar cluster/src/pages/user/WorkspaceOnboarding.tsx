@@ -10,6 +10,7 @@ import axiosClient from "@/api/axiosClient";
 import { getApiErrorMessage } from "@/api/authApi";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
 import type { RequestTemplate } from "@/api/adminrequest";
+import { PATHS } from "@/config/routes";
 
 export default function WorkspaceOnboarding() {
   const navigate = useNavigate();
@@ -110,7 +111,7 @@ export default function WorkspaceOnboarding() {
         </p>
         <button
           type="button"
-          onClick={() => navigate("/request-resources")}
+          onClick={() => navigate(`/${PATHS.requestResources}`)}
           className="mt-2 rounded-xl bg-[#BB6653] px-6 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
         >
           ดูสถานะคำขอ
