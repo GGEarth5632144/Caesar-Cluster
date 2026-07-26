@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
+import { PATHS } from "@/config/routes";
 
 const registerSchema = z
   .object({
@@ -62,9 +63,11 @@ export default function Register() {
       });
 
       // /api/register ไม่คืน token มาด้วย เลย login ต่อทันทีเพื่อพาเข้า dashboard เลยโดยไม่ต้องกลับไปหน้า login
+      // remember: true ให้ตรงกับ setAuth ด้านล่าง (เก็บ token ใน localStorage + อายุยาวเท่ากัน)
       const { token, user } = await authApi.login({
         student_id: values.student_id,
         password: values.password,
+        remember: true,
       });
       setAuth(token, user, true);
       navigate("/", { replace: true });
@@ -156,6 +159,14 @@ export default function Register() {
           >
             <ArrowRight size={20} />
           </Button>
+
+          <p className="text-center text-xs text-white/70">
+            การสมัครสมาชิกถือว่าคุณยอมรับ{" "}
+            <Link to={PATHS.terms} className="underline hover:text-white">
+              ข้อกำหนดการให้บริการ
+            </Link>{" "}
+            ของ Caesar Cluster
+          </p>
         </form>
       </div>
 

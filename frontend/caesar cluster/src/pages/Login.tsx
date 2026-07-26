@@ -45,6 +45,7 @@ export default function Login() {
       const { token, user } = await authApi.login({
         student_id: values.student_id,
         password: values.password,
+        remember: values.remember,
       });
       setAuth(token, user, values.remember);
       navigate("/", { replace: true });

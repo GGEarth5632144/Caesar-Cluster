@@ -5,6 +5,7 @@ import { PATHS } from "@/config/routes";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import DashboardLayout from "@/layouts/DashboardLayout";
 import LogoLoader from "@/components/ui/LogoLoader";
+import { ActionModalHost } from "@/components/ui/action-modal";
 import { useAuthStore } from "@/store/authStore";
 
 // ---------------- Lazy load ทุกหน้า (code-splitting) ----------------
@@ -14,6 +15,7 @@ const Login = lazy(() => import("@/pages/Login"));
 const Register = lazy(() => import("@/pages/Register"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
+const Terms = lazy(() => import("@/pages/Terms"));
 const Setting = lazy(() => import("@/pages/Setting"));
 
 const AdminDashboard = lazy(() => import("@/pages/admin/AdminDashboard"));
@@ -49,6 +51,7 @@ return (
           <Route path={PATHS.register} element={<Register />} />
           <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
           <Route path={PATHS.resetPassword} element={<ResetPassword />} />
+          <Route path={PATHS.terms} element={<Terms />} />
           
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<DashboardLayout />}>
@@ -85,6 +88,7 @@ return (
           </Route>
         </Routes>
       </Suspense>
+      <ActionModalHost />
     </BrowserRouter>
   );
 }

@@ -4,6 +4,7 @@ import { adminVmRequestApi, type AdminVmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
+import { notify } from "@/lib/modal";
 
 function formatDateTime(dateString: string) {
   return new Date(dateString).toLocaleDateString("th-TH", {
@@ -67,7 +68,7 @@ export default function AdminRequestQueue() {
       setDetailId(null);
     } catch (err) {
       console.error(err);
-      alert(getApiErrorMessage(err, "อนุมัติคำขอไม่สำเร็จ"));
+      notify.error("อนุมัติคำขอไม่สำเร็จ", getApiErrorMessage(err, "โปรดลองใหม่อีกครั้ง"));
     } finally {
       setActioningId(null);
     }
@@ -81,7 +82,7 @@ export default function AdminRequestQueue() {
       setDetailId(null);
     } catch (err) {
       console.error(err);
-      alert(getApiErrorMessage(err, "ปฏิเสธคำขอไม่สำเร็จ"));
+      notify.error("ปฏิเสธคำขอไม่สำเร็จ", getApiErrorMessage(err, "โปรดลองใหม่อีกครั้ง"));
     } finally {
       setActioningId(null);
     }

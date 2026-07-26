@@ -14,6 +14,7 @@ export const PATHS = {
   register: `/${encodePath("register")}`,
   forgotPassword: `/${encodePath("forgot-password")}`,
   resetPassword: `/${encodePath("reset-password")}`,
+  terms: `/${encodePath("terms")}`,
 
   settings: encodePath("settings"),
   services: encodePath("services"),

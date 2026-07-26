@@ -141,7 +141,7 @@ func (h *AuthController) Register(c *gin.Context) {
 // data flow:
 //   - JSON body → หา user จาก student_id → เทียบ bcrypt
 //   - อ่านชื่อ role จากตาราง roles (ผ่าน role_id) เพื่อใส่ลง claim "role"
-//   - เซ็น JWT (sub=id, role=ชื่อ role, exp 24h) → ตอบ token + ข้อมูล user
+//   - เซ็น JWT (sub=id, role=ชื่อ role, exp = JWTTTLHours ปกติ หรือ JWTRememberTTLDays ถ้าติ๊ก remember) → ตอบ token + ข้อมูล user
 //
 // error ของ "หา user ไม่เจอ" กับ "รหัสผิด" ตอบเหมือนกัน เพื่อไม่ให้เดาได้ว่ามี student_id นี้ในระบบหรือไม่
 func (h *AuthController) Login(c *gin.Context) {
@@ -172,10 +172,14 @@ func (h *AuthController) Login(c *gin.Context) {
 		return
 	}
 
+	ttl := time.Duration(h.cfg.JWTTTLHours) * time.Hour
+	if req.Remember {
+		ttl = time.Duration(h.cfg.JWTRememberTTLDays) * 24 * time.Hour
+	}
 	claims := jwt.MapClaims{
 		"sub":  user.ID,
 		"role": role.Name,
-		"exp":  time.Now().Add(24 * time.Hour).Unix(),
+		"exp":  time.Now().Add(ttl).Unix(),
 	}
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(h.cfg.JWTSecret))
 	if err != nil {
