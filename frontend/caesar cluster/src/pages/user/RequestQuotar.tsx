@@ -9,10 +9,20 @@ import {
   X,
   Check,
   AlertTriangle,
+  Bot,
+  Trash2,
+  CheckCircle2,
 } from "lucide-react";
 
+import { aiDeployApi, type DeployResult } from "@/api/aiDeployApi";
+
+type EnvPair = { key: string; value: string };
+
 import { cn } from "@/lib/utils";
-import { ServiceCardsSkeleton, TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
+import {
+  ServiceCardsSkeleton,
+  TemplateGridSkeleton,
+} from "@/components/ui/PageSkeletons";
 import axiosClient from "@/api/axiosClient";
 import { serviceApi, type AppService } from "@/api/services";
 import { getApiErrorMessage } from "@/api/authApi";
@@ -250,10 +260,52 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
   const [customCores, setCustomCores] = useState("0.5");
   const [customRamMb, setCustomRamMb] = useState("512");
 
+  const [envVars, setEnvVars] = useState<EnvPair[]>([{ key: "", value: "" }]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<DeployResult | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const [templates, setTemplates] = useState<RequestTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const removeEnvRow = (i: number) =>
+    setEnvVars((p) => p.filter((_, idx) => idx !== i));
+  const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
+    setEnvVars((p) => {
+      const n = [...p];
+      n[i] = { ...n[i], [field]: val };
+      return n;
+    });
+
+  const handleDeployWithAI = async () => {
+    if (!image.trim()) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiResult(null);
+    const env: Record<string, string> = {};
+    envVars.forEach(({ key, value }) => {
+      if (key.trim()) env[key.trim()] = value;
+    });
+    try {
+      const res = await aiDeployApi.submit({
+        service_name: name.trim() || "unnamed-service",
+        docker_url: image.trim(),
+        env_vars: env,
+      });
+      setAiResult(res);
+    } catch (err: unknown) {
+      const e = err as {
+        response?: { data?: { error?: string } };
+        message?: string;
+      };
+      setAiError(e?.response?.data?.error ?? e?.message ?? "เกิดข้อผิดพลาด");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   useEffect(() => {
     setLoadingTemplates(true);
@@ -473,31 +525,123 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               </div>
             )}
           </div>
+
+          {/* ENV Variables */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+                Environment Variables
+              </label>
+              <button
+                type="button"
+                onClick={addEnvRow}
+                disabled={submitting || aiLoading}
+                className="inline-flex items-center gap-1 text-xs text-[#211a14]/50 hover:text-[#211a14] transition-colors"
+              >
+                <Plus size={12} /> Add variable
+              </button>
+            </div>
+            <div className="flex flex-col gap-1.5 rounded-xl border border-black/8 bg-white/60 p-2.5">
+              {envVars.map((pair, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input
+                    placeholder="KEY"
+                    value={pair.key}
+                    onChange={(e) => updateEnvRow(i, "key", e.target.value)}
+                    disabled={submitting || aiLoading}
+                    className="flex-1 rounded-lg border border-black/8 bg-white px-2.5 py-1.5 text-xs font-mono uppercase tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
+                  />
+                  <span className="text-[#211a14]/25 text-xs select-none">
+                    =
+                  </span>
+                  <input
+                    placeholder="value"
+                    value={pair.value}
+                    onChange={(e) => updateEnvRow(i, "value", e.target.value)}
+                    disabled={submitting || aiLoading}
+                    className="flex-[2] rounded-lg border border-black/8 bg-white px-2.5 py-1.5 text-xs font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeEnvRow(i)}
+                    disabled={submitting || aiLoading || envVars.length === 1}
+                    className="p-1 rounded-lg text-[#211a14]/25 hover:text-red-500 transition-colors disabled:opacity-30"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* AI error */}
+          {aiError && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-600 text-xs border border-red-100">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              {aiError}
+            </div>
+          )}
+
+          {/* AI result */}
+          {aiResult && (
+            <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-[#FFF8E8] border border-[#F08B51]/20">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={15} className="text-[#F08B51] shrink-0" />
+                <span className="text-xs font-bold text-[#211a14]">
+                  Sent to AI cluster — Job ID: {aiResult.job_id}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#211a14]/55 leading-relaxed">
+                {aiResult.message}
+              </p>
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-black/5">
+        <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-black/5">
           <button
             type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-xl px-4 py-2.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!canSubmit || submitting}
-            onClick={handleSubmit}
+            disabled={!image.trim() || aiLoading || submitting || !!aiResult}
+            onClick={handleDeployWithAI}
             className={cn(
-              "inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition-all",
-              canSubmit && !submitting
-                ? "bg-[#BB6653] hover:bg-[#F08B51]"
-                : "bg-[#211a14]/20 cursor-not-allowed shadow-none",
+              "inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all",
+              image.trim() && !aiLoading && !submitting && !aiResult
+                ? "bg-[#211a14] text-white hover:bg-[#211a14]/85"
+                : "bg-[#211a14]/15 text-[#211a14]/40 cursor-not-allowed",
             )}
           >
-            {submitting && <Loader2 size={14} className="animate-spin" />}
-            {submitting ? "Deploying..." : "Deploy"}
+            {aiLoading ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Bot size={13} />
+            )}
+            {aiLoading ? "Sending…" : "Deploy with AI"}
           </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting || aiLoading}
+              className="rounded-xl px-4 py-2.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!canSubmit || submitting}
+              onClick={handleSubmit}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition-all",
+                canSubmit && !submitting
+                  ? "bg-[#BB6653] hover:bg-[#F08B51]"
+                  : "bg-[#211a14]/20 cursor-not-allowed shadow-none",
+              )}
+            >
+              {submitting && <Loader2 size={14} className="animate-spin" />}
+              {submitting ? "Deploying..." : "Deploy"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
