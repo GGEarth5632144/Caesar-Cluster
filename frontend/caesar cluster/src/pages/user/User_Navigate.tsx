@@ -1,6 +1,5 @@
 import {
   Home,
-  PlusCircle,    // เพิ่มไอคอนสำหรับ Create Service
   Box,
   FileText,
   Bell,
@@ -14,19 +13,13 @@ export const userNavItems: NavItem[] = [
   // 1. ภาพรวม (Overview)
   { label: "General Dashboard", icon: Home, path: "/" },//กำลังทำ
   
-  // 2. การจัดการ Service (Core Features) - เอาไว้หมวดเดียวกัน
-  { 
-    label: "Create Service", 
-    icon: PlusCircle, 
-    path: `/${PATHS.createService}`, 
-    requiresVm: true 
-  },//กำลังทำ
-  { 
-    label: "My Services", 
-    icon: Box, 
-    path: `/${PATHS.services}`, 
-    requiresVm: true 
-  },//กำลังทำ
+  // 2. การจัดการ Service (Core Features)
+  {
+    label: "My Services",
+    icon: Box,
+    path: `/${PATHS.services}`,
+    requiresVm: true
+  },
   
   // 3. การแจ้งเตือน & คำขอต่างๆ (Communication & Tracking)
   { 
