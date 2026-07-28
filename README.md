@@ -16,8 +16,8 @@
 ```
 
 ระบบแบ่งเป็น 2 ส่วนหลักที่แยก deploy กัน:
-- **Caesar Cluster** — Frontend + Go API (ระบบหลัก จัดการ K8s)
-- **Cluster AI** — Go server + Python AI Engine (รัน AGX Orin / NUC Cluster)
+- **Caesar Cluster** — Frontend + Go API (ระบบหลัก จัดการ K8s) รันบน NUC 
+- **Cluster AI** — Go server + Python AI Engine (รันบน AGX Orin)
 
 ---
 
