@@ -25,6 +25,8 @@ export const PATHS = {
   myService: encodePath("my-service"),
   createService: encodePath("create-service"),
 
+  aiReview: encodePath("ai-review"),
+
   adminRequest: encodePath("admin-request"),
   adminApprovals: encodePath("admin-approvals"),
   userManagement: encodePath("user-management"),
