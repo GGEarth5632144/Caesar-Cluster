@@ -584,22 +584,39 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               ))}
             </div>
             <p className="text-[10px] text-[#211a14]/35">
-              Sent to the AI sandbox for pre-flight analysis, then applied to the deployed service.
+              Applied to the deployed service — also checked by the AI sandbox if you deploy with AI review.
             </p>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex flex-col gap-2.5 px-6 py-4 border-t border-black/5">
-          <div className="flex items-center justify-between gap-2">
+        {/* Footer — two deploy paths, both real options: with AI review (recommended, primary)
+            or straight to the provisioner (secondary). Neither is hidden or framed as "debug only". */}
+        <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-black/5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-xl px-4 py-2.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-xl px-4 py-2.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+              disabled={!canSubmit || submitting}
+              onClick={handleDirectDeploy}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors",
+                canSubmit && !submitting
+                  ? "border-[#211a14]/15 text-[#211a14]/70 hover:bg-black/5"
+                  : "border-[#211a14]/10 text-[#211a14]/25 cursor-not-allowed",
+              )}
             >
-              Cancel
+              {submitting && <Loader2 size={14} className="animate-spin" />}
+              {submitting ? "Deploying..." : "Deploy directly"}
             </button>
+
             <button
               type="button"
               disabled={!canSubmit || submitting}
@@ -613,27 +630,6 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             >
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />}
               {submitting ? "Preparing..." : "Deploy with AI review"}
-            </button>
-          </div>
-
-          {/* Bypass path — intentionally de-emphasized: every service is meant to clear AI review first */}
-          <div className="flex items-center justify-between gap-3 pt-2 border-t border-dashed border-black/8">
-            <p className="text-[10px] leading-relaxed text-[#211a14]/35 max-w-[230px]">
-              Skips the sandbox check and review pipeline entirely. For debugging only.
-            </p>
-            <button
-              type="button"
-              disabled={!canSubmit || submitting}
-              onClick={handleDirectDeploy}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-colors",
-                canSubmit && !submitting
-                  ? "text-[#211a14]/45 hover:text-[#211a14]/70 hover:bg-black/5"
-                  : "text-[#211a14]/20 cursor-not-allowed",
-              )}
-            >
-              <AlertTriangle size={11} />
-              {submitting ? "Deploying..." : "Skip review & deploy"}
             </button>
           </div>
         </div>
