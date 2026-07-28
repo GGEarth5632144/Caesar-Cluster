@@ -21,6 +21,7 @@ import { serviceApi, type AppService } from "@/api/services";
 import { getApiErrorMessage } from "@/api/authApi";
 import type { RequestTemplate } from "@/api/adminrequest";
 import { aiDeployApi, aiReviewApi } from "@/api/aiDeployApi";
+import { aiReviewRequestApi } from "@/api/aiReviewRequests";
 import { PATHS } from "@/config/routes";
 
 type EnvPair = { key: string; value: string };
@@ -278,9 +279,14 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
     return env;
   };
 
+  // K8s-safe name: lowercase letters, numbers, hyphens — must start/end alphanumeric
+  const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+  const nameHasError = name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
+
   const canSubmit =
     image.trim().length >= 3 &&
     name.trim().length >= 3 &&
+    NAME_PATTERN.test(name.trim()) &&
     (mode === "preset"
       ? selectedTemplateId !== null
       : Number(customCores) > 0 && Number(customRamMb) > 0);
@@ -302,6 +308,24 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
     const envMap = buildEnvMap();
 
     try {
+      // 1.0 — Receipt: persist what we're about to submit so AIReviewPage can recover it after a
+      // refresh (Cluster-AI only remembers pipeline status, not service_name/image/cpu/ram — see its
+      // review_store.go). Best-effort: a failure here doesn't block the actual review submission below,
+      // it just means a refresh on the next page falls back to the "missing details" banner there.
+      try {
+        await aiReviewRequestApi.create({
+          request_id: requestId,
+          service_name: name.trim(),
+          image: image.trim(),
+          request_template_id: mode === "preset" ? selectedTemplateId : null,
+          cpu_milli: cpuMilli,
+          ram_mb: ramMb,
+          env_vars: envMap,
+        });
+      } catch (receiptErr) {
+        console.error("ai-review-request receipt failed (non-fatal):", receiptErr);
+      }
+
       // 1.2 — Sandbox: fire-and-forget, send env_vars + image to AI for pre-flight check
       aiDeployApi
         .submit({ service_name: name.trim(), docker_url: image.trim(), env_vars: envMap })
@@ -317,6 +341,8 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
       });
 
       // Navigate to full-page AI review — carry service info for the final K8s deploy
+      // (still passed via router state for the common case; AIReviewPage falls back to the
+      // ai-review-requests receipt above if this state is missing, e.g. after a refresh)
       navigate(`/${PATHS.aiReview}/${requestId}`, {
         state: { serviceName: name.trim(), image: image.trim(), mode, selectedTemplateId, cpuMilli, ramMb, envVars: envMap },
       });
@@ -337,6 +363,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
       const svc = await serviceApi.create({
         name: name.trim(),
         image: image.trim(),
+        env_vars: buildEnvMap(),
         ...(mode === "preset"
           ? { request_template_id: selectedTemplateId! }
           : {
@@ -407,9 +434,16 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               onChange={(e) => setName(e.target.value)}
               disabled={submitting}
               placeholder="my-web-app"
-              className="w-full rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
+              className={cn(
+                "w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60",
+                nameHasError ? "border-red-300 focus:border-red-400" : "border-black/10",
+              )}
             />
-            <p className="text-[11px] text-[#211a14]/40">lowercase letters, numbers and hyphens only</p>
+            <p className={cn("text-[11px]", nameHasError ? "text-red-500" : "text-[#211a14]/40")}>
+              {nameHasError
+                ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
+                : "lowercase letters, numbers and hyphens only"}
+            </p>
           </div>
 
           {/* Resources */}
@@ -550,29 +584,14 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               ))}
             </div>
             <p className="text-[10px] text-[#211a14]/35">
-              Env vars + Container Image URL will be sent to the AI cluster for sandbox analysis.
+              Sent to the AI sandbox for pre-flight analysis, then applied to the deployed service.
             </p>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-black/5">
-          <button
-            type="button"
-            disabled={!canSubmit || submitting}
-            onClick={handleDeployWithAI}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all",
-              canSubmit && !submitting
-                ? "bg-[#211a14] text-white hover:bg-[#211a14]/85"
-                : "bg-[#211a14]/15 text-[#211a14]/40 cursor-not-allowed",
-            )}
-          >
-            {submitting ? <Loader2 size={13} className="animate-spin" /> : <Bot size={13} />}
-            {submitting ? "Preparing..." : "Deploy with AI"}
-          </button>
-
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2.5 px-6 py-4 border-t border-black/5">
+          <div className="flex items-center justify-between gap-2">
             <button
               type="button"
               onClick={onClose}
@@ -584,7 +603,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             <button
               type="button"
               disabled={!canSubmit || submitting}
-              onClick={handleDirectDeploy}
+              onClick={handleDeployWithAI}
               className={cn(
                 "inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition-all",
                 canSubmit && !submitting
@@ -592,8 +611,29 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                   : "bg-[#211a14]/20 cursor-not-allowed shadow-none",
               )}
             >
-              {submitting && <Loader2 size={14} className="animate-spin" />}
-              {submitting ? "Deploying..." : "Deploy"}
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />}
+              {submitting ? "Preparing..." : "Deploy with AI review"}
+            </button>
+          </div>
+
+          {/* Bypass path — intentionally de-emphasized: every service is meant to clear AI review first */}
+          <div className="flex items-center justify-between gap-3 pt-2 border-t border-dashed border-black/8">
+            <p className="text-[10px] leading-relaxed text-[#211a14]/35 max-w-[230px]">
+              Skips the sandbox check and review pipeline entirely. For debugging only.
+            </p>
+            <button
+              type="button"
+              disabled={!canSubmit || submitting}
+              onClick={handleDirectDeploy}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-colors",
+                canSubmit && !submitting
+                  ? "text-[#211a14]/45 hover:text-[#211a14]/70 hover:bg-black/5"
+                  : "text-[#211a14]/20 cursor-not-allowed",
+              )}
+            >
+              <AlertTriangle size={11} />
+              {submitting ? "Deploying..." : "Skip review & deploy"}
             </button>
           </div>
         </div>
