@@ -33,6 +33,7 @@ const Auditlog = lazy(() => import("@/pages/admin/Auditlog"));
 const Createservice = lazy(() => import("@/pages/user/Createservice"));
 const Alertuser = lazy(() => import("@/pages/user/Alertuser"));
 const Myservice = lazy(() => import("@/pages/user/Myservice"));
+const AIReviewPage = lazy(() => import("@/pages/user/AIReviewPage"));
 
 function App() {
   // ดึงข้อมูล user จาก Zustand
@@ -66,6 +67,7 @@ return (
                   <Route path={PATHS.alertuser} element={<Alertuser />} />
                   <Route path={PATHS.myService} element={<Myservice />} />
                   <Route path={PATHS.createService} element={<Createservice />} />
+                  <Route path={`${PATHS.aiReview}/:requestId`} element={<AIReviewPage />} />
                 </>
               )}
               

@@ -11,22 +11,19 @@ import {
   AlertTriangle,
   Bot,
   Trash2,
-  CheckCircle2,
 } from "lucide-react";
-
-import { aiDeployApi, type DeployResult } from "@/api/aiDeployApi";
-
-type EnvPair = { key: string; value: string };
+import { useNavigate } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
-import {
-  ServiceCardsSkeleton,
-  TemplateGridSkeleton,
-} from "@/components/ui/PageSkeletons";
+import { ServiceCardsSkeleton, TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
 import axiosClient from "@/api/axiosClient";
 import { serviceApi, type AppService } from "@/api/services";
 import { getApiErrorMessage } from "@/api/authApi";
 import type { RequestTemplate } from "@/api/adminrequest";
+import { aiDeployApi, aiReviewApi } from "@/api/aiDeployApi";
+import { PATHS } from "@/config/routes";
+
+type EnvPair = { key: string; value: string };
 
 function initialsOf(name: string) {
   const cleaned = name.replace(/[^a-zA-Z0-9]/g, "");
@@ -36,12 +33,7 @@ function initialsOf(name: string) {
 function statusBadge(status: AppService["status"]) {
   switch (status) {
     case "running":
-      return {
-        label: "Running",
-        dot: "bg-green-600",
-        text: "text-green-700",
-        bg: "bg-green-50",
-      };
+      return { label: "Running", dot: "bg-green-600", text: "text-green-700", bg: "bg-green-50" };
     case "creating":
       return {
         label: "Deploying...",
@@ -51,12 +43,7 @@ function statusBadge(status: AppService["status"]) {
       };
     case "failed":
     default:
-      return {
-        label: "Failed",
-        dot: "bg-red-500",
-        text: "text-red-600",
-        bg: "bg-red-50",
-      };
+      return { label: "Failed", dot: "bg-red-500", text: "text-red-600", bg: "bg-red-50" };
   }
 }
 
@@ -148,12 +135,8 @@ export default function RequestQuotar() {
                       {initialsOf(svc.name)}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-[#211a14] truncate">
-                        {svc.name}
-                      </p>
-                      <p className="text-xs text-[#211a14]/45 truncate">
-                        {svc.image}
-                      </p>
+                      <p className="font-semibold text-[#211a14] truncate">{svc.name}</p>
+                      <p className="text-xs text-[#211a14]/45 truncate">{svc.image}</p>
                     </div>
                   </div>
                   <span
@@ -193,11 +176,7 @@ export default function RequestQuotar() {
                       onClick={() => handleDelete(svc.id)}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-500 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
                     >
-                      {isDeleting ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        "Confirm delete"
-                      )}
+                      {isDeleting ? <Loader2 size={13} className="animate-spin" /> : "Confirm delete"}
                     </button>
                     <button
                       type="button"
@@ -245,76 +224,59 @@ export default function RequestQuotar() {
   );
 }
 
+// ─── Modal ────────────────────────────────────────────────────────────────────
+
 interface CreateServiceModalProps {
   onClose: () => void;
   onCreated: (svc: AppService) => void;
 }
 
 function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
+  const navigate = useNavigate();
+
   const [image, setImage] = useState("");
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"preset" | "custom">("preset");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
-    null,
-  );
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [customCores, setCustomCores] = useState("0.5");
   const [customRamMb, setCustomRamMb] = useState("512");
-
   const [envVars, setEnvVars] = useState<EnvPair[]>([{ key: "", value: "" }]);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState<DeployResult | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-
   const [templates, setTemplates] = useState<RequestTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
-
-  const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
-  const removeEnvRow = (i: number) =>
-    setEnvVars((p) => p.filter((_, idx) => idx !== i));
-  const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
-    setEnvVars((p) => {
-      const n = [...p];
-      n[i] = { ...n[i], [field]: val };
-      return n;
-    });
-
-  const handleDeployWithAI = async () => {
-    if (!image.trim()) return;
-    setAiLoading(true);
-    setAiError(null);
-    setAiResult(null);
-    const env: Record<string, string> = {};
-    envVars.forEach(({ key, value }) => {
-      if (key.trim()) env[key.trim()] = value;
-    });
-    try {
-      const res = await aiDeployApi.submit({
-        service_name: name.trim() || "unnamed-service",
-        docker_url: image.trim(),
-        env_vars: env,
-      });
-      setAiResult(res);
-    } catch (err: unknown) {
-      const e = err as {
-        response?: { data?: { error?: string } };
-        message?: string;
-      };
-      setAiError(e?.response?.data?.error ?? e?.message ?? "เกิดข้อผิดพลาด");
-    } finally {
-      setAiLoading(false);
-    }
-  };
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     setLoadingTemplates(true);
     axiosClient
       .get<{ success: boolean; data: RequestTemplate[] }>("/request-templates")
       .then((res) => setTemplates(res.data.data))
-      .catch((err) => console.error(err))
+      .catch(console.error)
       .finally(() => setLoadingTemplates(false));
   }, []);
+
+  const getCpuMilli = (): number => {
+    if (mode === "preset" && selectedTemplateId !== null) {
+      const tpl = templates.find((t) => t.id === selectedTemplateId);
+      if (tpl) return tpl.cpu_limit_milli;
+    }
+    return Math.round(Number(customCores) * 1000);
+  };
+
+  const getRamMb = (): number => {
+    if (mode === "preset" && selectedTemplateId !== null) {
+      const tpl = templates.find((t) => t.id === selectedTemplateId);
+      if (tpl) return tpl.ram_limit_mb;
+    }
+    return Math.round(Number(customRamMb));
+  };
+
+  const buildEnvMap = () => {
+    const env: Record<string, string> = {};
+    envVars.forEach(({ key, value }) => { if (key.trim()) env[key.trim()] = value; });
+    return env;
+  };
 
   const canSubmit =
     image.trim().length >= 3 &&
@@ -323,7 +285,51 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
       ? selectedTemplateId !== null
       : Number(customCores) > 0 && Number(customRamMb) > 0);
 
-  const handleSubmit = async () => {
+  const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const removeEnvRow = (i: number) => setEnvVars((p) => p.filter((_, idx) => idx !== i));
+  const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
+    setEnvVars((p) => { const n = [...p]; n[i] = { ...n[i], [field]: val }; return n; });
+
+  // ── Deploy with AI → navigate to full-page review ──────────────────────────
+  const handleDeployWithAI = async () => {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError(null);
+
+    const requestId = `req-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 6)}`;
+    const cpuMilli = getCpuMilli();
+    const ramMb = getRamMb();
+    const envMap = buildEnvMap();
+
+    try {
+      // 1.2 — Sandbox: fire-and-forget, send env_vars + image to AI for pre-flight check
+      aiDeployApi
+        .submit({ service_name: name.trim(), docker_url: image.trim(), env_vars: envMap })
+        .catch(console.error);
+
+      // 1.1 — Review pipeline: submit service spec (cpu/ram held for K8s until AI approves)
+      await aiReviewApi.submit({
+        request_id: requestId,
+        service_name: name.trim(),
+        image: image.trim(),
+        cpu_milli: cpuMilli,
+        ram_mb: ramMb,
+      });
+
+      // Navigate to full-page AI review — carry service info for the final K8s deploy
+      navigate(`/${PATHS.aiReview}/${requestId}`, {
+        state: { serviceName: name.trim(), image: image.trim(), mode, selectedTemplateId, cpuMilli, ramMb, envVars: envMap },
+      });
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } }; message?: string };
+      setError(e?.response?.data?.error ?? e?.message ?? "เกิดข้อผิดพลาด — ลองใหม่อีกครั้ง");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ── Direct deploy (no AI) ──────────────────────────────────────────────────
+  const handleDirectDeploy = async () => {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     setError(null);
@@ -340,7 +346,6 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
       });
       onCreated(svc);
     } catch (err) {
-      console.error(err);
       setError(getApiErrorMessage(err, "Deploy ไม่สำเร็จ"));
     } finally {
       setSubmitting(false);
@@ -350,33 +355,32 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono">
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl">
+
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-black/5">
           <div>
-            <h2 className="text-lg font-bold text-[#211a14]">
-              Deploy a new service
-            </h2>
-            <p className="text-xs text-[#211a14]/50 mt-0.5">
-              Point us at a container image — we handle the rest.
-            </p>
+            <h2 className="text-lg font-bold text-[#211a14]">Deploy a new service</h2>
+            <p className="text-xs text-[#211a14]/50 mt-0.5">Point us at a container image — we handle the rest.</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="p-2 rounded-xl text-[#211a14]/50 hover:bg-black/5 transition-colors disabled:opacity-50"
+            className="p-2 rounded-xl text-[#211a14]/50 hover:bg-black/5 transition-colors disabled:opacity-30"
           >
             <X size={18} />
           </button>
         </div>
 
+        {/* Form body */}
         <div className="px-6 py-5 flex flex-col gap-5">
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-600 text-xs border border-red-100">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              {error}
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" /> {error}
             </div>
           )}
 
+          {/* Container Image */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
               Container Image
@@ -393,6 +397,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             </div>
           </div>
 
+          {/* Service Name */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
               Service Name
@@ -404,12 +409,10 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
               placeholder="my-web-app"
               className="w-full rounded-xl border border-black/10 bg-white px-3.5 py-2.5 text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
             />
-            <p className="text-[11px] text-[#211a14]/40">
-              lowercase letters, numbers and hyphens only — must start/end with
-              a letter or number
-            </p>
+            <p className="text-[11px] text-[#211a14]/40">lowercase letters, numbers and hyphens only</p>
           </div>
 
+          {/* Resources */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
@@ -422,9 +425,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                   onClick={() => setMode("preset")}
                   className={cn(
                     "px-3 py-1 rounded-md transition-colors",
-                    mode === "preset"
-                      ? "bg-white text-[#211a14] shadow-sm"
-                      : "text-[#211a14]/40",
+                    mode === "preset" ? "bg-white text-[#211a14] shadow-sm" : "text-[#211a14]/40",
                   )}
                 >
                   Preset
@@ -435,9 +436,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                   onClick={() => setMode("custom")}
                   className={cn(
                     "px-3 py-1 rounded-md transition-colors",
-                    mode === "custom"
-                      ? "bg-white text-[#211a14] shadow-sm"
-                      : "text-[#211a14]/40",
+                    mode === "custom" ? "bg-white text-[#211a14] shadow-sm" : "text-[#211a14]/40",
                   )}
                 >
                   Custom
@@ -470,15 +469,9 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                         )}
                       >
                         {isSelected && (
-                          <Check
-                            size={14}
-                            strokeWidth={3}
-                            className="absolute top-2 right-2 text-[#BB6653]"
-                          />
+                          <Check size={14} strokeWidth={3} className="absolute top-2 right-2 text-[#BB6653]" />
                         )}
-                        <p className="text-xs font-bold text-[#211a14] pr-4 truncate">
-                          {tpl.option_name}
-                        </p>
+                        <p className="text-xs font-bold text-[#211a14] pr-4 truncate">{tpl.option_name}</p>
                         <p className="text-[11px] text-[#211a14]/50 mt-1">
                           {(tpl.cpu_limit_milli / 1000).toFixed(1)} cores ·{" "}
                           {tpl.ram_limit_mb >= 1024
@@ -493,31 +486,19 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-[#211a14]/50">
-                    CPU (cores)
-                  </label>
+                  <label className="text-[11px] text-[#211a14]/50">CPU (cores)</label>
                   <input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    max="3"
-                    value={customCores}
-                    disabled={submitting}
+                    type="number" step="0.1" min="0.1" max="3"
+                    value={customCores} disabled={submitting}
                     onChange={(e) => setCustomCores(e.target.value)}
                     className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-[#211a14]/50">
-                    Memory (MB)
-                  </label>
+                  <label className="text-[11px] text-[#211a14]/50">Memory (MB)</label>
                   <input
-                    type="number"
-                    step="128"
-                    min="128"
-                    max="2048"
-                    value={customRamMb}
-                    disabled={submitting}
+                    type="number" step="128" min="128" max="2048"
+                    value={customRamMb} disabled={submitting}
                     onChange={(e) => setCustomRamMb(e.target.value)}
                     className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
@@ -526,16 +507,14 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             )}
           </div>
 
-          {/* ENV Variables */}
+          {/* Environment Variables */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
                 Environment Variables
               </label>
               <button
-                type="button"
-                onClick={addEnvRow}
-                disabled={submitting || aiLoading}
+                type="button" onClick={addEnvRow} disabled={submitting}
                 className="inline-flex items-center gap-1 text-xs text-[#211a14]/50 hover:text-[#211a14] transition-colors"
               >
                 <Plus size={12} /> Add variable
@@ -548,23 +527,21 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                     placeholder="KEY"
                     value={pair.key}
                     onChange={(e) => updateEnvRow(i, "key", e.target.value)}
-                    disabled={submitting || aiLoading}
+                    disabled={submitting}
                     className="flex-1 rounded-lg border border-black/8 bg-white px-2.5 py-1.5 text-xs font-mono uppercase tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                   />
-                  <span className="text-[#211a14]/25 text-xs select-none">
-                    =
-                  </span>
+                  <span className="text-[#211a14]/25 text-xs select-none">=</span>
                   <input
                     placeholder="value"
                     value={pair.value}
                     onChange={(e) => updateEnvRow(i, "value", e.target.value)}
-                    disabled={submitting || aiLoading}
+                    disabled={submitting}
                     className="flex-[2] rounded-lg border border-black/8 bg-white px-2.5 py-1.5 text-xs font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                   />
                   <button
                     type="button"
                     onClick={() => removeEnvRow(i)}
-                    disabled={submitting || aiLoading || envVars.length === 1}
+                    disabled={submitting || envVars.length === 1}
                     className="p-1 rounded-lg text-[#211a14]/25 hover:text-red-500 transition-colors disabled:opacity-30"
                   >
                     <Trash2 size={12} />
@@ -572,57 +549,34 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
                 </div>
               ))}
             </div>
+            <p className="text-[10px] text-[#211a14]/35">
+              Env vars + Container Image URL will be sent to the AI cluster for sandbox analysis.
+            </p>
           </div>
-
-          {/* AI error */}
-          {aiError && (
-            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-600 text-xs border border-red-100">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              {aiError}
-            </div>
-          )}
-
-          {/* AI result */}
-          {aiResult && (
-            <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-[#FFF8E8] border border-[#F08B51]/20">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={15} className="text-[#F08B51] shrink-0" />
-                <span className="text-xs font-bold text-[#211a14]">
-                  Sent to AI cluster — Job ID: {aiResult.job_id}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#211a14]/55 leading-relaxed">
-                {aiResult.message}
-              </p>
-            </div>
-          )}
         </div>
 
+        {/* Footer */}
         <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-black/5">
           <button
             type="button"
-            disabled={!image.trim() || aiLoading || submitting || !!aiResult}
+            disabled={!canSubmit || submitting}
             onClick={handleDeployWithAI}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all",
-              image.trim() && !aiLoading && !submitting && !aiResult
+              canSubmit && !submitting
                 ? "bg-[#211a14] text-white hover:bg-[#211a14]/85"
                 : "bg-[#211a14]/15 text-[#211a14]/40 cursor-not-allowed",
             )}
           >
-            {aiLoading ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
-              <Bot size={13} />
-            )}
-            {aiLoading ? "Sending…" : "Deploy with AI"}
+            {submitting ? <Loader2 size={13} className="animate-spin" /> : <Bot size={13} />}
+            {submitting ? "Preparing..." : "Deploy with AI"}
           </button>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              disabled={submitting || aiLoading}
+              disabled={submitting}
               className="rounded-xl px-4 py-2.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
             >
               Cancel
@@ -630,7 +584,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             <button
               type="button"
               disabled={!canSubmit || submitting}
-              onClick={handleSubmit}
+              onClick={handleDirectDeploy}
               className={cn(
                 "inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition-all",
                 canSubmit && !submitting
@@ -643,6 +597,7 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             </button>
           </div>
         </div>
+
       </div>
     </div>
   );
