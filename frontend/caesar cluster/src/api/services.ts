@@ -13,6 +13,7 @@ export interface AppService {
   ram_mb: number;
   node_port: number | null;
   status: ServiceStatus;
+  env_vars: Record<string, string>;
   created_at: string;
 }
 
@@ -22,6 +23,7 @@ export interface CreateServiceDTO {
   request_template_id?: number;
   cpu_milli?: number;
   ram_mb?: number;
+  env_vars?: Record<string, string>;
 }
 
 interface ApiResponse<T> {

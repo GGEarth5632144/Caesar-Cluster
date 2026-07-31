@@ -34,8 +34,8 @@ func (m *MockProvisioner) DeleteNamespace(ctx context.Context, nsName string) er
 // data flow: รับชื่อ namespace + service (สเปก snapshot แล้ว) จาก ServiceManager.Create → log
 // → เซ็ต svc.NodePort (จำลองพฤติกรรมของ k8s Service ชนิด NodePort) → คืน nil
 func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
-	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %dm CPU / %d MB",
-		svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB)
+	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %dm CPU / %d MB / %d env vars",
+		svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB, len(svc.EnvVars))
 	time.Sleep(300 * time.Millisecond) // จำลองว่าใช้เวลา
 
 	port := 30000 + (svc.ID % 2768) // เลขปลอมแต่นิ่งต่อ service เดิม อยู่ในช่วง NodePort ของ k8s

@@ -1,6 +1,11 @@
 package entity
 
-import "time"
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // สถานะของ service ระหว่างวงจรชีวิต
 const (
@@ -8,6 +13,45 @@ const (
 	ServiceRunning  = "running"  // deploy ขึ้น k8s สำเร็จ
 	ServiceFailed   = "failed"   // provisioner deploy ไม่สำเร็จ
 )
+
+// EnvVarMap คือ environment variables ของ service เดียว เก็บเป็น jsonb คอลัมน์เดียว
+// ตั้งใจใช้ map[string]string (ไม่ใช้ JSONB ที่มีอยู่แล้วซึ่งเป็น map[string]any) เพราะ env var
+// เป็น key-value string ล้วนเสมอ — ฝั่งที่ใช้งานจริง (provisioner) จะได้ไม่ต้อง type-assert ทุกค่า
+// เขียนเองด้วย stdlib ล้วน (database/sql/driver + encoding/json) ตามแบบเดียวกับ JSONB ใน jsonb.go
+// ไม่ต้องเพิ่ม dependency gorm.io/datatypes
+type EnvVarMap map[string]string
+
+// Value แปลง map ในหน่วยความจำ → bytes ก่อนเขียนลง DB (ฝั่ง "ส่งออก")
+// map ว่าง/nil เก็บเป็น "{}" แทน NULL เพื่อให้อ่านกลับมาเป็น map ว่างเสมอ (ไม่ต้อง nil-check ฝั่งอ่าน)
+func (e EnvVarMap) Value() (driver.Value, error) {
+	if len(e) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(e)
+	return string(b), err
+}
+
+// Scan แปลง bytes จาก DB → map ในหน่วยความจำ (ฝั่ง "รับเข้า")
+func (e *EnvVarMap) Scan(value any) error {
+	if value == nil {
+		*e = EnvVarMap{}
+		return nil
+	}
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return fmt.Errorf("entity: EnvVarMap.Scan ต้องการ []byte หรือ string, ได้ %T", value)
+	}
+	if len(b) == 0 {
+		*e = EnvVarMap{}
+		return nil
+	}
+	return json.Unmarshal(b, e)
+}
 
 // Service = ตาราง services — workload (container) 1 ตัวที่ผู้ใช้ deploy เข้าไปใน namespace ของตัวเอง
 // (มาแทน entity VM เดิม เพราะเราไป Kubernetes ไม่ใช่ Proxmox แล้ว)
@@ -33,6 +77,7 @@ type Service struct {
 	RAMMB             int       `gorm:"column:ram_mb;type:integer;not null;check:ram_mb > 0" json:"ram_mb"`
 	NodePort          *int      `gorm:"column:node_port;type:integer;check:node_port IS NULL OR (node_port BETWEEN 30000 AND 32767)" json:"node_port"`
 	Status            string    `gorm:"column:status;type:varchar(20);not null;default:creating" json:"status"`
+	EnvVars           EnvVarMap `gorm:"column:env_vars;type:jsonb;not null;default:'{}'" json:"env_vars"`
 	CreatedAt         time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 }
 

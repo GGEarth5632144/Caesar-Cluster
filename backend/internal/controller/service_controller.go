@@ -46,7 +46,7 @@ func (h *ServiceController) List(c *gin.Context) {
 
 // Create deploy service ใหม่เข้า space ของผู้ใช้
 //
-// data flow: JSON body → bind CreateServiceRequest → เช็คชื่อตามกฎ k8s
+// data flow: JSON body → bind CreateServiceRequest → เช็คชื่อตามกฎ k8s + เช็ครูปแบบ env vars
 // → แปลงเป็น services.CreateServiceParams → ServiceManager.Create
 // (เลือก template หรือกรอกสเปกเอง → เช็คโควตารวมของ namespace → INSERT → deploy จริง) → ตอบ service ที่สร้าง
 //
@@ -67,6 +67,11 @@ func (h *ServiceController) Create(c *gin.Context) {
 			"ชื่อต้องเป็นตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และขึ้นต้น-ลงท้ายด้วยตัวอักษรหรือตัวเลข")
 		return
 	}
+	if !isValidEnvVars(req.EnvVars) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ENV_VARS",
+			"env vars ต้องมีไม่เกิน 20 ตัว ชื่อ key เป็นตัวอักษร/เลข/underscore และขึ้นต้นด้วยตัวอักษรหรือ underscore เท่านั้น")
+		return
+	}
 
 	svc, err := h.svc.Create(c.Request.Context(), c.GetInt("userID"), nsID, services.CreateServiceParams{
 		Name:              req.Name,
@@ -74,6 +79,7 @@ func (h *ServiceController) Create(c *gin.Context) {
 		RequestTemplateID: req.RequestTemplateID,
 		CPUMilli:          req.CPUMilli,
 		RAMMB:             req.RAMMB,
+		EnvVars:           req.EnvVars,
 	})
 	if err != nil {
 		switch {

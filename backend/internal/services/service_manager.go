@@ -25,6 +25,7 @@ type CreateServiceParams struct {
 	RequestTemplateID *int
 	CPUMilli          int
 	RAMMB             int
+	EnvVars           map[string]string
 }
 
 // ServiceManager = business logic ของ workload: เช็คโควตา → บันทึก DB → deploy จริงขึ้น cluster
@@ -95,6 +96,7 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		CPUMilli:          cpuMilli,
 		RAMMB:             ramMB,
 		Status:            entity.ServiceCreating,
+		EnvVars:           entity.EnvVarMap(p.EnvVars),
 	}
 
 	// เช็คโควตาของ namespace แล้ว INSERT ภายใน transaction เดียวกับที่ล็อก namespace ไว้

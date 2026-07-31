@@ -13,6 +13,7 @@ import {
   type TelemetrySnapshot,
 } from "@/api/aiDeployApi";
 import { serviceApi as svcApi } from "@/api/services";
+import { aiReviewRequestApi } from "@/api/aiReviewRequests";
 import { PATHS } from "@/config/routes";
 import { getApiErrorMessage } from "@/api/authApi";
 
@@ -386,14 +387,53 @@ export default function AIReviewPage() {
   const { requestId } = useParams<{ requestId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const info = location.state as ReviewPageState | null;
+  const routerInfo = location.state as ReviewPageState | null;
+
+  // Fallback when router state is missing (page refreshed / opened directly): recover the same
+  // details from the ai-review-requests receipt Caesar-Cluster saved at submit time (see
+  // RequestQuotar.tsx handleDeployWithAI). Cluster-AI's own status endpoint doesn't carry these
+  // fields at all, so this is the only place left to ask.
+  const [recoveredInfo, setRecoveredInfo] = useState<ReviewPageState | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const info = routerInfo ?? recoveredInfo;
 
   const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null);
-  const [finalImage, setFinalImage] = useState(info?.image ?? "");
+  const [finalImage, setFinalImage] = useState(routerInfo?.image ?? "");
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
   const [showTelemetry, setShowTelemetry] = useState(false);
+
+  useEffect(() => {
+    if (routerInfo || !requestId) return;
+    let cancelled = false;
+    setRecovering(true);
+    aiReviewRequestApi
+      .get(requestId)
+      .then((rec) => {
+        if (cancelled) return;
+        const recovered: ReviewPageState = {
+          serviceName: rec.service_name,
+          image: rec.image,
+          mode: rec.request_template_id !== null ? "preset" : "custom",
+          selectedTemplateId: rec.request_template_id,
+          cpuMilli: rec.cpu_milli,
+          ramMb: rec.ram_mb,
+          envVars: rec.env_vars ?? {},
+        };
+        setRecoveredInfo(recovered);
+        setFinalImage((prev) => prev || recovered.image);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("recover ai-review-request failed:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setRecovering(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routerInfo, requestId]);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRunning = !reviewResult || (
@@ -479,7 +519,10 @@ export default function AIReviewPage() {
   const isFailed = reviewResult?.status === "failed";
 
   const handleFinalDeploy = async (useAiFix: boolean) => {
-    if (!info) return;
+    if (!info) {
+      setDeployError("Missing service details — go back to Services and deploy again.");
+      return;
+    }
     setDeploying(true);
     setDeployError(null);
     const imageToUse = useAiFix ? (finalImage.trim() || info.image) : info.image;
@@ -487,6 +530,7 @@ export default function AIReviewPage() {
       await svcApi.create({
         name: info.serviceName,
         image: imageToUse,
+        env_vars: info.envVars,
         ...(info.mode === "preset" && info.selectedTemplateId !== null
           ? { request_template_id: info.selectedTemplateId }
           : { cpu_milli: info.cpuMilli, ram_mb: info.ramMb }),
@@ -540,6 +584,34 @@ export default function AIReviewPage() {
           {elapsedTimer}
         </div>
       </div>
+
+      {/* ── Missing state banner ──────────────────────────────────────────────── */}
+      {!info && recovering && (
+        <div className="flex items-center gap-2.5 p-4 rounded-2xl bg-black/[0.02] border border-black/5">
+          <Loader2 size={14} className="animate-spin text-[#211a14]/40" />
+          <p className="text-xs text-[#211a14]/50">Recovering service details…</p>
+        </div>
+      )}
+      {!info && !recovering && (
+        <div className="flex items-start gap-3 p-4 rounded-2xl bg-orange-50 border border-orange-100">
+          <AlertTriangle size={16} className="text-orange-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-orange-800">Missing service details</p>
+            <p className="text-xs text-orange-700/80 mt-1 leading-relaxed">
+              This page needs the details from your deploy request, and they didn't come through —
+              usually because the page was refreshed or opened directly. The review below may still
+              be running, but you'll need to go back and deploy again to apply the result.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/${PATHS.services}`)}
+            className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold text-orange-700 border border-orange-200 hover:bg-orange-100 transition-colors"
+          >
+            Back to Services
+          </button>
+        </div>
+      )}
 
       {/* ── Status pill ──────────────────────────────────────────────────────── */}
       {reviewResult && (

@@ -25,7 +25,8 @@ import (
 //	               POST /api/forgot-password (rate limited), POST /api/reset-password
 //	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
-//	               GET|POST /api/services, DELETE /api/services/:id
+//	               GET|POST /api/services, DELETE /api/services/:id,
+//	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
 //	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
 //	               POST /api/admin/request-templates, GET /api/admin/namespaces, PATCH /api/admin/namespaces/:id/quota
 //
@@ -43,6 +44,7 @@ func Setup(
 	tmplCtl := controller.NewRequestTemplateController(db)
 	adminCtl := controller.NewAdminController(db, nsMgr)
 	reqCtl := controller.NewRequestController(db)
+	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 
 	r := gin.Default()
 
@@ -89,6 +91,11 @@ func Setup(
 			protected.GET("/services", svcCtl.List)
 			protected.POST("/services", svcCtl.Create)
 			protected.DELETE("/services/:id", svcCtl.Delete)
+
+			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
+			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
+			protected.POST("/ai-review-requests", aiReviewReqCtl.Create)
+			protected.GET("/ai-review-requests/:request_id", aiReviewReqCtl.Get)
 		}
 
 		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret), middlewares.AdminOnly())

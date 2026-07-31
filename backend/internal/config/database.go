@@ -19,6 +19,7 @@ import (
 //
 // ลำดับของ AutoMigrate สำคัญ: roles/eligible_students ต้องมาก่อน users (users อ้างถึงทั้งคู่)
 // namespaces/request_templates ต้องมาก่อน services (services อ้างทั้งคู่)
+// namespaces/users/request_templates ต้องมาก่อน ai_review_requests (อ้างทั้งสาม เหมือน services)
 // ipc_monitors ต้องมาก่อน user_containers (user_containers อ้าง ipc_id)
 func ConnectDB(dbURL string) *gorm.DB {
 	db, err := gorm.Open(postgres.Open(dbURL), &gorm.Config{
@@ -37,6 +38,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.Namespace{},
 		&entity.RequestTemplate{},
 		&entity.Service{},
+		&entity.AIReviewRequest{}, // ต้องมาหลัง namespaces/users/request_templates (อ้างทั้งสาม)
 		&entity.IPCMonitor{},
 		&entity.UserContainer{},
 		&entity.Request{},
@@ -107,6 +109,23 @@ func addForeignKeys(db *gorm.DB) error {
 			// template ถูกลบ → service ยังอยู่ได้ (มี snapshot cpu/ram ของตัวเองอยู่แล้ว) แค่ request_template_id เป็น NULL
 			name: "fk_services_request_template_id",
 			ddl: `ALTER TABLE services ADD CONSTRAINT fk_services_request_template_id
+			      FOREIGN KEY (request_template_id) REFERENCES request_templates(id) ON DELETE SET NULL`,
+		},
+		{
+			// ลบ namespace → ใบเสร็จของ AI review request ที่เคยยื่นในนั้นหายตามไปด้วย (แค่ receipt ไม่ใช่ประวัติที่ต้องเก็บถาวร)
+			name: "fk_ai_review_requests_namespace_id",
+			ddl: `ALTER TABLE ai_review_requests ADD CONSTRAINT fk_ai_review_requests_namespace_id
+			      FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE`,
+		},
+		{
+			name: "fk_ai_review_requests_created_by",
+			ddl: `ALTER TABLE ai_review_requests ADD CONSTRAINT fk_ai_review_requests_created_by
+			      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		{
+			// เหตุผลเดียวกับ fk_services_request_template_id — snapshot cpu/ram ไว้แล้ว ลบ template ไม่ต้องลบใบเสร็จตาม
+			name: "fk_ai_review_requests_request_template_id",
+			ddl: `ALTER TABLE ai_review_requests ADD CONSTRAINT fk_ai_review_requests_request_template_id
 			      FOREIGN KEY (request_template_id) REFERENCES request_templates(id) ON DELETE SET NULL`,
 		},
 		{

@@ -22,6 +22,32 @@ func isValidK8sName(name string) bool {
 	return dns1123.MatchString(name)
 }
 
+// envVarKeyPattern = กฎชื่อ environment variable ตามที่ shell/container runtime ทั่วไปยอมรับ
+// (ตัวอักษร/เลข/underscore เท่านั้น ขึ้นต้นด้วยตัวอักษรหรือ underscore — ห้ามขึ้นต้นด้วยตัวเลข)
+var envVarKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+const (
+	maxEnvVarCount = 20   // กันไม่ให้ payload/row ใหญ่เกินไปโดยไม่จำเป็น
+	maxEnvVarValue = 4000 // ค่าต่อ 1 ตัวยาวสุด (bytes) — เผื่อไว้สำหรับ config ยาวๆ เช่น cert/JSON
+)
+
+// isValidEnvVars เช็คว่า env vars ที่ user กรอกมาปลอดภัยพอจะเก็บ/ส่งต่อให้ provisioner
+// data flow: ถูกเรียกจาก ServiceController.Create ก่อนส่งต่อให้ service layer (แบบเดียวกับ isValidK8sName)
+func isValidEnvVars(env map[string]string) bool {
+	if len(env) > maxEnvVarCount {
+		return false
+	}
+	for k, v := range env {
+		if !envVarKeyPattern.MatchString(k) {
+			return false
+		}
+		if len(v) > maxEnvVarValue {
+			return false
+		}
+	}
+	return true
+}
+
 // currentNamespaceID ดึง namespace ของผู้ใช้ที่ล็อกอินอยู่ (กติกา 1 คน = 1 space)
 //
 // data flow: อ่าน userID ที่ middleware Auth ตั้งไว้ → SELECT users → คืน users.namespace_id
