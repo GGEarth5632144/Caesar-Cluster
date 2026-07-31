@@ -27,6 +27,9 @@ export const PATHS = {
 
   aiReview: encodePath("ai-review"),
 
+  generalDashboard: encodePath("general-dashboard"),
+  workspaceOnboarding: encodePath("workspace-onboarding"),
+
   adminRequest: encodePath("admin-request"),
   adminApprovals: encodePath("admin-approvals"),
   userManagement: encodePath("user-management"),

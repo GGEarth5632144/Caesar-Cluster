@@ -142,7 +142,7 @@ func seedAdmin(db *gorm.DB) {
 		log.Fatalf("seed admin ไม่สำเร็จ: %v", err)
 	}
 
-	log.Printf("สร้าง admin เริ่มต้นแล้ว — student_id=%s password=%s", adminStudentID, adminPassword)
+	log.Printf("สร้าง admin เริ่มต้นแล้ว — student_id=%s password=[hidden]", adminStudentID)
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
 
 }
@@ -182,7 +182,7 @@ func seeduser(db *gorm.DB) {
 		log.Fatalf("seed user ไม่สำเร็จ: %v", err)
 	}
 
-	log.Printf("สร้าง user เริ่มต้นแล้ว — student_id=%s password=%s", StudentID, userPassword)
+	log.Printf("สร้าง user เริ่มต้นแล้ว — student_id=%s password=[hidden]", StudentID)
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
 }
 
