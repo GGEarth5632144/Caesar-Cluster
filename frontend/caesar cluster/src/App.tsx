@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { PATHS } from "@/config/routes";
 
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -34,6 +34,15 @@ const Createservice = lazy(() => import("@/pages/user/Createservice"));
 const Alertuser = lazy(() => import("@/pages/user/Alertuser"));
 const Myservice = lazy(() => import("@/pages/user/Myservice"));
 const AIReviewPage = lazy(() => import("@/pages/user/AIReviewPage"));
+const GeneralDashboard = lazy(() => import("@/pages/user/GeneralDashboard"));
+const WorkspaceOnboarding = lazy(() => import("@/pages/user/WorkspaceOnboarding"));
+
+// redirect /reset-password?token=... → hashed reset-password path (preserves query string)
+// backend email links point to /reset-password but the frontend serves the page at a hashed path
+function ResetPasswordRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={PATHS.resetPassword + search} replace />;
+}
 
 function App() {
   // ดึงข้อมูล user จาก Zustand
@@ -52,6 +61,8 @@ return (
           <Route path={PATHS.register} element={<Register />} />
           <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
           <Route path={PATHS.resetPassword} element={<ResetPassword />} />
+          {/* redirect จาก /reset-password (ที่ backend ส่งในอีเมล) → hashed path จริง */}
+          <Route path="/reset-password" element={<ResetPasswordRedirect />} />
           <Route path={PATHS.terms} element={<Terms />} />
           
           <Route element={<ProtectedRoute />}>
@@ -68,6 +79,8 @@ return (
                   <Route path={PATHS.myService} element={<Myservice />} />
                   <Route path={PATHS.createService} element={<Createservice />} />
                   <Route path={`${PATHS.aiReview}/:requestId`} element={<AIReviewPage />} />
+                  <Route path={PATHS.generalDashboard} element={<GeneralDashboard user={user} />} />
+                  <Route path={PATHS.workspaceOnboarding} element={<WorkspaceOnboarding />} />
                 </>
               )}
               
