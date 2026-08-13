@@ -590,6 +590,31 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 	utils.OK(c, http.StatusOK, detail)
 }
 
+// DeleteNamespace ลบ namespace ทิ้งทั้งก้อนตามดุลยพินิจแอดมิน — ลบได้แม้ยังมีสมาชิกอยู่
+// (ต่างจาก NamespaceController.Leave ที่ผู้ใช้ทั่วไปลบเองไม่ได้ถ้ายังมีสมาชิกคนอื่นอยู่)
+//
+// data flow: อ่าน id จาก path → NamespaceManager.Delete (ถอนของบนคลัสเตอร์ก่อน แล้วลบแถว
+// → cascade ลบ services/ai_review_requests/user_containers ตาม, สมาชิกที่เหลือแค่หลุดออกจาก space)
+func (h *AdminController) DeleteNamespace(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	if err := h.ns.Delete(c.Request.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, services.ErrNamespaceNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		default:
+			log.Printf("delete namespace error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบ namespace ไม่สำเร็จ")
+		}
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
+}
+
 // ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
 //
 // data flow: SELECT requests ทั้งหมด → เก็บ user_id ที่พบมาถามเป็นก้อนเดียว (กัน N+1 query)

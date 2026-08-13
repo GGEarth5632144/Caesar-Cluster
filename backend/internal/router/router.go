@@ -25,10 +25,12 @@ import (
 //	               POST /api/forgot-password (rate limited), POST /api/reset-password
 //	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
+//	               DELETE /api/namespaces (leave — เป็นเจ้าของคนสุดท้าย = ลบทั้งก้อน),
 //	               GET|POST /api/services, DELETE /api/services/:id,
 //	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
 //	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
-//	               POST /api/admin/request-templates, GET /api/admin/namespaces, PATCH /api/admin/namespaces/:id/quota
+//	               POST /api/admin/request-templates, GET /api/admin/namespaces,
+//	               PATCH /api/admin/namespaces/:id/quota, DELETE /api/admin/namespaces/:id
 //
 // ลำดับที่ผู้ใช้ต้องเดิน: register → login → สร้าง/เข้าร่วม namespace → deploy service
 func Setup(
@@ -87,6 +89,7 @@ func Setup(
 			protected.POST("/namespaces", nsCtl.Create)
 			protected.POST("/namespaces/join", nsCtl.Join)
 			protected.GET("/namespaces/me", nsCtl.Mine)
+			protected.DELETE("/namespaces", nsCtl.Leave)
 
 			protected.GET("/services", svcCtl.List)
 			protected.POST("/services", svcCtl.Create)
@@ -111,6 +114,7 @@ func Setup(
 
 			admin.GET("/namespaces", adminCtl.ListNamespaces)
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
+			admin.DELETE("/namespaces/:id", adminCtl.DeleteNamespace)
 
 			admin.GET("/requests", adminCtl.ListAllRequests)
 			admin.PATCH("/requests/:id/approve", adminCtl.Approve)

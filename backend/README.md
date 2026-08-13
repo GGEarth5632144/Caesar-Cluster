@@ -204,6 +204,7 @@ internal/
 | POST | `/api/namespaces` | สร้าง space (`type`: `solo` \| `group`) |
 | POST | `/api/namespaces/join` | เข้าร่วม space แบบ `group` |
 | GET | `/api/namespaces/me` | space ของฉัน + ยอดใช้งาน + จำนวนสมาชิก |
+| DELETE | `/api/namespaces` | ออกจาก space ของตัวเอง (สมาชิกธรรมดา = แค่ออก, เจ้าของคนสุดท้าย = ลบทั้งก้อน) |
 | GET | `/api/services` | service ทั้งหมดใน space |
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
@@ -216,6 +217,7 @@ internal/
 | POST | `/api/admin/request-templates` | สร้าง choice ใหม่ |
 | GET | `/api/admin/namespaces` | ภาพรวมทุก space + ยอดใช้งาน |
 | PATCH | `/api/admin/namespaces/:id/quota` | ปรับโควตา (group ≤ 8 core) |
+| DELETE | `/api/admin/namespaces/:id` | ลบ namespace ทิ้ง (ลบได้แม้มีสมาชิกอยู่ ตามดุลยพินิจแอดมิน) |
 
 ### ลำดับที่ผู้ใช้ต้องเดิน
 
@@ -235,6 +237,7 @@ admin import รายชื่อ → user register → login
 | `QUOTA_EXCEEDED` | ทรัพยากรที่ขอเกินโควตาที่เหลือ |
 | `SERVICE_LIMIT` | จำนวน service ใน space เต็มแล้ว |
 | `ALREADY_IN_NAMESPACE` | มี space อยู่แล้ว (1 คน = 1 space) |
+| `NAMESPACE_HAS_MEMBERS` | เจ้าของพยายามออก/ลบ namespace ทั้งที่ยังมีสมาชิกคนอื่นอยู่ |
 
 ---
 
@@ -250,5 +253,4 @@ admin import รายชื่อ → user register → login
    แต่ `KubernetesProvisioner.DeployService` ยังไม่ implement จริง เลยยังไม่มีใครเซ็ตค่านี้ (ดูข้อ 3)
 5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop
 6. 🟠 **persistent storage** (volume) — ยังไม่มี
-7. 🟡 ลบ namespace / ออกจากกลุ่ม
-8. 🟡 production hardening — `JWT_SECRET` ยังเป็น `dev-secret`, ยังไม่มี TLS / rate limit
+7. 🟡 production hardening — `JWT_SECRET` ยังเป็น `dev-secret`, ยังไม่มี TLS / rate limit

@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	ErrAlreadyInNamespace = errors.New("คุณมี namespace อยู่แล้ว (1 คน = 1 space)")
-	ErrNamespaceNotFound  = errors.New("ไม่พบ namespace นี้")
-	ErrNameTaken          = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
-	ErrQuotaOutOfRange    = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
+	ErrAlreadyInNamespace  = errors.New("คุณมี namespace อยู่แล้ว (1 คน = 1 space)")
+	ErrNamespaceNotFound   = errors.New("ไม่พบ namespace นี้")
+	ErrNameTaken           = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
+	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
+	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
 )
 
 // NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + จำนวนสมาชิก)
@@ -200,4 +201,81 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, fmt.Errorf("อัปเดตโควตาบน cluster ไม่สำเร็จ: %w", err)
 	}
 	return m.Detail(ctx, ns.ID)
+}
+
+// Delete ลบ namespace ทิ้งทั้งก้อนตามดุลยพินิจแอดมิน — ลบได้เสมอไม่ว่าจะมีสมาชิกกี่คน
+//
+// data flow:
+//   - หา namespace ที่จะลบ
+//   - เรียก prov.DeleteNamespace ถอนของจริงบนคลัสเตอร์ก่อนเสมอ (แบบเดียวกับ ServiceManager.Delete)
+//     กันไม่ให้เหลือของค้างบนคลัสเตอร์โดยไม่มี record ใน DB รองรับ
+//   - ลบแถว namespaces — foreign key ที่ตั้งไว้ใน addForeignKeys จัดการที่เหลือให้เอง:
+//     services / ai_review_requests / user_containers ในนั้นถูกลบตาม (ON DELETE CASCADE)
+//     ส่วนสมาชิกที่เหลือ (ถ้ามี) แค่ namespace_id ถูกตั้งเป็น NULL ไม่ถูกลบบัญชี (ON DELETE SET NULL)
+//
+// เรียกจาก AdminController.DeleteNamespace โดยตรง และจาก Leave เมื่อผู้ leave เป็น contributor
+// และเป็นสมาชิกคนสุดท้ายที่เหลืออยู่ (ดู Leave)
+func (m *NamespaceManager) Delete(ctx context.Context, namespaceID int) error {
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNamespaceNotFound
+		}
+		return err
+	}
+
+	if err := m.prov.DeleteNamespace(ctx, ns.Name); err != nil {
+		return fmt.Errorf("ลบ namespace บนคลัสเตอร์ไม่สำเร็จ: %w", err)
+	}
+
+	return m.db.WithContext(ctx).Delete(&entity.Namespace{}, ns.ID).Error
+}
+
+// Leave ให้ผู้ใช้ออกจาก namespace ของตัวเอง — พฤติกรรมต่างกันตามบทบาทในนั้น:
+//
+//   - เป็นแค่สมาชิก (ไม่ใช่ contributor): แค่ตัด namespace_id ของตัวเองเป็น NULL
+//     namespace เดิมและสมาชิกคนอื่นไม่กระทบอะไรเลย
+//   - เป็น contributor และเป็นสมาชิกคนเดียวที่เหลืออยู่: leave ของเจ้าของคนสุดท้าย
+//     เท่ากับลบ namespace ทั้งก้อน (เรียก Delete ต่อ)
+//   - เป็น contributor แต่ยังมีสมาชิกคนอื่นอยู่: ปฏิเสธด้วย ErrNamespaceHasMembers
+//     กันไม่ให้เจ้าของออกแล้วพา service ของสมาชิกคนอื่นหายไปด้วยแบบไม่ทันตั้งตัว
+//     ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน (แอดมินมีดุลยพินิจตัดสินใจเองได้ ดู Delete)
+//
+// เช็คจำนวนสมาชิกแบบไม่ล็อกแถว (เหมือน Join) — มีโอกาสน้อยมากที่จะมีคนเข้าร่วมพอดีตอนกำลังจะลบ
+// ผลเสียที่สุดคือ service ของคนที่เพิ่ง join โดนลบไปด้วย ซึ่งเป็นความเสี่ยงระดับเดียวกับตอนแอดมินลบเอง
+func (m *NamespaceManager) Leave(ctx context.Context, userID int) error {
+	var user entity.User
+	if err := m.db.WithContext(ctx).First(&user, userID).Error; err != nil {
+		return err
+	}
+	if user.NamespaceID == nil {
+		return ErrNoNamespace
+	}
+	nsID := *user.NamespaceID
+
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, nsID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNamespaceNotFound
+		}
+		return err
+	}
+
+	if ns.ContributorID != userID {
+		// แค่สมาชิก — ออกเฉยๆ ไม่กระทบ namespace หรือคนอื่น
+		return m.db.WithContext(ctx).Model(&entity.User{}).Where("id = ?", userID).
+			Update("namespace_id", nil).Error
+	}
+
+	var memberCount int64
+	if err := m.db.WithContext(ctx).Model(&entity.User{}).
+		Where("namespace_id = ?", nsID).Count(&memberCount).Error; err != nil {
+		return err
+	}
+	if memberCount > 1 {
+		return ErrNamespaceHasMembers
+	}
+
+	// เป็น contributor และเป็นคนสุดท้าย — leave ของเจ้าของคนเดียวเท่ากับลบ namespace ทั้งก้อน
+	return m.Delete(ctx, nsID)
 }
