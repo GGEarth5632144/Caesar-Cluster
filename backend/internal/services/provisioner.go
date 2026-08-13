@@ -19,6 +19,10 @@ type Provisioner interface {
 	EnsureNamespace(ctx context.Context, ns *entity.Namespace) error
 
 	// DeleteNamespace ลบ namespace ทิ้งทั้งก้อน (workload ข้างในหายตามหมด)
+	//
+	// ต้อง idempotent: ถ้า namespace ไม่มีอยู่บนคลัสเตอร์แล้ว ให้คืน nil ไม่ใช่ error
+	// เพราะ NamespaceManager.Delete ถอนของบนคลัสเตอร์ก่อนแล้วค่อยลบแถวใน DB — ถ้าล้มกลางคัน
+	// การสั่งลบซ้ำต้องเดินจนจบได้ ไม่งั้น namespace นั้นจะค้างใน DB ตลอดกาล (500 วนไปเรื่อยๆ)
 	DeleteNamespace(ctx context.Context, nsName string) error
 
 	// DeployService สร้าง workload จริงเข้าไปใน namespace ที่กำหนด

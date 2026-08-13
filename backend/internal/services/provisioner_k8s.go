@@ -36,6 +36,13 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 
 // DeleteNamespace (ยังไม่ทำ) — จะลบ Namespace ทิ้งทั้งก้อน
 // data flow (แผน): รับชื่อ namespace จาก NamespaceManager → เรียก CoreV1().Namespaces().Delete()
+//
+// ตอน implement จริงต้องกลืน NotFound ให้เป็น success (apierrors.IsNotFound(err) → return nil)
+// ตามสัญญา idempotent ที่เขียนไว้ใน Provisioner (ดู provisioner.go)
+//
+// อีกจุดที่ต้องระวัง: การลบ namespace ของ k8s เป็น async (ค้างสถานะ Terminating สักพัก)
+// ขณะที่ AdminController.Approve ตั้งชื่อแบบตายตัวเป็น "ns-user-<id>" และคอลัมน์ namespaces.name
+// เป็น UNIQUE — ลบแล้วอนุมัติคำขอใหม่ให้คนเดิมทันที EnsureNamespace จะชนกับตัวที่ยังไม่ตายสนิท
 func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName string) error {
 	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeleteNamespace)")
 }

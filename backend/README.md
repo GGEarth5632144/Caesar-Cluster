@@ -204,7 +204,7 @@ internal/
 | POST | `/api/namespaces` | สร้าง space (`type`: `solo` \| `group`) |
 | POST | `/api/namespaces/join` | เข้าร่วม space แบบ `group` |
 | GET | `/api/namespaces/me` | space ของฉัน + ยอดใช้งาน + จำนวนสมาชิก |
-| DELETE | `/api/namespaces` | ออกจาก space ของตัวเอง (สมาชิกธรรมดา = แค่ออก, เจ้าของคนสุดท้าย = ลบทั้งก้อน) |
+| DELETE | `/api/namespaces` | ออกจาก space ของตัวเอง (สมาชิกธรรมดา = แค่ออก **ต้องลบ service ของตัวเองให้หมดก่อน**, เจ้าของคนสุดท้าย = ลบทั้งก้อน) |
 | GET | `/api/services` | service ทั้งหมดใน space |
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
@@ -218,6 +218,7 @@ internal/
 | GET | `/api/admin/namespaces` | ภาพรวมทุก space + ยอดใช้งาน |
 | PATCH | `/api/admin/namespaces/:id/quota` | ปรับโควตา (group ≤ 8 core) |
 | DELETE | `/api/admin/namespaces/:id` | ลบ namespace ทิ้ง (ลบได้แม้มีสมาชิกอยู่ ตามดุลยพินิจแอดมิน) |
+| DELETE | `/api/admin/users/:id` | ลบผู้ใช้ — ถอน namespace ที่เขาเป็นเจ้าของ + service ที่ไปสร้างค้างไว้ใน space คนอื่น ออกจากคลัสเตอร์ให้ก่อน |
 
 ### ลำดับที่ผู้ใช้ต้องเดิน
 
@@ -238,6 +239,7 @@ admin import รายชื่อ → user register → login
 | `SERVICE_LIMIT` | จำนวน service ใน space เต็มแล้ว |
 | `ALREADY_IN_NAMESPACE` | มี space อยู่แล้ว (1 คน = 1 space) |
 | `NAMESPACE_HAS_MEMBERS` | เจ้าของพยายามออก/ลบ namespace ทั้งที่ยังมีสมาชิกคนอื่นอยู่ |
+| `HAS_OWN_SERVICES` | สมาชิกพยายามออกจาก space ทั้งที่ยังมี service ที่ตัวเองสร้างค้างอยู่ (ออกไปแล้วจะลบเองไม่ได้อีก) |
 
 ---
 

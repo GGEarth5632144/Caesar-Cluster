@@ -34,14 +34,17 @@ var errRequestNotPending = errors.New("request ถูกดำเนินกา
 // AdminController รวม endpoint ฝั่ง admin ไว้ที่เดียว:
 // import รายชื่อ นศ. ที่มีสิทธิ์, สร้าง choices (plans), ดูภาพรวม namespace, ปรับโควตาให้กลุ่ม
 // ทุก route ที่ผูกกับ controller นี้ผ่าน middleware AdminOnly มาแล้ว
+// svc ใช้เฉพาะตอน DeleteUser — ต้องถอน service ที่ user ทิ้งไว้ใน space ของคนอื่นออกจากคลัสเตอร์
+// ก่อนที่ FK จะลบแถวมันหายไปเงียบๆ (ดูเหตุผลเต็มใน DeleteUser)
 type AdminController struct {
-	db *gorm.DB
-	ns *services.NamespaceManager
+	db  *gorm.DB
+	ns  *services.NamespaceManager
+	svc *services.ServiceManager
 }
 
 // NewAdminController ประกอบ controller — ถูกเรียกจาก router.Setup
-func NewAdminController(db *gorm.DB, ns *services.NamespaceManager) *AdminController {
-	return &AdminController{db: db, ns: ns}
+func NewAdminController(db *gorm.DB, ns *services.NamespaceManager, svc *services.ServiceManager) *AdminController {
+	return &AdminController{db: db, ns: ns, svc: svc}
 }
 
 // ListEligibleStudents คืนรายชื่อ นศ. ที่มีสิทธิ์ทั้งหมด (ตาราง "match") ให้ admin ตรวจสอบ
@@ -868,14 +871,61 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 }
 
 // DeleteUser ลบผู้ใช้งาน (DELETE)
+//
+// ต้องถอนของบนคลัสเตอร์ให้หมดก่อนค่อยลบแถว user เพราะ FK ทำงานเงียบเกินไป:
+//   - fk_namespaces_contributor_id (ON DELETE CASCADE) → ลบเจ้าของ = แถว namespace หายตามทันที
+//   - fk_services_created_by (ON DELETE CASCADE) → service ที่คนนี้สร้างไว้ใน space คนอื่นก็หายตาม
+//
+// ถ้าปล่อยให้ FK จัดการอย่างเดียว record ใน DB จะหายไปโดยที่ namespace/workload จริงบนคลัสเตอร์
+// ยังรันอยู่ กลายเป็นขยะที่ไม่มีทางตามเก็บได้อีกเลย (ไม่เหลือชื่อ/id ให้ค้น) แถมโควตาที่ระบบเรา
+// คำนวณจาก DB จะว่างขึ้นทั้งที่ของจริงยังกินทรัพยากรอยู่
+//
+// data flow: หา namespace ที่ user เป็นเจ้าของ → NamespaceManager.Delete ทีละก้อน (ลบบนคลัสเตอร์
+// + cascade service ข้างใน) → เก็บ service ที่เหลือของ user ใน space คนอื่นผ่าน ServiceManager.Delete
+// → ค่อยลบแถว user
 func (h *AdminController) DeleteUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
 		return
 	}
+	ctx := c.Request.Context()
 
-	if err := h.db.WithContext(c.Request.Context()).Delete(&entity.User{}, id).Error; err != nil {
+	// 1) space ที่ user เป็นเจ้าของ — ลบทั้งก้อน (service/ใบเสร็จ AI/แถว monitoring ข้างในหายตาม
+	//    ด้วย FK ส่วนสมาชิกคนอื่นแค่หลุดออกจาก space ไม่ถูกลบบัญชี)
+	var owned []entity.Namespace
+	if err := h.db.WithContext(ctx).Where("contributor_id = ?", id).Find(&owned).Error; err != nil {
+		log.Printf("delete user %d: list owned namespaces error: %v", id, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
+		return
+	}
+	for _, ns := range owned {
+		if err := h.ns.Delete(ctx, ns.ID); err != nil && !errors.Is(err, services.ErrNamespaceNotFound) {
+			log.Printf("delete user %d: delete namespace %d error: %v", id, ns.ID, err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL",
+				"ลบ namespace ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)")
+			return
+		}
+	}
+
+	// 2) service ที่ user ไปสร้างค้างไว้ใน space ของคนอื่น — ถอนทีละตัวให้โควตาของกลุ่มนั้นคืนจริง
+	var leftovers []entity.Service
+	if err := h.db.WithContext(ctx).Where("created_by = ?", id).Order("id").Find(&leftovers).Error; err != nil {
+		log.Printf("delete user %d: list leftover services error: %v", id, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
+		return
+	}
+	for _, svc := range leftovers {
+		if err := h.svc.Delete(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, services.ErrServiceNotFound) {
+			log.Printf("delete user %d: delete service %d error: %v", id, svc.ID, err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL",
+				"ลบ service ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)")
+			return
+		}
+	}
+
+	if err := h.db.WithContext(ctx).Delete(&entity.User{}, id).Error; err != nil {
+		log.Printf("delete user %d error: %v", id, err)
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
 		return
 	}

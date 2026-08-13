@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -17,6 +19,7 @@ var (
 	ErrNameTaken           = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
 	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
 	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
+	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
 )
 
 // NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + จำนวนสมาชิก)
@@ -213,8 +216,13 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 //     services / ai_review_requests / user_containers ในนั้นถูกลบตาม (ON DELETE CASCADE)
 //     ส่วนสมาชิกที่เหลือ (ถ้ามี) แค่ namespace_id ถูกตั้งเป็น NULL ไม่ถูกลบบัญชี (ON DELETE SET NULL)
 //
-// เรียกจาก AdminController.DeleteNamespace โดยตรง และจาก Leave เมื่อผู้ leave เป็น contributor
-// และเป็นสมาชิกคนสุดท้ายที่เหลืออยู่ (ดู Leave)
+// ลำดับ "คลัสเตอร์ก่อน DB ทีหลัง" แลกมาด้วยช่วงที่ล้มกลางคันได้: ถ้าถอนของบนคลัสเตอร์สำเร็จแล้ว
+// ลบแถวใน DB ไม่ผ่าน จะเหลือ namespace ใน DB ที่ไม่มีของจริงรองรับ (หน้าเว็บยังโชว์ service เป็น running)
+// จุดนี้ retry ได้ปลอดภัยเพราะ Provisioner.DeleteNamespace ถูกกำหนดให้ idempotent (ดู provisioner.go)
+// แต่ต้อง log ให้ชัดว่าเกิดขึ้น ไม่งั้นไม่มีใครรู้ว่าต้องมาลบซ้ำ
+//
+// เรียกจาก AdminController.DeleteNamespace / AdminController.DeleteUser โดยตรง และจาก Leave
+// เมื่อผู้ leave เป็น contributor และเป็นสมาชิกคนสุดท้ายที่เหลืออยู่ (ดู Leave)
 func (m *NamespaceManager) Delete(ctx context.Context, namespaceID int) error {
 	var ns entity.Namespace
 	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
@@ -228,18 +236,30 @@ func (m *NamespaceManager) Delete(ctx context.Context, namespaceID int) error {
 		return fmt.Errorf("ลบ namespace บนคลัสเตอร์ไม่สำเร็จ: %w", err)
 	}
 
-	return m.db.WithContext(ctx).Delete(&entity.Namespace{}, ns.ID).Error
+	if err := m.db.WithContext(ctx).Delete(&entity.Namespace{}, ns.ID).Error; err != nil {
+		log.Printf("!! namespace '%s' (id=%d) ถูกถอนออกจากคลัสเตอร์แล้ว แต่ลบแถวใน DB ไม่สำเร็จ: %v "+
+			"— DB กับคลัสเตอร์ไม่ตรงกันจนกว่าจะสั่งลบซ้ำสำเร็จ", ns.Name, ns.ID, err)
+		return err
+	}
+	return nil
 }
 
 // Leave ให้ผู้ใช้ออกจาก namespace ของตัวเอง — พฤติกรรมต่างกันตามบทบาทในนั้น:
 //
-//   - เป็นแค่สมาชิก (ไม่ใช่ contributor): แค่ตัด namespace_id ของตัวเองเป็น NULL
-//     namespace เดิมและสมาชิกคนอื่นไม่กระทบอะไรเลย
+//   - เป็นแค่สมาชิก (ไม่ใช่ contributor): ต้องไม่มี service ที่ตัวเองสร้างค้างอยู่ก่อน (ดูย่อหน้าถัดไป)
+//     ผ่านแล้วแค่ตัด namespace_id ของตัวเองเป็น NULL — namespace เดิมและสมาชิกคนอื่นไม่กระทบอะไรเลย
 //   - เป็น contributor และเป็นสมาชิกคนเดียวที่เหลืออยู่: leave ของเจ้าของคนสุดท้าย
-//     เท่ากับลบ namespace ทั้งก้อน (เรียก Delete ต่อ)
+//     เท่ากับลบ namespace ทั้งก้อน (เรียก Delete ต่อ) — service ของตัวเองหายไปพร้อมกันอยู่แล้ว
+//     เลยไม่ต้องบังคับให้ลบก่อน
 //   - เป็น contributor แต่ยังมีสมาชิกคนอื่นอยู่: ปฏิเสธด้วย ErrNamespaceHasMembers
 //     กันไม่ให้เจ้าของออกแล้วพา service ของสมาชิกคนอื่นหายไปด้วยแบบไม่ทันตั้งตัว
 //     ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน (แอดมินมีดุลยพินิจตัดสินใจเองได้ ดู Delete)
+//
+// ที่ต้องบังคับให้สมาชิกลบ service ของตัวเองก่อน เพราะสิทธิ์ดู/ลบ service ผูกกับ "namespace ปัจจุบัน
+// ของผู้เรียก" (ดู currentNamespaceID ใน controller/helper.go) — พอ namespace_id เป็น NULL แล้ว
+// เจ้าตัวจะเข้าไปลบของตัวเองไม่ได้อีกเลย ปล่อยไว้ก็กลายเป็น workload ที่ยังรันบนคลัสเตอร์
+// และยังกินโควตาของกลุ่มต่อไป โดยเหลือแค่เจ้าของกลุ่ม/แอดมินที่ตามเก็บให้ได้
+// เลือกบล็อกแทนการลบให้อัตโนมัติ เพราะการกด "ออกจากกลุ่ม" ไม่ควรลบงานที่คนอื่นอาจใช้อยู่แบบเงียบๆ
 //
 // เช็คจำนวนสมาชิกแบบไม่ล็อกแถว (เหมือน Join) — มีโอกาสน้อยมากที่จะมีคนเข้าร่วมพอดีตอนกำลังจะลบ
 // ผลเสียที่สุดคือ service ของคนที่เพิ่ง join โดนลบไปด้วย ซึ่งเป็นความเสี่ยงระดับเดียวกับตอนแอดมินลบเอง
@@ -262,8 +282,26 @@ func (m *NamespaceManager) Leave(ctx context.Context, userID int) error {
 	}
 
 	if ns.ContributorID != userID {
-		// แค่สมาชิก — ออกเฉยๆ ไม่กระทบ namespace หรือคนอื่น
-		return m.db.WithContext(ctx).Model(&entity.User{}).Where("id = ?", userID).
+		// แค่สมาชิก — ออกได้ถ้าเก็บของตัวเองเรียบร้อยแล้ว ไม่กระทบ namespace หรือคนอื่น
+		var own []entity.Service
+		if err := m.db.WithContext(ctx).
+			Where("namespace_id = ? AND created_by = ?", nsID, userID).
+			Order("id").Find(&own).Error; err != nil {
+			return err
+		}
+		if len(own) > 0 {
+			names := make([]string, 0, len(own))
+			for _, svc := range own {
+				names = append(names, svc.Name)
+			}
+			return fmt.Errorf("%w (เหลืออยู่ %d ตัว: %s)",
+				ErrHasOwnServices, len(own), strings.Join(names, ", "))
+		}
+
+		// ผูก namespace_id เดิมไว้ใน WHERE ด้วย — ถ้าระหว่างนี้มีคนอื่นย้าย/ลบ space ไปแล้ว
+		// จะได้ไม่เผลอเขียนทับสถานะใหม่ของ user (RowsAffected = 0 ถือว่าออกไปแล้ว ไม่ใช่ error)
+		return m.db.WithContext(ctx).Model(&entity.User{}).
+			Where("id = ? AND namespace_id = ?", userID, nsID).
 			Update("namespace_id", nil).Error
 	}
 
