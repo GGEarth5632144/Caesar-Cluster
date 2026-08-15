@@ -21,3 +21,9 @@ type SetQuotaRequest struct {
 	CPULimitMilli int `json:"cpu_limit_milli" binding:"required,min=100,max=8000"`
 	RAMLimitMB    int `json:"ram_limit_mb" binding:"required,min=128,max=8192"`
 }
+
+// CreateInviteRequest = body ของ POST /api/namespaces/invites — เชิญ student_id คนหนึ่งเข้ากลุ่ม
+// data flow: JSON จาก client → InviteController.Create → InviteManager.Create
+type CreateInviteRequest struct {
+	StudentID string `json:"student_id" binding:"required"`
+}

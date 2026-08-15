@@ -29,14 +29,16 @@ func main() {
 	}
 
 	// ประกอบ service layer:
-	//   quota  = คุมโควตาของ namespace (มาแทน AllocationService ที่เคยไล่หา node)
-	//   nsMgr  = สร้าง/เข้าร่วม space + ปรับโควตา
-	//   svcMgr = deploy/ลบ workload โดยผ่านการเช็คโควตาจาก quota เสมอ
+	//   quota     = คุมโควตาของ namespace (มาแทน AllocationService ที่เคยไล่หา node)
+	//   nsMgr     = สร้าง/เข้าร่วม space + ปรับโควตา
+	//   svcMgr    = deploy/ลบ workload โดยผ่านการเช็คโควตาจาก quota เสมอ
+	//   inviteMgr = เชิญ/ตอบรับ/ปฏิเสธคำเชิญเข้ากลุ่ม (ไม่แตะ cluster เลย ไม่ต้องรับ prov)
 	quota := services.NewQuotaService(db)
 	nsMgr := services.NewNamespaceManager(db, quota, prov)
 	svcMgr := services.NewServiceManager(db, quota, prov)
+	inviteMgr := services.NewInviteManager(db)
 
-	r := router.Setup(cfg, db, nsMgr, svcMgr)
+	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr)
 
 	log.Println("server running on http://localhost:" + cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Cpu, Layers, HardDrive } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DashboardStatsSkeleton } from "@/components/ui/PageSkeletons";
+import GroupMembers from "@/components/GroupMembers";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 
@@ -141,6 +142,8 @@ export default function GeneralDashboard({ user }: { user: any }) {
         </div>
 
       </div>
+
+      <GroupMembers namespace={data} isOwner={user?.id === data.contributor_id} />
 
       <div className="w-full max-w-3xl mx-auto sm:mx-0 rounded-3xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm">
         <div className="flex items-center justify-between pb-2 border-b border-black/5">

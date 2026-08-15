@@ -22,12 +22,23 @@ var (
 	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
 )
 
-// NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + จำนวนสมาชิก)
-// member_count ไม่ได้เก็บใน DB — นับจาก users ที่ namespace_id ตรงกัน เพื่อไม่ให้ค่าเพี้ยนจากของจริง
+// NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + รายชื่อสมาชิก)
+// Members ไม่ได้เก็บใน DB — อ่านสดจาก users ที่ namespace_id ตรงกัน เพื่อไม่ให้ค่าเพี้ยนจากของจริง
+// (MemberCount มาจาก len(Members) เอง ไม่ query แยก — ตัวเลขกับรายชื่อจะไม่มีทางไม่ตรงกัน)
 type NamespaceDetail struct {
 	entity.Namespace
 	Usage       NamespaceUsage `json:"usage"`
 	MemberCount int            `json:"member_count"`
+	Members     []MemberInfo   `json:"members"`
+}
+
+// MemberInfo = ข้อมูลสมาชิก 1 คนที่พอจะโชว์ในรายชื่อกลุ่มได้ (ไม่ใช่ entity.User ทั้งก้อน
+// เพราะไม่อยากส่ง password/gmail ของสมาชิกคนอื่นออกไปให้ทุกคนในกลุ่มเห็น)
+type MemberInfo struct {
+	ID            int    `json:"id"`
+	StudentID     string `json:"student_id"`
+	RealName      string `json:"real_name"`
+	IsContributor bool   `json:"is_contributor"`
 }
 
 // NamespaceManager ดูแลวงจรชีวิตของ space: สร้าง (เดี่ยว/กลุ่ม), เข้าร่วมกลุ่ม, ดูรายละเอียด, ปรับโควตา
@@ -139,13 +150,22 @@ func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*Namesp
 		return nil, err
 	}
 
-	var members int64
-	if err := m.db.WithContext(ctx).Model(&entity.User{}).
-		Where("namespace_id = ?", namespaceID).Count(&members).Error; err != nil {
+	var users []entity.User
+	if err := m.db.WithContext(ctx).
+		Where("namespace_id = ?", namespaceID).Order("id").Find(&users).Error; err != nil {
 		return nil, err
 	}
+	members := make([]MemberInfo, 0, len(users))
+	for _, u := range users {
+		members = append(members, MemberInfo{
+			ID:            u.ID,
+			StudentID:     u.StudentID,
+			RealName:      u.RealName,
+			IsContributor: u.ID == ns.ContributorID,
+		})
+	}
 
-	return &NamespaceDetail{Namespace: ns, Usage: usage, MemberCount: int(members)}, nil
+	return &NamespaceDetail{Namespace: ns, Usage: usage, MemberCount: len(members), Members: members}, nil
 }
 
 // ListAll คืน namespace ทั้งหมดพร้อมยอดใช้งาน — สำหรับหน้า admin ดูภาพรวมทั้งระบบ

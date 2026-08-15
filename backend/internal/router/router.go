@@ -26,6 +26,9 @@ import (
 //	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
 //	               DELETE /api/namespaces (leave — เป็นเจ้าของคนสุดท้าย = ลบทั้งก้อน),
+//	               POST /api/namespaces/invites (contributor เชิญ), GET /api/namespaces/invites/mine,
+//	               GET /api/namespaces/invites/sent, PATCH /api/namespaces/invites/:id/accept,
+//	               PATCH /api/namespaces/invites/:id/decline, DELETE /api/namespaces/invites/:id (ยกเลิก),
 //	               GET|POST /api/services, DELETE /api/services/:id,
 //	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
 //	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
@@ -38,6 +41,7 @@ func Setup(
 	db *gorm.DB,
 	nsMgr *services.NamespaceManager,
 	svcMgr *services.ServiceManager,
+	inviteMgr *services.InviteManager,
 ) *gin.Engine {
 
 	authCtl := controller.NewAuthController(db, cfg)
@@ -47,6 +51,7 @@ func Setup(
 	adminCtl := controller.NewAdminController(db, nsMgr, svcMgr)
 	reqCtl := controller.NewRequestController(db)
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
+	inviteCtl := controller.NewInviteController(inviteMgr)
 
 	r := gin.Default()
 
@@ -91,6 +96,13 @@ func Setup(
 			protected.GET("/namespaces/me", nsCtl.Mine)
 			protected.DELETE("/namespaces", nsCtl.Leave)
 
+			protected.POST("/namespaces/invites", inviteCtl.Create)
+			protected.GET("/namespaces/invites/mine", inviteCtl.Mine)
+			protected.GET("/namespaces/invites/sent", inviteCtl.Sent)
+			protected.PATCH("/namespaces/invites/:id/accept", inviteCtl.Accept)
+			protected.PATCH("/namespaces/invites/:id/decline", inviteCtl.Decline)
+			protected.DELETE("/namespaces/invites/:id", inviteCtl.Cancel)
+
 			protected.GET("/services", svcCtl.List)
 			protected.POST("/services", svcCtl.Create)
 			protected.DELETE("/services/:id", svcCtl.Delete)
@@ -107,9 +119,9 @@ func Setup(
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
 			admin.POST("/eligible-students/preview", adminCtl.PreviewEligibleStudents)
 
-            admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
-            admin.PATCH("/request-templates/:id", adminCtl.UpdateRequestTemplate)
-            admin.DELETE("/request-templates/:id", adminCtl.DeleteRequestTemplate)
+			admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
+			admin.PATCH("/request-templates/:id", adminCtl.UpdateRequestTemplate)
+			admin.DELETE("/request-templates/:id", adminCtl.DeleteRequestTemplate)
 			admin.GET("/request-templates", adminCtl.ListAllRequestTemplates)
 
 			admin.GET("/namespaces", adminCtl.ListNamespaces)

@@ -151,6 +151,7 @@ eligible_students (= "match")   รายชื่อ นศ. ที่มีส
 cmd/
   server/         entry point ของ API server
   seed/           ยัดข้อมูลตั้งต้น (roles, admin, request_templates) — idempotent
+  export-rbac/    generate Kubernetes RBAC manifest (Role/RoleBinding) จาก namespace ใน DB
 internal/
   config/         อ่าน env + เปิด DB + AutoMigrate + FK
   entity/         struct ที่ map กับตาราง (schema มาจาก tag ที่นี่ ไม่มีไฟล์ .sql แล้ว)
@@ -173,6 +174,26 @@ internal/
 | `provisioner.go` | **interface** — จุดเดียวที่ผูกกับ k8s ที่เหลือไม่รู้จัก k8s เลย |
 | `provisioner_mock.go` | ตัวที่ใช้อยู่ตอนนี้ (แค่ log) |
 | `provisioner_k8s.go` | **ยังเป็น stub** — ของจริงต้องเขียนที่นี่ |
+
+### Export RBAC manifest
+
+DB (namespace + สมาชิก + โควตา) เป็น source of truth เดียว — ไม่ต้องแก้ YAML มือแล้วซิงก์เอง
+รันคำสั่งนี้เมื่อไรก็ได้ manifest ที่ตรงกับ DB ปัจจุบันเสมอ (deterministic, รันซ้ำได้ผลลัพธ์เดิม):
+
+```bash
+go run ./cmd/export-rbac --out=rbac.yaml
+kubectl apply -f rbac.yaml   # apply เข้า cluster เอง (เครื่องมือนี้แค่ generate ไม่ได้ apply ให้)
+```
+
+ต่อ 1 namespace ได้ `Role` (สิทธิ์ตรงกับที่ backend อนุญาตผ่าน API เป๊ะ: CRUD deployments/services,
+อ่าน pods/pods-log อย่างเดียว — **ไม่มี** `pods/exec` เพราะ ERD กำกับไว้ว่า monitoring ได้ ใช้ terminal ไม่ได้)
++ `RoleBinding` ผูกกับสมาชิก**ทุกคน**ในกลุ่ม (ไม่ใช่แค่เจ้าของ — ตรงกับที่ backend ให้สมาชิกทุกคนสร้าง/ลบ
+service ของกลุ่มร่วมกันเท่ากันอยู่แล้ว) เข้า Role เดียวกัน แต่ละ subject เป็น `caesar-user-<student_id>`
+พร้อม annotation บอกว่าใครเป็นเจ้าของ + โควตาไว้ให้ดูเทียบง่ายๆ
+
+> Caesar Cluster ไม่มี auth เข้า Kubernetes โดยตรง (auth ตอนนี้เป็น JWT ระดับ backend API เท่านั้น)
+> `caesar-user-<student_id>` เลยเป็นแค่ชื่อ subject ที่ตั้งไว้ก่อนเฉยๆ ยังไม่มีระบบไหน map identity จริง
+> เข้ากับชื่อนี้ — ต้องออกแบบ auth layer ตรงนี้เพิ่มก่อนถึงจะเอา manifest นี้ไป apply ใช้งานจริงได้
 
 ### ทำไมต้องล็อกแถว namespace ตอนเช็คโควตา
 
@@ -205,6 +226,12 @@ internal/
 | POST | `/api/namespaces/join` | เข้าร่วม space แบบ `group` |
 | GET | `/api/namespaces/me` | space ของฉัน + ยอดใช้งาน + จำนวนสมาชิก |
 | DELETE | `/api/namespaces` | ออกจาก space ของตัวเอง (สมาชิกธรรมดา = แค่ออก **ต้องลบ service ของตัวเองให้หมดก่อน**, เจ้าของคนสุดท้าย = ลบทั้งก้อน) |
+| POST | `/api/namespaces/invites` | เชิญ `student_id` เข้ากลุ่ม — **เฉพาะเจ้าของ (contributor)** เท่านั้น |
+| GET | `/api/namespaces/invites/mine` | คำเชิญที่ pending ส่งถึงฉัน (เห็นได้ไม่ว่าจะมี space แล้วหรือยัง) |
+| GET | `/api/namespaces/invites/sent` | คำเชิญทั้งหมดที่ฉันส่งจาก space ของตัวเอง (ทุกสถานะ) — เจ้าของเท่านั้น |
+| PATCH | `/api/namespaces/invites/:id/accept` | ตอบรับ → join namespace ที่เชิญมาทันที |
+| PATCH | `/api/namespaces/invites/:id/decline` | ปฏิเสธ |
+| DELETE | `/api/namespaces/invites/:id` | เจ้าของยกเลิกคำเชิญที่ยังไม่มีคนตอบ (เผื่อเชิญผิดคน) |
 | GET | `/api/services` | service ทั้งหมดใน space |
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
@@ -240,6 +267,10 @@ admin import รายชื่อ → user register → login
 | `ALREADY_IN_NAMESPACE` | มี space อยู่แล้ว (1 คน = 1 space) |
 | `NAMESPACE_HAS_MEMBERS` | เจ้าของพยายามออก/ลบ namespace ทั้งที่ยังมีสมาชิกคนอื่นอยู่ |
 | `HAS_OWN_SERVICES` | สมาชิกพยายามออกจาก space ทั้งที่ยังมี service ที่ตัวเองสร้างค้างอยู่ (ออกไปแล้วจะลบเองไม่ได้อีก) |
+| `NOT_CONTRIBUTOR` | เฉพาะเจ้าของ space เท่านั้นที่เชิญ/ดูคำเชิญที่ส่งไปได้ |
+| `INVITE_SELF` | เชิญ student_id ของตัวเอง |
+| `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |
+| `INVITE_NOT_PENDING` | คำเชิญถูก accept/decline/cancel ไปแล้ว ตอบซ้ำไม่ได้ |
 
 ---
 
