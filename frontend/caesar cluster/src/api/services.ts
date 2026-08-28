@@ -11,6 +11,7 @@ export interface AppService {
   image: string;
   cpu_milli: number;
   ram_mb: number;
+  container_port: number | null;
   node_port: number | null;
   status: ServiceStatus;
   env_vars: Record<string, string>;
@@ -23,6 +24,8 @@ export interface CreateServiceDTO {
   request_template_id?: number;
   cpu_milli?: number;
   ram_mb?: number;
+  // port ที่แอปใน container ฟังอยู่ ไม่ส่งมา = backend เดาจาก env var ชื่อ PORT ก่อน
+  container_port?: number;
   env_vars?: Record<string, string>;
 }
 

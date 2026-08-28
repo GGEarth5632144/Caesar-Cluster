@@ -2,10 +2,11 @@ import axios from 'axios';
 
 import { useAuthStore } from '@/store/authStore';
 import { PATHS } from '@/config/routes';
+import { API_URL } from '@/config/env';
 
 const axiosClient = axios.create({
-  // ดึงค่าจากไฟล์ .env มาใช้ผ่านคำสั่ง import.meta.env
-  baseURL: import.meta.env.VITE_API_URL,
+  // ค่ามาจาก @/config/env — container ตั้งได้ตอน start, ตอน dev ใช้ค่าจาก .env เหมือนเดิม
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },

@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -14,8 +15,25 @@ const (
 	ProvisionerKubernetes = "kubernetes"
 )
 
+// โหมดการรัน (ตั้งผ่าน env APP_ENV) — แยกออกจาก PROVISIONER โดยตั้งใจ
+//
+// เดิมโค้ดใช้ PROVISIONER=mock เป็นตัวบอกว่า "อยู่ในโหมด dev" แล้วไปเปิด CORS ให้ localhost ทุกพอร์ต
+// ซึ่งมัดสองเรื่องที่ไม่เกี่ยวกันเข้าด้วยกัน: จะแตะคลัสเตอร์จริงหรือไม่ กับจะผ่อน CORS หรือไม่
+// พอเอาขึ้นเครื่องจริงแล้วอยากรัน mock ไว้ก่อน (เช่น คลัสเตอร์ยังไม่พร้อม) จะได้ CORS หลวมติดมาด้วย
+const (
+	EnvDevelopment = "development"
+	EnvProduction  = "production"
+)
+
+// ระดับ Pod Security Admission ที่รองรับ (ตั้งผ่าน env K8S_POD_SECURITY)
+const (
+	PodSecurityBaseline   = "baseline"
+	PodSecurityRestricted = "restricted"
+)
+
 // Config = ค่า runtime ทั้งหมดที่ระบบต้องใช้ อ่านมาจาก env ครั้งเดียวตอน start
 type Config struct {
+	AppEnv         string // development | production — คุมความเข้มของ CORS (ดู router.allowOriginFor)
 	Port           string
 	DBUrl          string
 	JWTSecret      string
@@ -30,6 +48,43 @@ type Config struct {
 	ResendAPIKey         string // API key ของ Resend — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
 	MailFrom             string // ผู้ส่ง เช่น "Caesar Cluster <no-reply@your-domain>"
 	ResetTokenTTLMinutes int    // อายุของลิงก์รีเซ็ตรหัสผ่าน (นาที)
+
+	// K8s = ค่าที่ใช้เฉพาะตอน PROVISIONER=kubernetes
+	K8s K8sConfig
+
+	// AllowedImageRegistries = prefix ของ image ที่ผู้ใช้ deploy ได้ (คั่นด้วย comma)
+	// ว่าง = อนุญาตทุก image (พฤติกรรมเดิม) — ตั้งบนเครื่องจริงเพื่อกันคนเอา image ขุดเหรียญมารัน
+	AllowedImageRegistries []string
+}
+
+// K8sConfig = ค่าที่ KubernetesProvisioner ต้องใช้ตอนสร้างของจริงบนคลัสเตอร์
+//
+// ทั้งหมดเป็นค่าที่ผูกกับ "คลัสเตอร์เครื่องนี้" ไม่ใช่กติกาธุรกิจ เลยแยกเป็น env
+// ไม่ฝังเป็น constant ในโค้ด (คลัสเตอร์ที่ pod CIDR ต่างกันจะได้ไม่ต้องแก้โค้ด)
+type K8sConfig struct {
+	// PodCIDR = ช่วง IP ของ pod ทั้งคลัสเตอร์ (ตามเอกสาร Calico ของคลัสเตอร์นี้คือ 172.16.0.0/16)
+	// NetworkPolicy ใช้ค่านี้กันไม่ให้ pod ใน namespace หนึ่งคุยข้ามไปหา pod ของ namespace อื่น
+	PodCIDR string
+
+	// BlockedEgressCIDRs = ช่วง IP ที่ห้าม pod ของนักศึกษาต่อออกไป
+	// ค่า default คือวง VLAN100 ของ node ทุกตัว — กันไม่ให้ container ที่รันอยู่ยิงเข้า SSH/kubelet
+	// ของ node หรือเข้า control plane ตรงๆ (pod ควรออกอินเทอร์เน็ตได้ แต่ไม่ควรเดินในบ้านเรา)
+	BlockedEgressCIDRs []string
+
+	// DefaultContainerPort = port ที่ใช้เมื่อ service ไม่ได้ระบุ container_port และไม่มี env PORT
+	DefaultContainerPort int
+
+	// PodSecurity = ระดับ Pod Security Admission ที่ enforce บน namespace ของผู้ใช้
+	// baseline   = กัน privileged / hostPath / hostNetwork (image ทั่วไปยังรันได้ รวมที่รันเป็น root)
+	// restricted = เข้มสุด บังคับ runAsNonRoot ด้วย — image จำนวนมากจะรันไม่ขึ้น ต้องเลือกให้ดี
+	PodSecurity string
+
+	// ImagePullPolicy ของ container ที่ deploy (Always | IfNotPresent | Never)
+	// IfNotPresent เหมาะกับคลัสเตอร์นี้ที่ node เป็น Atom + SSD 64GB และดึง image ผ่าน NAT ตัวเดียว
+	ImagePullPolicy string
+
+	// RequestTimeoutSeconds = timeout ต่อ 1 คำสั่งที่ยิงไป Kubernetes API
+	RequestTimeoutSeconds int
 }
 
 // Load อ่านค่า config จาก environment (โหลด .env ให้ก่อนถ้ามี)
@@ -39,6 +94,7 @@ func Load() *Config {
 	_ = godotenv.Load() // ไม่มีไฟล์ .env ก็ไม่ error — ใช้ env จริงของเครื่องแทน
 
 	cfg := &Config{
+		AppEnv:         normalizeAppEnv(getEnv("APP_ENV", EnvDevelopment)),
 		Port:           getEnv("PORT", "8080"),
 		DBUrl:          getEnv("DB_URL", ""),
 		JWTSecret:      getEnv("JWT_SECRET", ""),
@@ -52,16 +108,57 @@ func Load() *Config {
 		ResendAPIKey:         getEnv("RESEND_API_KEY", ""),
 		MailFrom:             getEnv("MAIL_FROM", "Caesar Cluster <onboarding@resend.dev>"),
 		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
+
+		K8s: K8sConfig{
+			PodCIDR:               getEnv("K8S_POD_CIDR", "172.16.0.0/16"),
+			BlockedEgressCIDRs:    getEnvList("K8S_BLOCKED_EGRESS_CIDRS", "192.168.100.0/24"),
+			DefaultContainerPort:  getEnvInt("K8S_DEFAULT_CONTAINER_PORT", 8080),
+			PodSecurity:           getEnv("K8S_POD_SECURITY", PodSecurityBaseline),
+			ImagePullPolicy:       getEnv("K8S_IMAGE_PULL_POLICY", "IfNotPresent"),
+			RequestTimeoutSeconds: getEnvInt("K8S_REQUEST_TIMEOUT_SECONDS", 30),
+		},
+
+		AllowedImageRegistries: getEnvList("ALLOWED_IMAGE_REGISTRIES", ""),
 	}
+
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
 	}
+
+	// กันพลาดแบบที่เสียหายที่สุด: เอาขึ้นเครื่องจริงโดยลืมเปลี่ยน secret ตัวอย่าง
+	// ใครก็ตามที่อ่าน repo นี้จะปลอม JWT เป็น admin ได้ทันที เลยไม่ยอมให้ start
+	if cfg.IsProduction() && (cfg.JWTSecret == "dev-secret" || len(cfg.JWTSecret) < 32) {
+		log.Fatal("APP_ENV=production ต้องตั้ง JWT_SECRET ใหม่ยาวอย่างน้อย 32 ตัวอักษร " +
+			"สร้างได้ด้วยคำสั่ง: openssl rand -base64 48")
+	}
+
+	if cfg.K8s.PodSecurity != PodSecurityBaseline && cfg.K8s.PodSecurity != PodSecurityRestricted {
+		log.Printf("ค่า K8S_POD_SECURITY=%q ไม่รู้จัก ใช้ %q แทน", cfg.K8s.PodSecurity, PodSecurityBaseline)
+		cfg.K8s.PodSecurity = PodSecurityBaseline
+	}
+
 	// อีเมลไม่ใช่ค่าที่ทั้งระบบต้องมีถึงจะ start ได้ (ต่างจาก DB/JWT) — แค่เตือนถ้าลืมตั้ง
 	// เพราะจะกระทบเฉพาะฟีเจอร์รีเซ็ตรหัสผ่าน ไม่ควรบล็อกทั้ง server สำหรับคนที่ dev ส่วนอื่นอยู่
 	if cfg.ResendAPIKey == "" {
 		log.Println("คำเตือน: ไม่ได้ตั้ง RESEND_API_KEY — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
 	}
+	if cfg.IsProduction() && len(cfg.AllowedImageRegistries) == 0 {
+		log.Println("คำเตือน: ไม่ได้ตั้ง ALLOWED_IMAGE_REGISTRIES — ผู้ใช้ deploy image อะไรก็ได้ขึ้นคลัสเตอร์")
+	}
 	return cfg
+}
+
+// IsProduction บอกว่ากำลังรันในโหมดเครื่องจริงหรือไม่ — ใช้คุม CORS และความเข้มของ config check
+func (c *Config) IsProduction() bool { return c.AppEnv == EnvProduction }
+
+// normalizeAppEnv ยอมรับทั้ง prod/production และ dev/development ให้เขียนสั้นได้
+func normalizeAppEnv(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "prod", "production":
+		return EnvProduction
+	default:
+		return EnvDevelopment
+	}
 }
 
 // getEnv อ่าน env ตาม key — ถ้าไม่มีหรือค่าว่างให้คืน fallback แทน
@@ -85,4 +182,17 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// getEnvList อ่าน env ที่เป็นรายการคั่นด้วย comma แล้วคืนเป็น slice (ตัดช่องว่าง/ตัวว่างทิ้ง)
+// คืน slice ว่างเมื่อ env และ fallback ว่างทั้งคู่ — ฝั่งที่ใช้จะได้เช็ค len() ได้ตรงไปตรงมา
+func getEnvList(key, fallback string) []string {
+	parts := strings.Split(getEnv(key, fallback), ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

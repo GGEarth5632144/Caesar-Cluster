@@ -3,7 +3,7 @@ import { useParams, useLocation, useNavigate } from "react-router-dom";
 import {
   CheckCircle2, XCircle, Loader2, Terminal, Network, Cpu, Shield,
   ArrowLeft, Clock, Zap, Activity, ThumbsUp, ThumbsDown, Box,
-  AlertTriangle, ChevronDown, ChevronUp, Check,
+  AlertTriangle, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -402,7 +402,6 @@ export default function AIReviewPage() {
   const [finalImage, setFinalImage] = useState(routerInfo?.image ?? "");
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
-  const [showTelemetry, setShowTelemetry] = useState(false);
 
   useEffect(() => {
     if (routerInfo || !requestId) return;

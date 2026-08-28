@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+import { AI_API_URL, MOCK_AI } from '@/config/env';
+
 const aiClient = axios.create({
-  baseURL: import.meta.env.VITE_AI_API_URL ?? 'http://localhost:8090',
+  baseURL: AI_API_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -66,7 +68,7 @@ export interface TelemetrySnapshot {
 // ตั้ง VITE_MOCK_AI=true ใน .env.local เพื่อทดสอบ UI flow ทั้งหมดโดยไม่ต้องรัน Go server เลย
 // pipeline จะ simulate ทีละ stage พร้อม delay สมจริง
 
-const isMock = import.meta.env.VITE_MOCK_AI === 'true';
+const isMock = MOCK_AI;
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));

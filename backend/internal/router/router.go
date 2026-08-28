@@ -143,12 +143,16 @@ func Setup(
 
 // allowOriginFor สร้างฟังก์ชันเช็ค CORS origin ให้ cors.Config:
 //   - อนุญาต origin ที่ตั้งค่าไว้ใน FRONTEND_ORIGIN เสมอ (ใช้ตอน deploy จริง)
-//   - ตอน dev (PROVISIONER=mock) อนุญาต localhost / 127.0.0.1 / ::1 ทุกพอร์ตเพิ่มด้วย
+//   - ตอน dev (APP_ENV != production) อนุญาต localhost / 127.0.0.1 / ::1 ทุกพอร์ตเพิ่มด้วย
 //     เพราะ Vite อาจสลับพอร์ตเอง (5173→5174 ถ้าพอร์ตถูกใช้อยู่) หรือเปิดผ่าน 127.0.0.1
 //     ซึ่ง browser ถือเป็นคนละ origin กับ localhost ทำให้ preflight เด้ง 403 ทั้งที่เป็นเครื่องเดียวกัน
-//   - ตอน prod (PROVISIONER=kubernetes) จะล็อกไว้ที่ FRONTEND_ORIGIN อย่างเดียว ไม่เปิดกว้าง
+//   - ตอน production จะล็อกไว้ที่ FRONTEND_ORIGIN อย่างเดียว ไม่เปิดกว้าง
+//
+// เกณฑ์ที่ใช้คือ APP_ENV ไม่ใช่ PROVISIONER: การจะแตะคลัสเตอร์จริงหรือไม่ เป็นคนละเรื่องกับ
+// การจะผ่อน CORS หรือไม่ ของเดิมผูกสองอย่างนี้ไว้ด้วยกัน ทำให้รัน mock บนเครื่องจริงแล้ว
+// CORS หลวมติดมาด้วยโดยไม่ตั้งใจ (ดูเหตุผลเต็มใน config/config.go)
 func allowOriginFor(cfg *config.Config) func(string) bool {
-	devMode := cfg.Provisioner == config.ProvisionerMock
+	devMode := !cfg.IsProduction()
 	return func(origin string) bool {
 		if origin == cfg.FrontendOrigin {
 			return true

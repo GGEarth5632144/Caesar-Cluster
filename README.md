@@ -21,6 +21,26 @@
 
 ---
 
+## การนำขึ้นเครื่องจริง
+
+ระบบพร้อมรันบน Intel NUC ด้วย Docker แล้ว ทั้ง frontend, Go API และ Postgres
+และ backend สร้าง namespace กับจัดสรรทรัพยากรบน Kubernetes ได้จริงแล้ว (ไม่ใช่ mock อีกต่อไป)
+
+ขั้นตอนติดตั้งทั้งหมดอยู่ใน **[DEPLOY.md](DEPLOY.md)** สรุปสั้นๆ คือ
+
+```bash
+cp .env.example .env                                   # กรอกรหัสผ่าน DB และ JWT_SECRET
+kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml   # ให้สิทธิ์ backend บนคลัสเตอร์
+./deploy/make-kubeconfig.sh                            # สร้าง kubeconfig ให้ container
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml --profile tools run --rm seed
+```
+
+หน้าเว็บและ API วิ่งผ่าน nginx ตัวเดียวกันแบบ same-origin ไม่ต้องตั้ง CORS
+และไม่มีพอร์ตของ backend หรือ Postgres โผล่ออกมาที่เครื่อง
+
+---
+
 ## สิ่งที่ทำได้จริงแล้ว
 
 ### Authentication & Access Control
@@ -79,7 +99,7 @@ $env:MOCK_AI="true"; go run ./cmd/server  # PowerShell
 |------|--------|--------|
 | Dashboard (advanced metrics) | รอ | Infra team วาง K8s metrics endpoint |
 | Alert system (real-time) | รอ | Infra team ติดตั้ง alert webhook |
-| Cluster AI บน AGX Orin | รอ | Infra team ติดตั้ง NUC Cluster |
+| Cluster AI บน AGX Orin | รอ | Infra team ติดตั้งเครื่อง AGX Orin |
 | Python AI Engine (DeepSeek-R1) | รอ | Infra team ติดตั้ง model บน AGX Orin |
 
 ---

@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 
+	"github.com/gin-gonic/gin"
+
 	"backend/internal/config"
 	"backend/internal/router"
 	"backend/internal/services"
@@ -16,16 +18,30 @@ import (
 //   - ประกอบ service layer แล้วส่งให้ router.Setup → r.Run เปิด port รอ request
 func main() {
 	cfg := config.Load()
+
+	// gin debug mode พิมพ์ทุก request ออก stdout และโชว์ route ทั้งหมดตอน start
+	// บนเครื่องจริงเป็นได้ทั้งขยะใน log และการเปิดเผยโครง API โดยไม่จำเป็น
+	if cfg.IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	db := config.ConnectDB(cfg.DBUrl) // connect + AutoMigrate ในตัว
 
 	// เลือกตัวสร้างของจริงบน cluster: kubernetes ของจริง หรือ mock ตอน dev
+	//
+	// ต่อคลัสเตอร์ไม่ได้ = ไม่ยอม start เลย (NewKubernetesProvisioner ทดสอบการเชื่อมต่อให้ตั้งแต่ตอนสร้าง)
+	// ตั้งใจให้พังตั้งแต่ต้น ดีกว่าปล่อยให้ server ขึ้นมาแล้วผู้ใช้มาเจอ error ตอนกด deploy
 	var prov services.Provisioner
 	if cfg.Provisioner == config.ProvisionerKubernetes {
-		prov = services.NewKubernetesProvisioner(cfg.KubeConfig)
+		k8sProv, err := services.NewKubernetesProvisioner(cfg.KubeConfig, cfg.K8s)
+		if err != nil {
+			log.Fatalf("เตรียม kubernetes provisioner ไม่สำเร็จ: %v", err)
+		}
+		prov = k8sProv
 		log.Println("provisioner: KUBERNETES")
 	} else {
 		prov = services.NewMockProvisioner()
-		log.Println("provisioner: MOCK")
+		log.Println("provisioner: MOCK — ไม่มีอะไรถูกสร้างจริงบนคลัสเตอร์")
 	}
 
 	// ประกอบ service layer:
@@ -35,12 +51,12 @@ func main() {
 	//   inviteMgr = เชิญ/ตอบรับ/ปฏิเสธคำเชิญเข้ากลุ่ม (ไม่แตะ cluster เลย ไม่ต้องรับ prov)
 	quota := services.NewQuotaService(db)
 	nsMgr := services.NewNamespaceManager(db, quota, prov)
-	svcMgr := services.NewServiceManager(db, quota, prov)
+	svcMgr := services.NewServiceManager(db, quota, prov, cfg.AllowedImageRegistries)
 	inviteMgr := services.NewInviteManager(db)
 
 	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr)
 
-	log.Println("server running on http://localhost:" + cfg.Port)
+	log.Printf("server running on :%s (env=%s)", cfg.Port, cfg.AppEnv)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatal(err)
 	}

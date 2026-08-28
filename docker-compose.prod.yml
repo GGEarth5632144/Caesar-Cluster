@@ -1,0 +1,152 @@
+# Caesar Cluster — compose สำหรับรันบนเครื่องจริง (Intel NUC7i5DNHE ที่เป็น control plane ของคลัสเตอร์)
+#
+# รัน:  docker compose -f docker-compose.prod.yml up -d --build
+# ค่าทั้งหมดอ่านจากไฟล์ .env ที่อยู่ข้างๆ ไฟล์นี้ (คัดลอกจาก .env.example)
+# ขั้นตอนติดตั้งเต็มอยู่ใน DEPLOY.md
+#
+# สิ่งที่ตั้งใจไว้ในไฟล์นี้:
+#   - postgres ไม่เปิดพอร์ตออก host เลย เข้าถึงได้เฉพาะ container ในเน็ตเวิร์กเดียวกัน
+#   - frontend เป็นทางเข้าเดียวของระบบ และ proxy /api ต่อไป backend ให้เอง (same-origin ไม่มี CORS)
+#   - ทุก service จำกัดหน่วยความจำ เพราะเครื่องนี้มี RAM 8GB และยังต้องรัน control plane ของ k8s อยู่
+#   - ทุก service จำกัดขนาด log เพราะ SSD ของเครื่องเล็ก
+
+name: caesar-cluster
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: caesar-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-caesar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ต้องตั้ง POSTGRES_PASSWORD ในไฟล์ .env ก่อน}
+      POSTGRES_DB: ${POSTGRES_DB:-cloud_cluster}
+      TZ: ${TZ:-Asia/Bangkok}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-caesar} -d ${POSTGRES_DB:-cloud_cluster}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # ไม่ publish port ออก host โดยตั้งใจ — ถ้าต้องต่อด้วย pgAdmin จากเครื่องอื่นให้ทำ SSH tunnel
+    # แทนการเปิดพอร์ตทิ้งไว้ (วิธีทำอยู่ใน DEPLOY.md)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+    networks: [caesar]
+
+  backend:
+    build:
+      context: ./backend
+    image: caesar-cluster/backend:latest
+    container_name: caesar-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # ประกอบ DB_URL จากค่าเดียวกับที่ postgres ใช้ เพื่อไม่ให้มีรหัสผ่านเขียนไว้ 2 ที่แล้วหลุดไม่ตรงกัน
+      # หมายเหตุ: ตั้งรหัสผ่านเป็น a-z A-Z 0-9 เท่านั้น อักขระพิเศษต้อง URL-encode ใน connection string
+      DB_URL: postgres://${POSTGRES_USER:-caesar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloud_cluster}?sslmode=disable
+      KUBECONFIG: /etc/caesar/kubeconfig
+      TZ: ${TZ:-Asia/Bangkok}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # kubeconfig ที่ให้ backend ใช้คุยกับคลัสเตอร์ (อ่านอย่างเดียว)
+      #
+      # ต้องสร้างไฟล์นี้ก่อน up ทุกครั้ง แม้จะรัน PROVISIONER=mock ก็ตาม — ถ้า path ต้นทางไม่มีอยู่จริง
+      # Docker จะสร้างเป็น "โฟลเดอร์" ให้แทน แล้วตอนสลับไปโหมด kubernetes จะเจอ error ที่หาสาเหตุยาก
+      - ${KUBECONFIG_HOST_PATH:-./secrets/kubeconfig}:/etc/caesar/kubeconfig:ro
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    logging: *default-logging
+    networks: [caesar]
+
+  frontend:
+    build:
+      context: "./frontend/caesar cluster"
+    container_name: caesar-frontend
+    restart: unless-stopped
+    environment:
+      # ค่าพวกนี้ถูกเขียนลง /config.js ตอน container start แล้วหน้าเว็บอ่านไปใช้
+      # เปลี่ยนค่าแล้ว docker compose up -d frontend ก็พอ ไม่ต้อง build ใหม่
+      CAESAR_API_URL: ${CAESAR_API_URL:-/api}
+      CAESAR_AI_API_URL: ${CAESAR_AI_API_URL:-}
+      CAESAR_MOCK_AI: ${CAESAR_MOCK_AI:-true}
+      TZ: ${TZ:-Asia/Bangkok}
+    ports:
+      - "${WEB_PORT:-8081}:80"
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *default-logging
+    networks: [caesar]
+
+  # ---- งานที่รันครั้งเดียว ไม่ได้ขึ้นพร้อม up ----
+  # ยัดข้อมูลตั้งต้น (roles, admin, request_templates) ต้องรันครั้งแรกก่อนใช้งานเสมอ
+  # ไม่รัน = ไม่มี role "user" ในตาราง roles = สมัครสมาชิกไม่ได้เลย
+  # รันซ้ำได้ไม่พัง (idempotent)
+  #
+  #   docker compose -f docker-compose.prod.yml --profile tools run --rm seed
+  seed:
+    build:
+      context: ./backend
+    image: caesar-cluster/backend:latest
+    profiles: ["tools"]
+    entrypoint: ["/app/seed"]
+    env_file:
+      - .env
+    environment:
+      DB_URL: postgres://${POSTGRES_USER:-caesar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloud_cluster}?sslmode=disable
+      TZ: ${TZ:-Asia/Bangkok}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+    networks: [caesar]
+
+  # generate RBAC manifest จาก namespace ที่มีอยู่ใน DB ออกมาที่ ./out/rbac.yaml
+  # แล้วค่อย kubectl apply -f out/rbac.yaml เอง (เครื่องมือนี้ไม่ apply ให้)
+  #
+  #   docker compose -f docker-compose.prod.yml --profile tools run --rm export-rbac
+  export-rbac:
+    build:
+      context: ./backend
+    image: caesar-cluster/backend:latest
+    profiles: ["tools"]
+    entrypoint: ["/app/export-rbac", "--out=/out/rbac.yaml"]
+    env_file:
+      - .env
+    environment:
+      DB_URL: postgres://${POSTGRES_USER:-caesar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloud_cluster}?sslmode=disable
+      TZ: ${TZ:-Asia/Bangkok}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./out:/out
+    logging: *default-logging
+    networks: [caesar]
+
+volumes:
+  pgdata:
+
+networks:
+  caesar:
+    driver: bridge

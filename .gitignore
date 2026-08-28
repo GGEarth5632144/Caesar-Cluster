@@ -1,0 +1,8 @@
+# ค่าจริงของเครื่อง production — มีรหัสผ่าน DB และ JWT_SECRET อยู่ ห้าม commit
+.env
+
+# kubeconfig ที่ mount เข้า backend — เป็นกุญแจเข้าคลัสเตอร์ทั้งก้อน
+secrets/
+
+# ไฟล์ที่ cmd/export-rbac เขียนออกมา
+out/

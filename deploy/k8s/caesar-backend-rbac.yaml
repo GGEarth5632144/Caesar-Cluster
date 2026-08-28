@@ -1,0 +1,79 @@
+# สิทธิ์บนคลัสเตอร์ของ backend — apply ไฟล์นี้ก่อนแล้วค่อยสร้าง kubeconfig ให้ container
+#
+#   kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml
+#   ./deploy/make-kubeconfig.sh
+#
+# ทำไมไม่เอา /etc/kubernetes/admin.conf ไป mount ให้ container ตรงๆ:
+# admin.conf คือ cluster-admin ซึ่งทำได้ทุกอย่างบนคลัสเตอร์ รวมถึงลบ kube-system ทิ้ง
+# ถ้ามีช่องโหว่ใน API ตัวใดตัวหนึ่ง ผู้บุกรุกจะได้ทั้งคลัสเตอร์ไปทันที
+# ServiceAccount ตัวนี้ให้เฉพาะสิทธิ์ที่ KubernetesProvisioner ใช้จริงเท่านั้น
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: caesar-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caesar-backend
+  namespace: caesar-system
+---
+# ตั้งแต่ k8s 1.24 การสร้าง ServiceAccount ไม่แถม token ให้อีกแล้ว
+# ต้องขอ Secret ชนิดนี้เองถ้าอยากได้ token ที่ไม่มีวันหมดอายุ
+# (kubectl create token ให้ token อายุสั้น ไม่เหมาะกับ service ที่รันยาว)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: caesar-backend-token
+  namespace: caesar-system
+  annotations:
+    kubernetes.io/service-account.name: caesar-backend
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: caesar-backend
+rules:
+  # namespace ของ space แต่ละอัน — สร้าง แก้ label และลบทิ้ง
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+  # ตัวบังคับโควตาและค่า default ของ container
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+  # กฎเครือข่ายที่กัน traffic ข้าม namespace
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+  # workload ของผู้ใช้
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+  # อ่านอย่างเดียว — เผื่อไว้ให้ reconcile loop ที่จะทำทีหลังใช้ sync สถานะ pod กลับมาลง DB
+  # ไม่มี pods/exec โดยตั้งใจ ตาม ERD ที่กำกับไว้ว่า monitoring ได้ แต่ใช้ terminal ไม่ได้
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: caesar-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: caesar-backend
+subjects:
+  - kind: ServiceAccount
+    name: caesar-backend
+    namespace: caesar-system

@@ -15,6 +15,9 @@ type CreateServiceRequest struct {
 	RequestTemplateID *int   `json:"request_template_id" binding:"omitempty,min=1"`
 	CPUMilli          int    `json:"cpu_milli" binding:"required_without=RequestTemplateID,omitempty,min=100,max=3000"`
 	RAMMB             int    `json:"ram_mb" binding:"required_without=RequestTemplateID,omitempty,min=128,max=2048"`
+	// ContainerPort = port ที่แอปใน container ฟังอยู่ ไม่บังคับกรอก
+	// ไม่ส่งมา → provisioner เดาจาก env var PORT/CONTAINER_PORT → ค่า default ของคลัสเตอร์
+	ContainerPort *int `json:"container_port" binding:"omitempty,min=1,max=65535"`
 	// EnvVars ไม่บังคับ — เช็ครูปแบบ/จำนวนแยกใน controller (isValidEnvVars) แทนการใช้ binding tag
 	// เพราะ go-playground/validator เช็ค map ได้จำกัด (ไม่มี built-in ตรวจ key pattern ของแต่ละ entry)
 	EnvVars map[string]string `json:"env_vars"`

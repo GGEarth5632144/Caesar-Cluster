@@ -1,0 +1,11 @@
+# ไฟล์ที่ต้องเป็น LF เสมอ ไม่ว่าจะ checkout บน Windows หรือ Linux
+#
+# จำเป็นจริงๆ ไม่ใช่แค่ความเรียบร้อย: repo นี้ตั้ง core.autocrlf=true บนเครื่อง dev ที่เป็น Windows
+# ถ้าปล่อยให้ shell script กลายเป็น CRLF แล้วถูกลอกเข้า image ตอน docker build
+# container จะขึ้น error ว่า "/bin/sh^M: bad interpreter" ซึ่งหาสาเหตุยากมาก
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+.env.example    text eol=lf
+nginx.conf      text eol=lf

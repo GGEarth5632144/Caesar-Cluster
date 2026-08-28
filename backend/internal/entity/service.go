@@ -63,6 +63,10 @@ func (e *EnvVarMap) Scan(value any) error {
 // CPUMilli/RAMMB เป็นค่า snapshot ที่ก๊อปมาจาก RequestTemplate ตอนสร้าง (ดูเหตุผลใน request_template.go)
 // RequestTemplateID เก็บไว้อ้างอิงเฉยๆ ว่ามาจาก choice ไหน (เป็น pointer เพราะ user กรอกสเปกเองโดยไม่เลือก template ก็ได้)
 //
+// ContainerPort คือ port ที่แอปข้างใน container ฟังอยู่ (ปลายทางที่ NodePort จะวิ่งเข้าไปหา)
+// เป็น pointer เพราะไม่บังคับกรอก — ถ้าไม่ระบุ provisioner จะเดาจาก env var ชื่อ PORT/CONTAINER_PORT
+// ก่อน แล้วค่อยตกไปที่ค่า default ของคลัสเตอร์ (K8S_DEFAULT_CONTAINER_PORT)
+//
 // NodePort คือช่องทางที่ user ใช้เข้าถึง service ของตัวเอง — เปิดเป็น k8s Service ชนิด NodePort
 // (ทุก node อยู่ subnet เดียวกัน ไม่มี cloud LoadBalancer ให้ใช้ เลยเลือกแบบนี้แทน Ingress)
 // user ต่อเข้าที่ <node-ip ตัวไหนก็ได้>:<node_port> — เป็น pointer เพราะยังไม่มีค่าจนกว่า provisioner จะ deploy สำเร็จ
@@ -75,6 +79,7 @@ type Service struct {
 	Image             string    `gorm:"column:image;type:varchar(200);not null" json:"image"`
 	CPUMilli          int       `gorm:"column:cpu_milli;type:integer;not null;check:cpu_milli > 0" json:"cpu_milli"`
 	RAMMB             int       `gorm:"column:ram_mb;type:integer;not null;check:ram_mb > 0" json:"ram_mb"`
+	ContainerPort     *int      `gorm:"column:container_port;type:integer;check:container_port IS NULL OR (container_port BETWEEN 1 AND 65535)" json:"container_port"`
 	NodePort          *int      `gorm:"column:node_port;type:integer;check:node_port IS NULL OR (node_port BETWEEN 30000 AND 32767)" json:"node_port"`
 	Status            string    `gorm:"column:status;type:varchar(20);not null;default:creating" json:"status"`
 	EnvVars           EnvVarMap `gorm:"column:env_vars;type:jsonb;not null;default:'{}'" json:"env_vars"`

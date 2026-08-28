@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -12,6 +14,7 @@ import (
 var (
 	ErrRequestTemplateNotFound = errors.New("ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
 	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
+	ErrImageNotAllowed         = errors.New("image นี้ไม่อยู่ใน registry ที่อนุญาต")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
@@ -25,6 +28,7 @@ type CreateServiceParams struct {
 	RequestTemplateID *int
 	CPUMilli          int
 	RAMMB             int
+	ContainerPort     *int
 	EnvVars           map[string]string
 }
 
@@ -34,11 +38,56 @@ type ServiceManager struct {
 	db    *gorm.DB
 	quota *QuotaService
 	prov  Provisioner
+
+	// allowedImages = prefix ของ image ที่ยอมให้ deploy (มาจาก env ALLOWED_IMAGE_REGISTRIES)
+	// ว่าง = ไม่จำกัด ซึ่งแปลว่าผู้ใช้รันอะไรก็ได้บนเครื่องของเรา รวมถึง image ขุดเหรียญ
+	// เก็บไว้ที่ชั้นนี้เพราะเป็นกติกาของระบบ ไม่ใช่รายละเอียดของ k8s (mock ก็ควรถูกบังคับเหมือนกัน)
+	allowedImages []string
 }
 
 // NewServiceManager ประกอบ manager โดยฉีด db/quota/prov — ถูกเรียกจาก main ตอน start
-func NewServiceManager(db *gorm.DB, quota *QuotaService, prov Provisioner) *ServiceManager {
-	return &ServiceManager{db: db, quota: quota, prov: prov}
+func NewServiceManager(db *gorm.DB, quota *QuotaService, prov Provisioner, allowedImages []string) *ServiceManager {
+	return &ServiceManager{db: db, quota: quota, prov: prov, allowedImages: allowedImages}
+}
+
+// checkImageAllowed เทียบ image ที่ผู้ใช้กรอกกับ prefix ที่อนุญาต
+//
+// เทียบกับชื่อที่ normalize แล้วเสมอ ไม่ใช่ string ดิบ: Docker ยอมให้เขียน "nginx" แทน
+// "docker.io/library/nginx" ได้ ถ้าเทียบดิบๆ คนที่ตั้ง allowlist เป็น "docker.io/library/"
+// จะบล็อก "nginx" ทิ้งทั้งที่เป็น image เดียวกัน
+//
+// data flow: ถูกเรียกจาก Create ก่อนแตะ DB — ยังไม่ทันจองโควตาเลยไม่ต้องคืนอะไร
+func (m *ServiceManager) checkImageAllowed(image string) error {
+	if len(m.allowedImages) == 0 {
+		return nil
+	}
+	normalized := normalizeImageRef(image)
+	for _, prefix := range m.allowedImages {
+		if strings.HasPrefix(normalized, prefix) || strings.HasPrefix(image, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w (%s) — ใช้ได้เฉพาะที่ขึ้นต้นด้วย: %s",
+		ErrImageNotAllowed, image, strings.Join(m.allowedImages, ", "))
+}
+
+// normalizeImageRef เติมส่วนที่ Docker ละไว้ให้ครบ เพื่อให้เทียบ prefix ได้ตรงกันเสมอ
+//
+//	nginx            → docker.io/library/nginx
+//	bitnami/redis    → docker.io/bitnami/redis
+//	ghcr.io/x/y      → ghcr.io/x/y (มี registry มาแล้ว ไม่แตะ)
+//
+// ตัดสินว่าท่อนแรกเป็น registry หรือไม่ด้วยกฎเดียวกับ Docker: ต้องมีจุดหรือ colon อยู่ในนั้น
+// (ชื่อ host มี domain หรือ port) หรือเป็น localhost
+func normalizeImageRef(image string) string {
+	parts := strings.SplitN(image, "/", 2)
+	if len(parts) == 2 && (strings.ContainsAny(parts[0], ".:") || parts[0] == "localhost") {
+		return image
+	}
+	if len(parts) == 1 {
+		return "docker.io/library/" + image
+	}
+	return "docker.io/" + image
 }
 
 // ListByNamespace คืน service ทั้งหมดใน namespace เรียงใหม่→เก่า
@@ -71,6 +120,10 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 //
 // เรียก provisioner นอก transaction เพราะการ deploy ช้า/พลาดได้ ไม่ควรถือ lock ของ namespace ค้างไว้ตอนรอ
 func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p CreateServiceParams) (*entity.Service, error) {
+	if err := m.checkImageAllowed(p.Image); err != nil {
+		return nil, err
+	}
+
 	cpuMilli, ramMB := p.CPUMilli, p.RAMMB
 
 	// เลือกจาก choice ที่ admin สร้างไว้ → ใช้สเปกของ template เป็นหลัก
@@ -95,6 +148,7 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		Image:             p.Image,
 		CPUMilli:          cpuMilli,
 		RAMMB:             ramMB,
+		ContainerPort:     p.ContainerPort,
 		Status:            entity.ServiceCreating,
 		EnvVars:           entity.EnvVarMap(p.EnvVars),
 	}

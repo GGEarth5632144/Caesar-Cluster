@@ -79,6 +79,7 @@ func (h *ServiceController) Create(c *gin.Context) {
 		RequestTemplateID: req.RequestTemplateID,
 		CPUMilli:          req.CPUMilli,
 		RAMMB:             req.RAMMB,
+		ContainerPort:     req.ContainerPort,
 		EnvVars:           req.EnvVars,
 	})
 	if err != nil {
@@ -89,6 +90,8 @@ func (h *ServiceController) Create(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
 		case errors.Is(err, services.ErrRequestTemplateNotFound):
 			utils.Error(c, http.StatusBadRequest, "TEMPLATE_NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrImageNotAllowed):
+			utils.Error(c, http.StatusBadRequest, "IMAGE_NOT_ALLOWED", err.Error())
 		default:
 			log.Printf("create service error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "deploy ไม่สำเร็จ")

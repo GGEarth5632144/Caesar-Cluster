@@ -5,6 +5,13 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>caesar-cluster</title>
+    <!-- config.js ถูกเขียนใหม่ตอน container start จาก env ของ container
+         (ดู docker-entrypoint.d/40-caesar-config.sh) แล้วอ่านออกไปใช้ที่ src/config/env.ts
+
+         ต้องอยู่ใน head และมาก่อน bundle เสมอ: script ธรรมดาแบบนี้รันทันทีระหว่าง parse
+         ส่วน bundle เป็น type="module" ซึ่ง defer อยู่แล้ว จึงรันทีหลังแน่นอน
+         ตอน dev ไฟล์ตัวเปล่าอยู่ที่ public/config.js -->
+    <script src="/config.js"></script>
   </head>
   <body>
     <div id="root"></div>

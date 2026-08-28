@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+.git
+*.log
+.env
+.env.local
+.env.*.local
+.vscode
+.idea
+README.md

@@ -7,9 +7,7 @@
 
 ---
 
-## ⚠️ สถานะปัจจุบัน — อ่านก่อน
-
-**การสร้างของจริงบน cluster ยังเป็น MOCK ทั้งหมด** อย่าเข้าใจผิดว่าระบบนี้ deploy ขึ้น k8s ได้แล้ว
+## สถานะปัจจุบัน — อ่านก่อน
 
 | ส่วน | สถานะ |
 |---|---|
@@ -17,12 +15,30 @@
 | Auth (bcrypt + JWT), middleware | ✅ ของจริง |
 | **การบังคับโควตา** (transaction + row lock) | ✅ ของจริง กัน overcommit ได้จริง |
 | กติกาทั้งหมด (eligible gate, 1 คน 1 space, limits) | ✅ ของจริง |
-| **สร้าง namespace / deploy container จริง** | ❌ **MOCK — แค่ log ออกมา ไม่มีอะไรเกิดขึ้นจริง** |
+| **สร้าง namespace / deploy container จริงบน k8s** | ✅ ของจริง — `KubernetesProvisioner` เขียนเสร็จแล้ว |
+| จำกัด image ที่ผู้ใช้รันได้ | ✅ มีแล้ว ผ่าน `ALLOWED_IMAGE_REGISTRIES` (ว่าง = ไม่จำกัด) |
+| sync สถานะ pod กลับเข้า DB | ❌ ยังไม่มี reconcile loop |
+| persistent storage (volume) | ❌ ยังไม่รองรับ (ResourceQuota ปิด PVC ไว้) |
 
-พูดอีกแบบ: ตอนนี้มี **control plane ที่ทำงานจริง** (จองโควตา จดบัญชี ตรวจสิทธิ์)
-แต่ยัง **ไม่มีมือที่ไปสร้างของจริง** — `KubernetesProvisioner` ยังเป็น stub ทุก method
+ตั้ง `PROVISIONER=kubernetes` แล้วระบบจะสร้างของจริงบนคลัสเตอร์ทันที
+ต่อคลัสเตอร์ไม่ได้ = server ไม่ยอม start เลย (ตั้งใจให้ fail ตั้งแต่ต้น)
 
-ถ้าตั้ง `PROVISIONER=kubernetes` ตอนนี้ ทุก request จะ error ทันที (ตั้งใจให้ fail แบบปิดประตู)
+วิธีนำขึ้นเครื่องจริงพร้อม Docker อยู่ใน [DEPLOY.md](../DEPLOY.md) ที่ root ของ repo
+
+### สิ่งที่ provisioner สร้างให้ต่อ 1 namespace
+
+| resource | หน้าที่ |
+|---|---|
+| `Namespace` | ติด label ของระบบ + label ของ Pod Security Admission |
+| `ResourceQuota` (`caesar-quota`) | เพดาน CPU/RAM รวมของ space ปิดการขอ PVC และ LoadBalancer |
+| `LimitRange` (`caesar-limits`) | ค่า default ของ container ที่ไม่ระบุ resource + เพดานต่อ container |
+| `NetworkPolicy` (`caesar-isolation`) | กัน traffic ข้าม namespace + ห้าม pod เดินเข้าวงภายในของคลัสเตอร์ |
+
+ต่อ 1 service สร้าง `Deployment` + `Service` ชนิด NodePort โดย requests เท่ากับ limits เสมอ
+(ได้ QoS แบบ Guaranteed และทำให้ยอดที่ ResourceQuota หักตรงกับที่ `QuotaService` คำนวณใน DB เป๊ะ)
+
+ทุก resource ติด label `app.kubernetes.io/managed-by=caesar-cluster` และ provisioner จะอ่าน label นี้
+ก่อนแก้/ลบอะไรเสมอ — คนที่ตั้งชื่อ space ว่า `kube-system` จึงลบ namespace ของระบบไม่ได้
 
 ---
 
@@ -173,7 +189,7 @@ internal/
 | `service_manager.go` | deploy / ลบ workload |
 | `provisioner.go` | **interface** — จุดเดียวที่ผูกกับ k8s ที่เหลือไม่รู้จัก k8s เลย |
 | `provisioner_mock.go` | ตัวที่ใช้อยู่ตอนนี้ (แค่ log) |
-| `provisioner_k8s.go` | **ยังเป็น stub** — ของจริงต้องเขียนที่นี่ |
+| `provisioner_k8s.go` | ของจริงที่คุยกับ Kubernetes ผ่าน client-go (ใช้เมื่อ `PROVISIONER=kubernetes`) |
 
 ### Export RBAC manifest
 
@@ -274,16 +290,18 @@ admin import รายชื่อ → user register → login
 
 ---
 
-## ยังไม่ได้ทำ (ถ้าจะเอาไปใช้กับเครื่องจริง ต้องทำก่อน)
+## ยังไม่ได้ทำ
 
-เรียงตามความสำคัญ:
+เรียงตามความสำคัญ ไม่มีข้อไหนบล็อกการใช้งานปกติ แต่ควรรู้ก่อนเปิดให้นักศึกษาใช้จริง
 
-1. 🔴 **จำกัด image ที่ user รันได้** — ตอนนี้ field `image` รับ string อะไรก็ได้
-   พอต่อ k8s จริง = user รันอะไรก็ได้บนเครื่อง (เช่น ขุดเหรียญ) **ต้องมี allowlist หรือบังคับ registry ของเรา**
-2. 🔴 **Pod security** — บังคับ `runAsNonRoot`, ห้าม privileged, drop capabilities
-3. 🔴 **เขียน `KubernetesProvisioner` จริง** — Namespace + ResourceQuota + LimitRange + NetworkPolicy (default-deny กัน traffic ข้าม namespace) + Deployment
-4. 🟠 **ผู้ใช้เข้าถึง service ตัวเองยังไง** — schema มี `services.node_port` แล้ว (เลือกทาง NodePort)
-   แต่ `KubernetesProvisioner.DeployService` ยังไม่ implement จริง เลยยังไม่มีใครเซ็ตค่านี้ (ดูข้อ 3)
-5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop
-6. 🟠 **persistent storage** (volume) — ยังไม่มี
-7. 🟡 production hardening — `JWT_SECRET` ยังเป็น `dev-secret`, ยังไม่มี TLS / rate limit
+1. 🔴 **ลบบัญชีทดสอบใน `cmd/seed`** — ยังสร้างผู้ใช้ `B6618452` รหัสผ่าน `Banana1234`
+   และรายชื่อ eligible ปลอม `B6600001`–`B6600010` ไว้ ต้องเอาออกก่อนเปิดใช้จริง
+2. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว
+   ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop มาอ่านสถานะ pod กลับเข้ามา
+   (สิทธิ์อ่าน pod เตรียมไว้ใน `deploy/k8s/caesar-backend-rbac.yaml` ให้แล้ว)
+3. 🟠 **persistent storage (volume)** — ยังไม่รองรับ ตอนนี้ ResourceQuota ปิดการขอ PVC ไว้
+   เพื่อไม่ให้ผู้ใช้สร้างสิ่งที่ระบบยังจัดการต่อไม่ได้
+4. 🟠 **หน้าเว็บยังไม่มีช่องกรอก `container_port`** — API รับแล้ว แต่ฟอร์มยังไม่ส่งมา
+   ตอนนี้ผู้ใช้เลี่ยงด้วยการใส่ env var ชื่อ `PORT` ซึ่ง provisioner อ่านให้อยู่แล้ว
+5. 🟡 **ยังไม่มี TLS** — รับได้ถ้าเข้าผ่าน ZeroTier อย่างเดียว แต่ถ้าเปิดออกวงองค์กรควรมี
+6. 🟡 **rate limit เก็บใน memory** — ใช้ได้กับ backend ตัวเดียว ถ้าขยายเป็นหลาย replica ต้องย้ายไป store ที่แชร์กัน
