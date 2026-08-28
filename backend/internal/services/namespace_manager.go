@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -12,18 +14,31 @@ import (
 )
 
 var (
-	ErrAlreadyInNamespace = errors.New("คุณมี namespace อยู่แล้ว (1 คน = 1 space)")
-	ErrNamespaceNotFound  = errors.New("ไม่พบ namespace นี้")
-	ErrNameTaken          = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
-	ErrQuotaOutOfRange    = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
+	ErrAlreadyInNamespace  = errors.New("คุณมี namespace อยู่แล้ว (1 คน = 1 space)")
+	ErrNamespaceNotFound   = errors.New("ไม่พบ namespace นี้")
+	ErrNameTaken           = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
+	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
+	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
+	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
 )
 
-// NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + จำนวนสมาชิก)
-// member_count ไม่ได้เก็บใน DB — นับจาก users ที่ namespace_id ตรงกัน เพื่อไม่ให้ค่าเพี้ยนจากของจริง
+// NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + รายชื่อสมาชิก)
+// Members ไม่ได้เก็บใน DB — อ่านสดจาก users ที่ namespace_id ตรงกัน เพื่อไม่ให้ค่าเพี้ยนจากของจริง
+// (MemberCount มาจาก len(Members) เอง ไม่ query แยก — ตัวเลขกับรายชื่อจะไม่มีทางไม่ตรงกัน)
 type NamespaceDetail struct {
 	entity.Namespace
 	Usage       NamespaceUsage `json:"usage"`
 	MemberCount int            `json:"member_count"`
+	Members     []MemberInfo   `json:"members"`
+}
+
+// MemberInfo = ข้อมูลสมาชิก 1 คนที่พอจะโชว์ในรายชื่อกลุ่มได้ (ไม่ใช่ entity.User ทั้งก้อน
+// เพราะไม่อยากส่ง password/gmail ของสมาชิกคนอื่นออกไปให้ทุกคนในกลุ่มเห็น)
+type MemberInfo struct {
+	ID            int    `json:"id"`
+	StudentID     string `json:"student_id"`
+	RealName      string `json:"real_name"`
+	IsContributor bool   `json:"is_contributor"`
 }
 
 // NamespaceManager ดูแลวงจรชีวิตของ space: สร้าง (เดี่ยว/กลุ่ม), เข้าร่วมกลุ่ม, ดูรายละเอียด, ปรับโควตา
@@ -135,13 +150,22 @@ func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*Namesp
 		return nil, err
 	}
 
-	var members int64
-	if err := m.db.WithContext(ctx).Model(&entity.User{}).
-		Where("namespace_id = ?", namespaceID).Count(&members).Error; err != nil {
+	var users []entity.User
+	if err := m.db.WithContext(ctx).
+		Where("namespace_id = ?", namespaceID).Order("id").Find(&users).Error; err != nil {
 		return nil, err
 	}
+	members := make([]MemberInfo, 0, len(users))
+	for _, u := range users {
+		members = append(members, MemberInfo{
+			ID:            u.ID,
+			StudentID:     u.StudentID,
+			RealName:      u.RealName,
+			IsContributor: u.ID == ns.ContributorID,
+		})
+	}
 
-	return &NamespaceDetail{Namespace: ns, Usage: usage, MemberCount: int(members)}, nil
+	return &NamespaceDetail{Namespace: ns, Usage: usage, MemberCount: len(members), Members: members}, nil
 }
 
 // ListAll คืน namespace ทั้งหมดพร้อมยอดใช้งาน — สำหรับหน้า admin ดูภาพรวมทั้งระบบ
@@ -200,4 +224,116 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, fmt.Errorf("อัปเดตโควตาบน cluster ไม่สำเร็จ: %w", err)
 	}
 	return m.Detail(ctx, ns.ID)
+}
+
+// Delete ลบ namespace ทิ้งทั้งก้อนตามดุลยพินิจแอดมิน — ลบได้เสมอไม่ว่าจะมีสมาชิกกี่คน
+//
+// data flow:
+//   - หา namespace ที่จะลบ
+//   - เรียก prov.DeleteNamespace ถอนของจริงบนคลัสเตอร์ก่อนเสมอ (แบบเดียวกับ ServiceManager.Delete)
+//     กันไม่ให้เหลือของค้างบนคลัสเตอร์โดยไม่มี record ใน DB รองรับ
+//   - ลบแถว namespaces — foreign key ที่ตั้งไว้ใน addForeignKeys จัดการที่เหลือให้เอง:
+//     services / ai_review_requests / user_containers ในนั้นถูกลบตาม (ON DELETE CASCADE)
+//     ส่วนสมาชิกที่เหลือ (ถ้ามี) แค่ namespace_id ถูกตั้งเป็น NULL ไม่ถูกลบบัญชี (ON DELETE SET NULL)
+//
+// ลำดับ "คลัสเตอร์ก่อน DB ทีหลัง" แลกมาด้วยช่วงที่ล้มกลางคันได้: ถ้าถอนของบนคลัสเตอร์สำเร็จแล้ว
+// ลบแถวใน DB ไม่ผ่าน จะเหลือ namespace ใน DB ที่ไม่มีของจริงรองรับ (หน้าเว็บยังโชว์ service เป็น running)
+// จุดนี้ retry ได้ปลอดภัยเพราะ Provisioner.DeleteNamespace ถูกกำหนดให้ idempotent (ดู provisioner.go)
+// แต่ต้อง log ให้ชัดว่าเกิดขึ้น ไม่งั้นไม่มีใครรู้ว่าต้องมาลบซ้ำ
+//
+// เรียกจาก AdminController.DeleteNamespace / AdminController.DeleteUser โดยตรง และจาก Leave
+// เมื่อผู้ leave เป็น contributor และเป็นสมาชิกคนสุดท้ายที่เหลืออยู่ (ดู Leave)
+func (m *NamespaceManager) Delete(ctx context.Context, namespaceID int) error {
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNamespaceNotFound
+		}
+		return err
+	}
+
+	if err := m.prov.DeleteNamespace(ctx, ns.Name); err != nil {
+		return fmt.Errorf("ลบ namespace บนคลัสเตอร์ไม่สำเร็จ: %w", err)
+	}
+
+	if err := m.db.WithContext(ctx).Delete(&entity.Namespace{}, ns.ID).Error; err != nil {
+		log.Printf("!! namespace '%s' (id=%d) ถูกถอนออกจากคลัสเตอร์แล้ว แต่ลบแถวใน DB ไม่สำเร็จ: %v "+
+			"— DB กับคลัสเตอร์ไม่ตรงกันจนกว่าจะสั่งลบซ้ำสำเร็จ", ns.Name, ns.ID, err)
+		return err
+	}
+	return nil
+}
+
+// Leave ให้ผู้ใช้ออกจาก namespace ของตัวเอง — พฤติกรรมต่างกันตามบทบาทในนั้น:
+//
+//   - เป็นแค่สมาชิก (ไม่ใช่ contributor): ต้องไม่มี service ที่ตัวเองสร้างค้างอยู่ก่อน (ดูย่อหน้าถัดไป)
+//     ผ่านแล้วแค่ตัด namespace_id ของตัวเองเป็น NULL — namespace เดิมและสมาชิกคนอื่นไม่กระทบอะไรเลย
+//   - เป็น contributor และเป็นสมาชิกคนเดียวที่เหลืออยู่: leave ของเจ้าของคนสุดท้าย
+//     เท่ากับลบ namespace ทั้งก้อน (เรียก Delete ต่อ) — service ของตัวเองหายไปพร้อมกันอยู่แล้ว
+//     เลยไม่ต้องบังคับให้ลบก่อน
+//   - เป็น contributor แต่ยังมีสมาชิกคนอื่นอยู่: ปฏิเสธด้วย ErrNamespaceHasMembers
+//     กันไม่ให้เจ้าของออกแล้วพา service ของสมาชิกคนอื่นหายไปด้วยแบบไม่ทันตั้งตัว
+//     ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน (แอดมินมีดุลยพินิจตัดสินใจเองได้ ดู Delete)
+//
+// ที่ต้องบังคับให้สมาชิกลบ service ของตัวเองก่อน เพราะสิทธิ์ดู/ลบ service ผูกกับ "namespace ปัจจุบัน
+// ของผู้เรียก" (ดู currentNamespaceID ใน controller/helper.go) — พอ namespace_id เป็น NULL แล้ว
+// เจ้าตัวจะเข้าไปลบของตัวเองไม่ได้อีกเลย ปล่อยไว้ก็กลายเป็น workload ที่ยังรันบนคลัสเตอร์
+// และยังกินโควตาของกลุ่มต่อไป โดยเหลือแค่เจ้าของกลุ่ม/แอดมินที่ตามเก็บให้ได้
+// เลือกบล็อกแทนการลบให้อัตโนมัติ เพราะการกด "ออกจากกลุ่ม" ไม่ควรลบงานที่คนอื่นอาจใช้อยู่แบบเงียบๆ
+//
+// เช็คจำนวนสมาชิกแบบไม่ล็อกแถว (เหมือน Join) — มีโอกาสน้อยมากที่จะมีคนเข้าร่วมพอดีตอนกำลังจะลบ
+// ผลเสียที่สุดคือ service ของคนที่เพิ่ง join โดนลบไปด้วย ซึ่งเป็นความเสี่ยงระดับเดียวกับตอนแอดมินลบเอง
+func (m *NamespaceManager) Leave(ctx context.Context, userID int) error {
+	var user entity.User
+	if err := m.db.WithContext(ctx).First(&user, userID).Error; err != nil {
+		return err
+	}
+	if user.NamespaceID == nil {
+		return ErrNoNamespace
+	}
+	nsID := *user.NamespaceID
+
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, nsID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNamespaceNotFound
+		}
+		return err
+	}
+
+	if ns.ContributorID != userID {
+		// แค่สมาชิก — ออกได้ถ้าเก็บของตัวเองเรียบร้อยแล้ว ไม่กระทบ namespace หรือคนอื่น
+		var own []entity.Service
+		if err := m.db.WithContext(ctx).
+			Where("namespace_id = ? AND created_by = ?", nsID, userID).
+			Order("id").Find(&own).Error; err != nil {
+			return err
+		}
+		if len(own) > 0 {
+			names := make([]string, 0, len(own))
+			for _, svc := range own {
+				names = append(names, svc.Name)
+			}
+			return fmt.Errorf("%w (เหลืออยู่ %d ตัว: %s)",
+				ErrHasOwnServices, len(own), strings.Join(names, ", "))
+		}
+
+		// ผูก namespace_id เดิมไว้ใน WHERE ด้วย — ถ้าระหว่างนี้มีคนอื่นย้าย/ลบ space ไปแล้ว
+		// จะได้ไม่เผลอเขียนทับสถานะใหม่ของ user (RowsAffected = 0 ถือว่าออกไปแล้ว ไม่ใช่ error)
+		return m.db.WithContext(ctx).Model(&entity.User{}).
+			Where("id = ? AND namespace_id = ?", userID, nsID).
+			Update("namespace_id", nil).Error
+	}
+
+	var memberCount int64
+	if err := m.db.WithContext(ctx).Model(&entity.User{}).
+		Where("namespace_id = ?", nsID).Count(&memberCount).Error; err != nil {
+		return err
+	}
+	if memberCount > 1 {
+		return ErrNamespaceHasMembers
+	}
+
+	// เป็น contributor และเป็นคนสุดท้าย — leave ของเจ้าของคนเดียวเท่ากับลบ namespace ทั้งก้อน
+	return m.Delete(ctx, nsID)
 }

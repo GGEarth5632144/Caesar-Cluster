@@ -10,6 +10,19 @@ import (
 	"backend/internal/entity"
 )
 
+// openDB เปิด connection pool ด้วย GORM เฉยๆ (ยังไม่ migrate) — ใช้ร่วมกันทั้ง ConnectDB
+// (server/seed ต้อง migrate) และ ConnectDBReadOnly (เครื่องมือที่อ่านอย่างเดียว ไม่ควร migrate)
+func openDB(dbURL string) *gorm.DB {
+	db, err := gorm.Open(postgres.Open(dbURL), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
+	if err != nil {
+		log.Fatalf("cannot connect to database: %v", err)
+	}
+	log.Println("database connected ✓")
+	return db
+}
+
 // ConnectDB เปิด connection ด้วย GORM แล้ว AutoMigrate schema ให้ทันที
 // schema มาจาก struct tag ใน entity/ ล้วนๆ (ไม่มีไฟล์ .sql แล้ว)
 //
@@ -20,15 +33,13 @@ import (
 // ลำดับของ AutoMigrate สำคัญ: roles/eligible_students ต้องมาก่อน users (users อ้างถึงทั้งคู่)
 // namespaces/request_templates ต้องมาก่อน services (services อ้างทั้งคู่)
 // namespaces/users/request_templates ต้องมาก่อน ai_review_requests (อ้างทั้งสาม เหมือน services)
+// namespaces/users/eligible_students ต้องมาก่อน namespace_invites (อ้างทั้งสาม)
 // ipc_monitors ต้องมาก่อน user_containers (user_containers อ้าง ipc_id)
+//
+// ใช้กับ cmd/server และ cmd/seed เท่านั้น — เครื่องมืออื่นที่แค่ "อ่าน" DB (เช่น cmd/export-rbac)
+// ให้ใช้ ConnectDBReadOnly แทน จะได้ไม่มี DDL (ALTER TABLE/ADD CONSTRAINT) แอบยิงทุกครั้งที่รัน
 func ConnectDB(dbURL string) *gorm.DB {
-	db, err := gorm.Open(postgres.Open(dbURL), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
-	})
-	if err != nil {
-		log.Fatalf("cannot connect to database: %v", err)
-	}
-	log.Println("database connected ✓")
+	db := openDB(dbURL)
 
 	if err := db.AutoMigrate(
 		&entity.Role{},
@@ -36,6 +47,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.User{},
 		&entity.PasswordResetToken{}, // ต้องมาหลัง users (อ้าง user_id)
 		&entity.Namespace{},
+		&entity.NamespaceInvite{}, // ต้องมาหลัง namespaces/users/eligible_students (อ้างทั้งสาม)
 		&entity.RequestTemplate{},
 		&entity.Service{},
 		&entity.AIReviewRequest{}, // ต้องมาหลัง namespaces/users/request_templates (อ้างทั้งสาม)
@@ -58,6 +70,17 @@ func ConnectDB(dbURL string) *gorm.DB {
 	log.Println("foreign keys ensured ✓")
 
 	return db
+}
+
+// ConnectDBReadOnly เปิด connection เฉยๆ — ไม่ AutoMigrate ไม่แตะ FK
+// สำหรับเครื่องมือที่อ่าน DB อย่างเดียวและอาจถูกรันบ่อย/อัตโนมัติ (เช่น cmd/export-rbac ที่ตั้งใจ
+// ให้รันซ้ำได้เรื่อยๆ ต่อ cron/CI) — ไม่ควรมีผลข้างเคียงเป็น DDL ทุกครั้งที่รัน ต่างจาก ConnectDB
+// ที่ตั้งใจให้ migrate ทุกครั้งที่ server/seed start
+//
+// สมมติว่า schema พร้อมอยู่แล้ว (ผ่าน cmd/server หรือ cmd/seed มาก่อนหน้านี้) ถ้า schema ยังไม่ถูก
+// สร้าง query จะ error ธรรมดา ไม่ได้ silently พังแบบเงียบๆ
+func ConnectDBReadOnly(dbURL string) *gorm.DB {
+	return openDB(dbURL)
 }
 
 // addForeignKeys เพิ่ม FK ทั้งหมดแบบ idempotent (เช็คก่อนว่ามี constraint ชื่อนี้แล้วหรือยัง ค่อย ALTER)
@@ -155,6 +178,24 @@ func addForeignKeys(db *gorm.DB) error {
 			name: "fk_password_reset_tokens_user_id",
 			ddl: `ALTER TABLE password_reset_tokens ADD CONSTRAINT fk_password_reset_tokens_user_id
 			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		{
+			// ลบ namespace → คำเชิญที่เคยส่งจากกลุ่มนั้นไม่มีความหมายแล้ว หายตามไปด้วย
+			name: "fk_namespace_invites_namespace_id",
+			ddl: `ALTER TABLE namespace_invites ADD CONSTRAINT fk_namespace_invites_namespace_id
+			      FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE`,
+		},
+		{
+			// เหตุผลเดียวกับ fk_users_student_id — เชิญได้เฉพาะรหัส นศ. ที่อยู่ในรายชื่อจริง กัน invite ไปหาชื่อมั่ว
+			name: "fk_namespace_invites_student_id",
+			ddl: `ALTER TABLE namespace_invites ADD CONSTRAINT fk_namespace_invites_student_id
+			      FOREIGN KEY (invited_student_id) REFERENCES eligible_students(student_id)`,
+		},
+		{
+			// ลบ user (ผู้เชิญ) → คำเชิญที่เขาเคยส่งหายตามไปด้วย
+			name: "fk_namespace_invites_invited_by",
+			ddl: `ALTER TABLE namespace_invites ADD CONSTRAINT fk_namespace_invites_invited_by
+			      FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE CASCADE`,
 		},
 		// audit_logs และ system_alerts ไม่มี FK ตั้งใจ — เก็บเป็น snapshot ล้วนๆ (ดูเหตุผลใน audit_log.go)
 		// request_templates ไม่มี FK ไป users — เป็น choice กลาง ไม่ผูกกับ user คนใดคนหนึ่ง (ดูเหตุผลใน request_template.go)

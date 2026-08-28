@@ -6,6 +6,13 @@ export interface NamespaceUsage {
   service_count: number;
 }
 
+export interface MemberInfo {
+  id: number;
+  student_id: string;
+  real_name: string;
+  is_contributor: boolean;
+}
+
 export interface NamespaceDetail {
   id: number;
   name: string;
@@ -15,6 +22,7 @@ export interface NamespaceDetail {
   created_at: string;
   usage: NamespaceUsage;
   member_count: number;
+  members: MemberInfo[];
 }
 
 interface ApiResponse<T> {

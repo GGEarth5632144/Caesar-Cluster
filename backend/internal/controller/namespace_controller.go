@@ -107,3 +107,31 @@ func (h *NamespaceController) Mine(c *gin.Context) {
 	}
 	utils.OK(c, http.StatusOK, detail)
 }
+
+// Leave ให้ผู้ใช้ที่ล็อกอินอยู่ออกจาก namespace ของตัวเอง
+//
+// data flow: อ่าน userID จาก JWT → NamespaceManager.Leave ตัดสินใจตามบทบาท:
+//   - แค่สมาชิก → ออกได้ถ้าไม่มี service ของตัวเองค้างอยู่ (ถ้ามี → 409 HAS_OWN_SERVICES
+//     พร้อมบอกชื่อที่ต้องลบก่อน เพราะพอออกไปแล้วจะเข้ามาลบเองไม่ได้อีก) namespace ไม่กระทบ
+//   - เป็นเจ้าของ (contributor) และเป็นคนสุดท้าย → เท่ากับลบ namespace ทั้งก้อน
+//   - เป็นเจ้าของแต่ยังมีสมาชิกอื่นอยู่ → ปฏิเสธ ต้องให้สมาชิกออกก่อนหรือให้แอดมินลบแทน
+func (h *NamespaceController) Leave(c *gin.Context) {
+	userID := c.GetInt("userID")
+	if err := h.ns.Leave(c.Request.Context(), userID); err != nil {
+		switch {
+		case errors.Is(err, services.ErrNoNamespace):
+			utils.Error(c, http.StatusConflict, "NO_NAMESPACE", err.Error())
+		case errors.Is(err, services.ErrNamespaceNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrNamespaceHasMembers):
+			utils.Error(c, http.StatusConflict, "NAMESPACE_HAS_MEMBERS", err.Error())
+		case errors.Is(err, services.ErrHasOwnServices):
+			utils.Error(c, http.StatusConflict, "HAS_OWN_SERVICES", err.Error())
+		default:
+			log.Printf("leave namespace error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ออกจาก namespace ไม่สำเร็จ")
+		}
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"message": "ออกจาก namespace เรียบร้อยแล้ว"})
+}

@@ -25,6 +25,7 @@ func (m *MockProvisioner) EnsureNamespace(ctx context.Context, ns *entity.Namesp
 
 // DeleteNamespace จำลองการลบ namespace ทั้งก้อน
 // data flow: รับชื่อ namespace จาก NamespaceManager → log → คืน nil
+// คืน nil เสมอ = idempotent ตามสัญญาใน Provisioner อยู่แล้ว (สั่งลบซ้ำกี่รอบก็ผ่าน)
 func (m *MockProvisioner) DeleteNamespace(ctx context.Context, nsName string) error {
 	log.Printf("[MOCK] ลบ namespace '%s'", nsName)
 	return nil
