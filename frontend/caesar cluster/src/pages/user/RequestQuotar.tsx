@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Bot,
   Trash2,
+  Terminal,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -49,6 +50,7 @@ function statusBadge(status: AppService["status"]) {
 }
 
 export default function RequestQuotar() {
+  const navigate = useNavigate();
   const [services, setServices] = useState<AppService[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -189,13 +191,22 @@ export default function RequestQuotar() {
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setPendingDeleteId(svc.id)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                  >
-                    <X size={13} /> Delete
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/${PATHS.serviceLogs}/${svc.id}`)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653]"
+                    >
+                      <Terminal size={13} /> Logs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingDeleteId(svc.id)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <X size={13} /> Delete
+                    </button>
+                  </div>
                 )}
               </div>
             );

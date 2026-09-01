@@ -2,9 +2,19 @@ package services
 
 import (
 	"context"
+	"io"
 
 	"backend/internal/entity"
 )
+
+// LogOptions คุมว่าจะดึง log กลับมาแบบไหน — ตรงกับตัวเลือกที่หน้า log viewer ให้ผู้ใช้ปรับได้
+// (คล้ายแผง log ของ Cloud Run: จำนวนบรรทัดย้อนหลัง, ช่วงเวลา, และโหมด "ไหลสด" หรือไม่)
+type LogOptions struct {
+	TailLines    int64 // ดึงกี่บรรทัดล่าสุด — 0 = ใช้ค่า default ของ provisioner
+	SinceSeconds int64 // ดึงย้อนหลังกี่วินาที — 0 = ไม่จำกัด (เท่าที่ node ยังเก็บไว้)
+	Follow       bool  // true = ไม่ปิด stream หลังส่ง log เดิมหมด รอส่งบรรทัดใหม่ต่อไปเรื่อยๆ
+	Timestamps   bool  // true = แต่ละบรรทัดมี timestamp ของ container runtime นำหน้า
+}
 
 // Provisioner คือสัญญาว่า "ตัวสร้างของจริงบน cluster" ต้องทำอะไรได้บ้าง
 // เป็นจุดเดียวที่ผูกกับ Kubernetes — ส่วน service layer ที่เหลือไม่รู้จัก k8s เลย
@@ -33,4 +43,11 @@ type Provisioner interface {
 
 	// DeleteService ลบ workload ตัวเดียวออกจาก namespace
 	DeleteService(ctx context.Context, nsName, svcName string) error
+
+	// Logs เปิด stream ของ log จาก container ที่รัน service นี้อยู่ (เหมือนกด "Logs" ในหน้า
+	// Cloud Run) — ผู้เรียกมีหน้าที่ Close() เสมอ ไม่งั้น connection ค้างไว้กับ Kubernetes API
+	//
+	// เมื่อ opts.Follow = true การอ่านจะไม่จบเองจนกว่า ctx จะถูก cancel (ผู้ใช้ปิดหน้าเว็บ/
+	// เปลี่ยนหน้า) — ผู้เรียกต้องผูก ctx กับอายุของ HTTP request ไว้ ไม่ปล่อยให้เปิดค้างตลอดกาล
+	Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error)
 }

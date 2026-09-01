@@ -26,6 +26,7 @@ const encodePath = (path: string) => {
 //   createService: encodePath("create-service"),
 
 //   aiReview: encodePath("ai-review"),
+//   serviceLogs: encodePath("service-logs"),
 
 //   generalDashboard: encodePath("general-dashboard"),
 //   workspaceOnboarding: encodePath("workspace-onboarding"),
@@ -57,6 +58,7 @@ export const PATHS = {
   createService: "create-service",
 
   aiReview: "ai-review",
+  serviceLogs: "service-logs",
 
   generalDashboard: "general-dashboard",
   workspaceOnboarding: "workspace-onboarding",

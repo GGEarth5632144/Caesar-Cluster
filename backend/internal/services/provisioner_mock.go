@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"time"
 
@@ -50,4 +52,62 @@ func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc 
 func (m *MockProvisioner) DeleteService(ctx context.Context, nsName, svcName string) error {
 	log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svcName, nsName)
 	return nil
+}
+
+// Logs จำลอง log ของ container ด้วยข้อความปลอมที่รูปแบบเหมือนจริง (นำหน้าด้วย timestamp
+// เช่นเดียวกับที่ KubernetesProvisioner ส่งมาจริงตอน Timestamps=true) เพื่อให้หน้าเว็บพัฒนา/ทดสอบ
+// หน้า log viewer ได้โดยไม่ต้องมีคลัสเตอร์จริง — สลับไป PROVISIONER=kubernetes เมื่อไรก็ได้ log จริงทันที
+//
+// ใช้ io.Pipe เขียนจาก goroutine แยก: ส่งบรรทัดเริ่มต้นให้ก่อน แล้วถ้า opts.Follow=true
+// จะไม่ปิด stream ทันที รอส่งบรรทัดใหม่ทุก 1.5 วินาทีไปเรื่อยๆ จนกว่า ctx จะถูก cancel
+// (ผู้ใช้ปิดหน้าเว็บ) — เหมือนพฤติกรรม "ไหลสด" ของ log จริงที่หน้าเว็บจะได้ทดสอบไปด้วยตัวเดียวกัน
+func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
+	pr, pw := io.Pipe()
+
+	tail := opts.TailLines
+	if tail <= 0 {
+		tail = 20
+	}
+
+	go func() {
+		defer pw.Close()
+
+		// เขียนบรรทัดหนึ่ง คืน false ถ้าฝั่งอ่านปิดไปแล้ว (ผู้เรียก Close() ตัว io.ReadCloser
+		// ที่คืนไป) — ต้องเช็คทุกครั้งไม่งั้น goroutine นี้จะเขียนเข้า pipe ที่ตายแล้วค้างไปตลอดกาล
+		writeLine := func(msg string) bool {
+			line := fmt.Sprintf("%s %s\n", time.Now().Format(time.RFC3339Nano), msg)
+			_, err := pw.Write([]byte(line))
+			return err == nil
+		}
+
+		if !writeLine(fmt.Sprintf("[mock] starting container for service %q in namespace %q", svcName, nsName)) {
+			return
+		}
+		if !writeLine("[mock] listening on 0.0.0.0:8080") {
+			return
+		}
+		for i := int64(0); i < tail; i++ {
+			if !writeLine(fmt.Sprintf("[mock] GET / 200 %dms", 5+i%30)) {
+				return
+			}
+		}
+		if !opts.Follow {
+			return
+		}
+
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+		for n := tail; ; n++ {
+			select {
+			case <-ctx.Done(): // ผู้ใช้ปิดหน้าเว็บ/เปลี่ยนหน้า — HTTP request context ถูก cancel
+				return
+			case <-ticker.C:
+				if !writeLine(fmt.Sprintf("[mock] GET / 200 %dms", 5+n%30)) {
+					return
+				}
+			}
+		}
+	}()
+
+	return pr, nil
 }

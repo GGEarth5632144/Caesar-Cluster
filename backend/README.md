@@ -18,6 +18,7 @@
 | **การบังคับโควตา** (transaction + row lock) | ✅ ของจริง กัน overcommit ได้จริง |
 | กติกาทั้งหมด (eligible gate, 1 คน 1 space, limits) | ✅ ของจริง |
 | **สร้าง namespace / deploy container จริง** | ❌ **MOCK — แค่ log ออกมา ไม่มีอะไรเกิดขึ้นจริง** |
+| ดู log ของ service แบบสด | ✅ ของจริงกับ mock provisioner — `GET /api/services/:id/logs` (ฝั่ง `KubernetesProvisioner` ยังเป็น stub) |
 
 พูดอีกแบบ: ตอนนี้มี **control plane ที่ทำงานจริง** (จองโควตา จดบัญชี ตรวจสิทธิ์)
 แต่ยัง **ไม่มีมือที่ไปสร้างของจริง** — `KubernetesProvisioner` ยังเป็น stub ทุก method
@@ -235,6 +236,7 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | GET | `/api/services` | service ทั้งหมดใน space |
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
+| GET | `/api/services/:id/logs` | สตรีม log สด — `tail`, `since`, `follow=true` (ตอบเป็น `text/plain` ไม่ใช่ JSON) |
 
 ### Admin เท่านั้น
 

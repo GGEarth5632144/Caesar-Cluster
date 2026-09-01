@@ -127,3 +127,80 @@ func (h *ServiceController) Delete(c *gin.Context) {
 	}
 	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
 }
+
+// Logs สตรีม log ของ service กลับไปให้หน้าเว็บแบบ real-time (หน้า log viewer แบบเดียวกับ Cloud Run)
+//
+// query param ที่รับ:
+//
+//	tail   จำนวนบรรทัดล่าสุดที่จะดึงตอนเปิดหน้า (ไม่ใส่ = ให้ provisioner เลือก default เอง)
+//	since  ดึงย้อนหลังกี่วินาที (ไม่ใส่ = ไม่จำกัด เท่าที่ node ยังเก็บ log ไว้)
+//	follow "true" = ไม่ปิด stream หลังส่ง log เดิมครบ รอส่งบรรทัดใหม่ต่อไปเรื่อยๆ
+//
+// data flow: อ่าน query param → ServiceManager.Logs เปิด stream จาก provisioner
+// → คัดลอกออกไปที่ HTTP response ทีละก้อนพร้อม Flush ทันที ไม่ buffer ทั้งก้อนไว้ก่อนค่อยส่ง
+// (ไม่งั้นเบราว์เซอร์จะไม่เห็นอะไรเลยจนกว่า stream จะปิด ทำให้ follow mode ดูเหมือนค้าง)
+//
+// อายุของ stream ผูกกับ c.Request.Context() ตรงๆ — ผู้ใช้ปิดหน้าเว็บ/เปลี่ยนหน้าเมื่อไร
+// เบราว์เซอร์ตัดการเชื่อมต่อ HTTP แล้ว context นี้จะถูก cancel ให้เอง ไม่ต้องมี timeout เพิ่ม
+func (h *ServiceController) Logs(c *gin.Context) {
+	nsID, ok := currentNamespaceID(c, h.db)
+	if !ok {
+		return
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	// timestamp ทุกบรรทัดเสมอ ไม่ให้ผู้ใช้ปิดได้ — หน้าเว็บต้องใช้แยกเวลาออกจากเนื้อ log
+	opts := services.LogOptions{Timestamps: true, Follow: c.Query("follow") == "true"}
+	if v := c.Query("tail"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			opts.TailLines = n
+		}
+	}
+	if v := c.Query("since"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			opts.SinceSeconds = n
+		}
+	}
+
+	stream, err := h.svc.Logs(c.Request.Context(), id, nsID, opts)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrServiceNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		default:
+			log.Printf("stream logs error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึง log ไม่สำเร็จ")
+		}
+		return
+	}
+	defer stream.Close()
+
+	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+	// กัน reverse proxy หน้า production (nginx) buffer ทั้งก้อนไว้ก่อนค่อยส่งต่อ
+	// ซึ่งจะทำให้ follow mode ดูเหมือนค้างไม่มีอะไรไหลจนกว่า buffer จะเต็ม
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	flusher, canFlush := c.Writer.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := stream.Read(buf)
+		if n > 0 {
+			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
+				return // client ปิดการเชื่อมต่อไปแล้ว ไม่มีใครรออ่านต่อ หยุดทันที
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			return // EOF ปกติ (ดึง log แบบไม่ follow จบแล้ว) หรือ stream พังกลางทาง จบเหมือนกัน
+		}
+	}
+}
