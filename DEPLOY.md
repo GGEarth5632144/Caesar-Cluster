@@ -94,8 +94,10 @@ docker compose -f docker-compose.prod.yml --profile tools run --rm seed
 
 ### 5. เปลี่ยนรหัสผ่าน admin ทันที
 
-seed สร้างบัญชี `admin` ด้วยรหัสผ่าน `changeme123` ซึ่งเขียนอยู่ในซอร์สโค้ดที่ใครก็อ่านได้
-login แล้วเปลี่ยนรหัสผ่านเป็นอย่างแรกก่อนให้ใครมาใช้งาน
+- **ไม่ใส่ข้อมูลสาธิต** — บัญชีทดสอบ `B6618452` และรายชื่อ `eligible_students` ปลอม
+  `B6600001`–`B6600010` จะไม่ถูกสร้าง (ตั้ง `SEED_DEMO_DATA=true` ถ้าจงใจอยากได้)
+- **บังคับให้ตั้งรหัสผ่าน admin เอง** — ต้องตั้ง `SEED_ADMIN_PASSWORD` ยาวอย่างน้อย 12 ตัว
+  ไม่ตั้งหรือตั้งเป็นค่าตัวอย่างในซอร์ส seed จะไม่ยอมรันเลย
 
 seed ยังใส่บัญชีทดสอบและรายชื่อ `eligible_students` ปลอมไว้ด้วย รายละเอียดอยู่ในหัวข้อค้างคาข้างล่าง
 
@@ -238,6 +240,127 @@ sudo chown 10001:10001 secrets/kubeconfig
 ## เรื่องที่ยังค้างอยู่
 
 เรียงตามความสำคัญ ไม่มีข้อไหนที่บล็อกการใช้งานปกติ แต่ควรรู้ก่อนเปิดให้นักศึกษาใช้จริง
+## ทดสอบบนเครื่องตัวเองด้วย kind + Calico (ไม่ต้องรอ NUC ว่าง)
+
+ไม่จำเป็นต้องมีคลัสเตอร์จริง 40 node ก็ทดสอบ `KubernetesProvisioner` ได้ เพราะโค้ดคุยกับ Kubernetes
+ผ่าน API มาตรฐาน [kind](https://kind.sigs.k8s.io/) จำลองคลัสเตอร์เป็น container บน Docker ที่มีอยู่แล้ว
+และติดตั้ง [Calico](https://www.tigera.io/project-calico/) เพิ่มเพื่อให้ NetworkPolicy ถูกบังคับจริง
+เหมือนคลัสเตอร์บน NUC (CNI เริ่มต้นของ kind ไม่บังคับ NetworkPolicy เลย)
+
+### สิ่งที่ต้องมีเพิ่ม
+
+- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+- `kubectl`
+
+### 1. สร้างคลัสเตอร์ทดสอบ
+
+```bash
+kind create cluster --config deploy/kind/cluster.yaml
+```
+
+`cluster.yaml` ปิด CNI เริ่มต้นไว้แล้ว และตั้ง pod CIDR เป็น `172.16.0.0/16` ให้ตรงกับค่า
+`K8S_POD_CIDR` ที่ `.env.example` ใช้อยู่แล้วโดยตั้งใจ จะได้ไม่ต้องแก้ค่านี้เลย
+
+### 2. ติดตั้ง Calico
+
+```bash
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
+kubectl create -f deploy/kind/calico-installation.yaml
+kubectl wait --for=condition=Ready nodes --all --timeout=300s
+```
+
+### 3. สร้าง kubeconfig ให้ backend
+
+ใช้ ServiceAccount สิทธิ์จำกัดตัวเดียวกับที่ NUC ใช้จริง ไม่ใช่ kubeconfig แอดมินของ kind
+เพื่อทดสอบไปด้วยว่าสิทธิ์ที่กำหนดไว้ใน `caesar-backend-rbac.yaml` เพียงพอจริง
+
+```bash
+kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml
+
+NS=caesar-system
+TOKEN=$(kubectl -n $NS get secret caesar-backend-token -o jsonpath='{.data.token}' | base64 -d)
+CA=$(kubectl -n $NS get secret caesar-backend-token -o jsonpath='{.data.ca\.crt}')
+SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+
+cat > deploy/kind/kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - name: caesar
+    cluster: {server: ${SERVER}, certificate-authority-data: ${CA}}
+contexts:
+  - name: caesar
+    context: {cluster: caesar, user: caesar-backend}
+current-context: caesar
+users:
+  - name: caesar-backend
+    user: {token: ${TOKEN}}
+EOF
+```
+
+ไม่ใช้ `deploy/make-kubeconfig.sh` ในขั้นนี้ เพราะสคริปต์นั้นตั้งใจปฏิเสธ server ที่เป็น
+`127.0.0.1` ไว้ (กันพลาดตอน mount เข้า container บน NUC) แต่ตรงนี้ backend รันตรงบนเครื่อง
+ไม่ได้อยู่ใน container จึงคุย `127.0.0.1` ของ kind ได้ปกติ
+
+### 4. รัน backend ชี้เข้าคลัสเตอร์ทดสอบ
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+แก้ `.env` สองบรรทัดนี้ ที่เหลือใช้ค่า default ได้เลย
+
+```
+PROVISIONER=kubernetes
+KUBECONFIG=../deploy/kind/kubeconfig
+```
+
+```bash
+docker compose up -d      # postgres
+go run ./cmd/seed
+go run ./cmd/server
+```
+
+log ต้องมีบรรทัด `kubernetes: ต่อ ... สำเร็จ` และ `provisioner: KUBERNETES`
+ถ้าค้างหรือ error ตรงนี้ แปลว่า kubeconfig หรือสิทธิ์ยังไม่ถูก ย้อนไปเช็คขั้นตอน 2–3
+
+### 5. ทดสอบของจริง
+
+เปิด frontend (`npm run dev`) แล้วสมัคร สร้าง space deploy service ตามปกติ จากนั้นตรวจดังนี้
+
+```bash
+kubectl get ns -l app.kubernetes.io/managed-by=caesar-cluster
+kubectl -n <ชื่อ-space> get deploy,svc,resourcequota,limitrange,networkpolicy
+```
+
+**ทดสอบว่า NetworkPolicy กันข้าม namespace จริง** สร้างผู้ใช้ 2 คนคนละ space แล้ว deploy
+service ทั้งคู่ จากนั้น exec เข้า pod ของ space แรกแล้วลอง curl ไปหา pod IP ของ space ที่สอง
+
+```bash
+kubectl -n <space-A> exec -it deploy/<service-A> -- wget -T3 -O- <pod-ip-ของ-space-B>:<port>
+```
+
+ต้อง timeout ไม่ใช่ connection refused — ถ้าเชื่อมได้แปลว่า Calico ยังไม่ทำงาน ย้อนไปเช็คขั้นตอน 2
+
+**เข้าถึง service ผ่าน NodePort** kind รัน node เป็น container จึงเข้าจาก host ตรงๆ ด้วย
+`<node-ip>:<node_port>` แบบบน NUC ไม่ได้ ใช้ port-forward แทนสำหรับทดสอบ
+
+```bash
+kubectl -n <ชื่อ-space> port-forward svc/<ชื่อ-service> 8080:<container-port>
+curl http://localhost:8080
+```
+
+### 6. เก็บกวาด
+
+```bash
+kind delete cluster --name caesar-test
+```
+
+ลบคลัสเตอร์ทดสอบทิ้งทั้งก้อน ไม่กระทบอะไรบนเครื่องจริงเลยเพราะเป็นคนละคลัสเตอร์กันโดยสิ้นเชิง
+
+---
+
 
 1. **บัญชีทดสอบใน seed ยังอยู่** `cmd/seed/main.go` สร้างบัญชี `B6618452` รหัสผ่าน `Banana1234` และรายชื่อ eligible ปลอม `B6600001` ถึง `B6600010` ควรลบก่อนเปิดใช้จริง
 2. **สถานะ service ไม่ตรงกับของจริง** DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว pod พังทีหลัง DB ยังบอก running อยู่ ต้องมี reconcile loop มาอ่านสถานะ pod กลับเข้ามา สิทธิ์อ่าน pod เตรียมไว้ใน ClusterRole ให้แล้ว

@@ -20,6 +20,13 @@ var (
 	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
 	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
 	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
+
+	// ErrNamespaceTerminating = namespace ชื่อนี้เพิ่งถูกสั่งลบและยังตายไม่สนิท
+	//
+	// ต่างจาก ErrNameTaken ตรงที่ "รอแล้วลองใหม่ได้" ไม่ใช่ต้องเปลี่ยนชื่อ — การลบ namespace
+	// ของ k8s เป็นแบบ async ค้างสถานะ Terminating อยู่พักหนึ่ง เจอบ่อยตอนลบ space
+	// แล้วสร้างใหม่ชื่อเดิมทันที ผู้ใช้ต้องได้คำแนะนำที่ถูกว่าให้รอ ไม่ใช่ให้ไปตั้งชื่ออื่น
+	ErrNamespaceTerminating = errors.New("namespace ชื่อนี้กำลังถูกลบอยู่ รอสักครู่แล้วลองใหม่")
 )
 
 // NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + รายชื่อสมาชิก)
@@ -90,6 +97,12 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) 
 		return tx.Model(&entity.User{}).Where("id = ?", userID).
 			Update("namespace_id", ns.ID).Error
 	})
+
+		// error ที่ผู้ใช้แก้เองได้ (ชื่อซ้ำ / รอ namespace เดิมตายก่อน) ส่งต่อดิบๆ ไม่ห่อทับ
+		// เพราะ controller ต้องแปลงเป็น 409 พร้อมข้อความที่บอกวิธีแก้ ไม่ใช่ 500 ที่บอกอะไรไม่ได้
+		if errors.Is(err, ErrNameTaken) || errors.Is(err, ErrNamespaceTerminating) {
+			return nil, err
+		}
 	if err != nil {
 		return nil, err
 	}

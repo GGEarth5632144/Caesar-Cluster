@@ -710,6 +710,10 @@ func (h *AdminController) Approve(c *gin.Context) {
 		default:
 			log.Printf("approve: provision namespace error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace ไม่สำเร็จ")
+		case errors.Is(err, services.ErrNamespaceTerminating):
+			// เจอตอนแอดมินลบ space ของคนนี้แล้วรีบกด approve คำขอใหม่ให้เขาทันที
+			// ชื่อ namespace ที่ Approve ตั้งเป็น ns-user-<id> ตายตัว จึงชนกับตัวเดิมที่ยังไม่ตายสนิท
+			utils.Error(c, http.StatusConflict, "NAMESPACE_TERMINATING", err.Error())
 		}
 		return
 	}

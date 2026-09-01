@@ -50,6 +50,8 @@ func (h *NamespaceController) Create(c *gin.Context) {
 			utils.Error(c, http.StatusConflict, "ALREADY_IN_NAMESPACE", err.Error())
 		case errors.Is(err, services.ErrNameTaken):
 			utils.Error(c, http.StatusConflict, "NAME_TAKEN", err.Error())
+		case errors.Is(err, services.ErrNamespaceTerminating):
+			utils.Error(c, http.StatusConflict, "NAMESPACE_TERMINATING", err.Error())
 		default:
 			log.Printf("create namespace error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace ไม่สำเร็จ")

@@ -1,0 +1,19 @@
+# คลัสเตอร์ทดสอบบนเครื่องตัวเองด้วย kind (Kubernetes IN Docker)
+#
+# ปิด CNI เริ่มต้นของ kind (kindnet) เพราะมันไม่บังคับ NetworkPolicy เลย
+# ถ้าไม่ปิดจะทดสอบ NetworkPolicy ที่ KubernetesProvisioner สร้างไม่ได้ ต้องติดตั้ง Calico เอง
+# (ดูขั้นตอนใน calico-installation.yaml และ DEPLOY.md หัวข้อ "ทดสอบบนเครื่องตัวเอง")
+#
+# podSubnet ตั้งให้ตรงกับ K8S_POD_CIDR ที่คลัสเตอร์จริงใช้ (172.16.0.0/16) โดยตั้งใจ
+# จะได้ใช้ .env ตัวเดียวกันกับที่ตั้งไว้สำหรับ NUC ได้เลย ไม่ต้องแก้ K8S_POD_CIDR
+#
+# รัน: kind create cluster --config deploy/kind/cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: caesar-test
+networking:
+  disableDefaultCNI: true
+  podSubnet: "172.16.0.0/16"
+nodes:
+  - role: control-plane
+  - role: worker

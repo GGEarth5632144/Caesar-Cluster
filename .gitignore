@@ -6,3 +6,6 @@ secrets/
 
 # ไฟล์ที่ cmd/export-rbac เขียนออกมา
 out/
+
+# kubeconfig ชั่วคราวสำหรับทดสอบด้วย kind บนเครื่อง dev — เป็นความลับเฉพาะเครื่องนั้น
+deploy/kind/kubeconfig

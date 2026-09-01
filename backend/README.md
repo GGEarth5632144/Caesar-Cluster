@@ -283,6 +283,8 @@ admin import รายชื่อ → user register → login
 | `ALREADY_IN_NAMESPACE` | มี space อยู่แล้ว (1 คน = 1 space) |
 | `NAMESPACE_HAS_MEMBERS` | เจ้าของพยายามออก/ลบ namespace ทั้งที่ยังมีสมาชิกคนอื่นอยู่ |
 | `HAS_OWN_SERVICES` | สมาชิกพยายามออกจาก space ทั้งที่ยังมี service ที่ตัวเองสร้างค้างอยู่ (ออกไปแล้วจะลบเองไม่ได้อีก) |
+| `NAME_TAKEN` | ชื่อ space ซ้ำ — ซ้ำใน DB หรือมี namespace ชื่อนี้อยู่บนคลัสเตอร์แล้ว ต้องเปลี่ยนชื่อ |
+| `NAMESPACE_TERMINATING` | namespace ชื่อเดิมยังถูกลบไม่เสร็จ (k8s ลบแบบ async) รอสักครู่แล้วลองใหม่ ไม่ต้องเปลี่ยนชื่อ |
 | `NOT_CONTRIBUTOR` | เฉพาะเจ้าของ space เท่านั้นที่เชิญ/ดูคำเชิญที่ส่งไปได้ |
 | `INVITE_SELF` | เชิญ student_id ของตัวเอง |
 | `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |

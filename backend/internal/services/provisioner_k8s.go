@@ -153,14 +153,20 @@ func (k *KubernetesProvisioner) ensureNamespaceObject(ctx context.Context, ns *e
 	if err != nil {
 		return fmt.Errorf("อ่าน namespace %q ไม่สำเร็จ: %w", ns.Name, err)
 	}
+	// มีชื่อนี้อยู่แล้วแต่ไม่ใช่ของเรา = ไม่ยึดมาใช้เด็ดขาด (ดูเหตุผลที่ labelManagedBy)
+	//
+	// คืนเป็น ErrNameTaken เพราะจากมุมผู้ใช้มันคือ "ชื่อนี้ถูกใช้แล้ว ไปตั้งชื่ออื่น" เหมือนกับตอนชนกัน
+	// ใน DB ทุกประการ ทำให้ controller แปลงเป็น 409 ได้โดยไม่ต้องรู้ว่ามี k8s อยู่
+	// ส่วนเหตุผลจริงที่แอดมินต้องรู้ log ไว้ที่นี่ ไม่ส่งออกไปให้ผู้ใช้ทั่วไปเห็นโครงสร้างคลัสเตอร์
 	if !isManaged(existing.Labels) {
-		return fmt.Errorf("namespace %q มีอยู่บนคลัสเตอร์แล้วแต่ไม่ได้ถูกสร้างโดย Caesar Cluster "+
-			"— ไม่ยึดมาใช้เพื่อความปลอดภัย ให้เปลี่ยนชื่อ space หรือลบของเดิมทิ้งเอง", ns.Name)
+		log.Printf("ปฏิเสธการใช้ namespace %q: มีอยู่บนคลัสเตอร์แล้วแต่ไม่มี label %s=%s "+
+			"— ไม่ยึดมาใช้เพื่อความปลอดภัย", ns.Name, labelManagedBy, labelManagedValue)
+		return fmt.Errorf("%w (มี namespace ชื่อนี้อยู่บนคลัสเตอร์แล้ว)", ErrNameTaken)
 	}
 	// namespace ที่กำลังถูกลบจะรับ resource ใหม่ไม่ได้ ต้องรอให้ตายสนิทก่อน
 	// เจอบ่อยตอนลบ space แล้วสร้างใหม่ชื่อเดิมทันที (การลบของ k8s เป็น async)
 	if existing.Status.Phase == corev1.NamespaceTerminating {
-		return fmt.Errorf("namespace %q กำลังถูกลบอยู่ (Terminating) รอสักครู่แล้วลองใหม่", ns.Name)
+		return fmt.Errorf("%w (namespace %q ยังอยู่ในสถานะ Terminating)", ErrNamespaceTerminating, ns.Name)
 	}
 
 	if existing.Labels == nil {
@@ -479,10 +485,7 @@ func (k *KubernetesProvisioner) applyDeployment(ctx context.Context, nsName stri
 		Privileged:               &privileged,
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
-			// คืนเฉพาะสิทธิ์ผูก port ต่ำกว่า 1024 กลับไป — image ยอดนิยมหลายตัว (nginx, httpd)
-			// ฟังที่ port 80 ถ้าไม่คืนให้จะรันไม่ขึ้นเลย และเป็น capability เดียวที่ระดับ
-			// restricted ของ Pod Security Admission ยอมให้ add ได้
-			Add: []corev1.Capability{"NET_BIND_SERVICE"},
+			Add:  addedCapabilities(k.cfg.PodSecurity),
 		},
 		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
@@ -656,6 +659,27 @@ func (k *KubernetesProvisioner) deleteWorkload(ctx context.Context, nsName, svcN
 	return nil
 }
 
+// findPod หา pod ของ service หนึ่งตัว — Deployment ของระบบนี้มี replica เดียวเสมอ (ดู applyDeployment)
+// จึงเลือกตัวที่สถานะเป็น Running ก่อน ถ้าไม่มีสักตัว (เช่นกำลัง CrashLoopBackOff) ใช้ตัวแรกที่เจอแทน
+// เพื่อให้ยังดึง log ของ container ที่พังออกมาดูสาเหตุได้ ไม่ใช่ปฏิเสธเฉยๆ ว่า "ไม่มี pod ที่ Running"
+func (k *KubernetesProvisioner) findPod(ctx context.Context, nsName, svcName string) (*corev1.Pod, error) {
+	list, err := k.cs.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=%s,%s=%s", labelAppName, svcName, labelManagedBy, labelManagedValue),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("หา pod ของ %q ไม่สำเร็จ: %w", svcName, err)
+	}
+	if len(list.Items) == 0 {
+		return nil, fmt.Errorf("ไม่พบ pod ของ service %q ใน %q (อาจกำลังสร้างอยู่ ลองใหม่อีกครั้งในอีกสักครู่)", svcName, nsName)
+	}
+	for i := range list.Items {
+		if list.Items[i].Status.Phase == corev1.PodRunning {
+			return &list.Items[i], nil
+		}
+	}
+	return &list.Items[0], nil
+}
+
 // assertManagedNamespace ยืนยันว่า namespace ปลายทางเป็นของระบบนี้จริงก่อนจะไปแตะอะไรข้างใน
 // คืน error ที่ apierrors.IsNotFound เป็นจริงได้ เพื่อให้ผู้เรียกแยกกรณี "ไม่มีแล้ว" ออกจากกรณีอื่น
 func (k *KubernetesProvisioner) assertManagedNamespace(ctx context.Context, nsName string) error {
@@ -685,6 +709,35 @@ func (k *KubernetesProvisioner) containerPortFor(svc *entity.Service) int {
 		}
 	}
 	return k.cfg.DefaultContainerPort
+}
+
+// addedCapabilities คืน capability ที่ "คืนกลับ" ให้ container หลัง drop ALL ไปแล้ว
+//
+// เราเริ่มจาก drop ALL เสมอ แล้วค่อยคืนเฉพาะที่จำเป็น ซึ่งตัดตัวอันตรายออกหมดตั้งแต่ต้น:
+// NET_RAW (ดักแพ็กเก็ตของคนอื่น), SYS_ADMIN, SYS_PTRACE, SYS_MODULE, MKNOD ไม่มีทางได้คืน
+//
+// ที่ต้องแยกตามระดับ เพราะ image ทั่วไปเกือบทั้งหมดเริ่มต้นด้วยการรันเป็น root
+// เพื่อเตรียมไฟล์ แล้วค่อยลดสิทธิ์ตัวเองลงเป็น user ธรรมดาก่อนรันจริง ขั้นตอนนั้นต้องใช้
+// CHOWN, SETUID, SETGID เป็นอย่างน้อย ถ้าไม่คืนให้ image ยอดนิยมอย่าง nginx จะ crash ทันที
+// ด้วย "chown ... Operation not permitted" ตั้งแต่ยังไม่ทันเริ่มทำงาน
+//
+// baseline   = คืนชุดที่ image ปกติต้องใช้ตอน init (ค่าที่แนะนำสำหรับแพลตฟอร์มนักศึกษา)
+// restricted = คืนแค่สิทธิ์ผูก port ต่ำกว่า 1024 ซึ่งเป็นตัวเดียวที่ระดับ restricted ของ
+//
+//	Pod Security Admission ยอมให้ add ได้ — ใช้คู่กับ runAsNonRoot
+//	image ต้องถูกสร้างมาให้รันเป็น non-root ตั้งแต่แรกถึงจะใช้โหมดนี้ได้
+func addedCapabilities(podSecurity string) []corev1.Capability {
+	if podSecurity == config.PodSecurityRestricted {
+		return []corev1.Capability{"NET_BIND_SERVICE"}
+	}
+	return []corev1.Capability{
+		"CHOWN",            // เปลี่ยนเจ้าของไฟล์ที่ตัวเองสร้าง เช่น cache dir ของ nginx
+		"DAC_OVERRIDE",     // เขียนไฟล์ที่ permission ไม่ตรงระหว่างเตรียมตัว
+		"FOWNER",           // แก้ permission ของไฟล์ที่ตัวเองเป็นเจ้าของ
+		"SETGID",           // ลดสิทธิ์ตัวเองลงเป็น group ธรรมดาก่อนรันจริง
+		"SETUID",           // ลดสิทธิ์ตัวเองลงเป็น user ธรรมดาก่อนรันจริง
+		"NET_BIND_SERVICE", // ผูก port ต่ำกว่า 1024 เช่น nginx ที่ฟัง port 80
+	}
 }
 
 // namespaceLabels ประกอบ label ของ Namespace: label ของเรา + label ที่ Pod Security Admission อ่าน

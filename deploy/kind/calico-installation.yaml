@@ -1,0 +1,15 @@
+# สั่ง Calico ให้ใช้ pod CIDR เดียวกับที่ตั้งไว้ใน cluster.yaml (172.16.0.0/16)
+# apply หลัง tigera-operator ขึ้นแล้วเท่านั้น (ดูลำดับคำสั่งใน DEPLOY.md)
+#
+# encapsulation: VXLANCrossSubnet เพราะ node ของ kind คุยกันผ่าน Docker bridge network
+# ธรรมดา ไม่ใช่ L2 เดียวกันแบบ node จริงบน VLAN100 — ต้อง encapsulate ถึงจะคุยข้าม node ได้
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+      - cidr: 172.16.0.0/16
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
