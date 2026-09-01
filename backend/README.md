@@ -124,6 +124,19 @@ go run ./cmd/seed
 ตอนสมัคร เช็ค 2 ชั้น: (1) มี student_id นี้ในตารางไหม (2) major ตรงกับ CPE ไหม — ไม่ผ่านชั้นไหนก็สมัครไม่ได้
 นอกจากนี้ยังมี FK `users.student_id → eligible_students.student_id` กันอีกชั้นที่ระดับ DB
 
+**5. สิทธิ์อ่านจาก DB สดทุก request — ไม่เชื่อ token**
+
+`middlewares.Auth` ตรวจลายเซ็น JWT แล้วเอา `sub` ไปอ่าน role + namespace ปัจจุบันจากฐานข้อมูลใหม่ทุกครั้ง
+claim `role` ที่อยู่ใน token **ไม่ถูกใช้ตัดสินสิทธิ์**
+
+เหตุผล: JWT เซ็นแล้วเรียกคืนไม่ได้ ข้อมูลข้างในคือภาพ ณ วินาทีที่ล็อกอิน ถ้าเชื่อ claim ตรงๆ
+การถอนสิทธิ์แอดมินหรือลบบัญชีจะไม่มีผลจนกว่า token จะหมดอายุ — ซึ่งนานถึง 30 วันถ้าติ๊ก Remember
+ตอนนี้ทั้งการเลื่อนขั้น ถอนสิทธิ์ และลบบัญชี **มีผลทันทีในคำขอถัดไป**
+
+ราคาที่จ่ายคือ SELECT ด้วย primary key หนึ่งครั้งต่อ request ซึ่งถูกกว่าที่ handler ส่วนใหญ่ทำอยู่เดิม
+(หลาย handler เคยยิง `First(&user, userID)` ของตัวเองซ้ำอยู่แล้ว ตอนนี้อ่านรอบเดียวแล้วแชร์ผ่าน
+`gin.Context` — ดู `currentNamespaceID` ใน `controller/helper.go`)
+
 ### เพดานทรัพยากร
 
 ค่าคงที่ทั้งหมดอยู่ใน [`internal/entity/namespace.go`](internal/entity/namespace.go)
@@ -324,6 +337,8 @@ admin import รายชื่อ → user register → login
 | `INVITE_SELF` | เชิญ student_id ของตัวเอง |
 | `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |
 | `INVITE_NOT_PENDING` | คำเชิญถูก accept/decline/cancel ไปแล้ว ตอบซ้ำไม่ได้ |
+| `ACCOUNT_GONE` | token ยังไม่หมดอายุ แต่บัญชีถูกลบออกจากระบบไปแล้ว — หน้าเว็บควรเคลียร์ session แล้วพากลับไปหน้า login |
+| `ADMIN_ONLY` | เรียก endpoint ของแอดมินด้วยบัญชีที่ไม่ใช่แอดมิน (เช็คจาก role ใน DB สดๆ ไม่ใช่จาก token) |
 
 ---
 
@@ -331,8 +346,11 @@ admin import รายชื่อ → user register → login
 
 เรียงตามความสำคัญ ไม่มีข้อไหนบล็อกการใช้งานปกติ แต่ควรรู้ก่อนเปิดให้นักศึกษาใช้จริง
 
-1. 🔴 **ลบบัญชีทดสอบใน `cmd/seed`** — ยังสร้างผู้ใช้ `B6618452` รหัสผ่าน `Banana1234`
-   และรายชื่อ eligible ปลอม `B6600001`–`B6600010` ไว้ ต้องเอาออกก่อนเปิดใช้จริง
+1. 🟠 **หน้าเว็บฝั่งแอดมินยังเป็นกล่องเปล่าอยู่หลายหน้า** — `AdminDashboard` (ซึ่งเป็นหน้าแรกที่
+   แอดมินเห็นทันทีหลังล็อกอิน), `Alertadmin`, `Auditlog`, `IPCmanagement`, `Service`
+   ยัง render กล่องสีเทาว่างๆ ทั้งที่เมนูใน sidebar ชี้ไปหาแล้ว
+   ตาราง `system_alerts` ก็ยังไม่มีโค้ดตรงไหนเขียนลงไปเลย (สถานะเดียวกับ `user_alerts`
+   ก่อนที่จะทำ LogAlertScanner) — API ยังไม่มี ต้องทำทั้ง backend และ frontend
 2. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว
    ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop มาอ่านสถานะ pod กลับเข้ามา
    (สิทธิ์อ่าน pod เตรียมไว้ใน `deploy/k8s/caesar-backend-rbac.yaml` ให้แล้ว)

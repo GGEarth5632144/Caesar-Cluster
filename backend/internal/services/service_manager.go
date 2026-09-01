@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 
 	"gorm.io/gorm"
@@ -170,18 +171,40 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 	// deploy ของจริงขึ้น cluster
 	if err := m.prov.DeployService(ctx, ns.Name, svc); err != nil {
 		// deploy ไม่สำเร็จ → ลบ row ทิ้ง เพื่อคืนโควตาให้ namespace ทันที
-		m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID)
+		m.releaseReservation(ctx, svc.ID, err)
 		return nil, err
 	}
 
 	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว (ถ้า deploy สำเร็จ) — persist คู่กับ status ในทีเดียว
-	if err := m.db.WithContext(ctx).Model(&entity.Service{}).
+	//
+	// ใช้ context ที่ตัด cancel ออกด้วยเหตุผลเดียวกับ releaseReservation: ของถูกสร้างบนคลัสเตอร์
+	// ไปแล้วจริงๆ ถ้าเขียนสถานะกลับไม่ได้เพราะผู้ใช้เพิ่งปิดหน้าเว็บ แถวนี้จะค้างเป็น "creating"
+	// ตลอดกาลทั้งที่ workload รันอยู่ — หน้าเว็บจะโชว์ผิดและไม่มีอะไรมาแก้ให้
+	if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
 		Where("id = ?", svc.ID).
 		Updates(map[string]any{"status": entity.ServiceRunning, "node_port": svc.NodePort}).Error; err != nil {
 		return nil, err
 	}
 	svc.Status = entity.ServiceRunning
 	return svc, nil
+}
+
+// releaseReservation ลบแถว service ที่จองโควตาไว้ทิ้ง หลัง deploy ล้มเหลว
+//
+// ต้องใช้ context.WithoutCancel: สาเหตุที่ deploy ล้มเหลวบ่อยที่สุดสาเหตุหนึ่งคือผู้ใช้ปิดหน้าเว็บ
+// ระหว่างรอ ซึ่งทำให้ ctx ของ HTTP request ถูก cancel — ถ้าใช้ ctx ตัวเดิมมาลบ คำสั่ง DELETE
+// จะล้มเหลวทันทีด้วย "context canceled" แล้วแถวที่จองโควตาไว้จะค้างอยู่ตลอดไปโดยไม่มี workload จริง
+// (บั๊กนี้เคยพิสูจน์แล้วว่าเกิดจริง: โควตาหายไป 400m/256MB โดยผู้ใช้เห็นแค่ข้อความ error)
+//
+// error ของการลบต้อง log เสมอ ไม่กลืนทิ้ง — ถ้าลบไม่สำเร็จแปลว่าโควตารั่วจริงๆ
+// ต้องมีร่องรอยให้ตามเก็บได้ ไม่ใช่หายเงียบไปทั้งที่ผู้ใช้เสียโควตาไปแล้ว
+func (m *ServiceManager) releaseReservation(ctx context.Context, serviceID int, cause error) {
+	err := m.db.WithContext(context.WithoutCancel(ctx)).
+		Delete(&entity.Service{}, serviceID).Error
+	if err != nil {
+		log.Printf("!! deploy service id=%d ล้มเหลว (%v) และคืนโควตาไม่สำเร็จด้วย: %v "+
+			"— แถวนี้ยังกินโควตาของ namespace อยู่ ต้องลบมือ", serviceID, cause, err)
+	}
 }
 
 // Delete ลบ service ออกจาก namespace: ถอนของจริงบน cluster ก่อน แล้วค่อยลบ row (คืนโควตา)

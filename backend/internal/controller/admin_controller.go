@@ -514,8 +514,11 @@ func (h *AdminController) UpdateRequestTemplate(c *gin.Context) {
 		return
 	}
 
-	// ดึงข้อมูลล่าสุดกลับมาตอบกลับ
-	h.db.First(&tmpl, id)
+	// ดึงข้อมูลล่าสุดกลับมาตอบกลับ — อ่านไม่สำเร็จก็ยังตอบ 200 ได้เพราะ UPDATE ผ่านไปแล้วจริง
+	// แต่ต้อง log ไว้ ไม่งั้นหน้าเว็บจะได้ค่าเก่ากลับไปแสดงโดยไม่มีใครรู้ว่าทำไม
+	if err := h.db.WithContext(c.Request.Context()).First(&tmpl, id).Error; err != nil {
+		log.Printf("update request template: re-read id=%d error: %v", id, err)
+	}
 	utils.OK(c, http.StatusOK, tmpl)
 }
 
@@ -707,13 +710,13 @@ func (h *AdminController) Approve(c *gin.Context) {
 			utils.Error(c, http.StatusConflict, "ALREADY_IN_NAMESPACE", err.Error())
 		case errors.Is(err, services.ErrNameTaken):
 			utils.Error(c, http.StatusConflict, "NAME_TAKEN", err.Error())
-		default:
-			log.Printf("approve: provision namespace error: %v", err)
-			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace ไม่สำเร็จ")
 		case errors.Is(err, services.ErrNamespaceTerminating):
 			// เจอตอนแอดมินลบ space ของคนนี้แล้วรีบกด approve คำขอใหม่ให้เขาทันที
 			// ชื่อ namespace ที่ Approve ตั้งเป็น ns-user-<id> ตายตัว จึงชนกับตัวเดิมที่ยังไม่ตายสนิท
 			utils.Error(c, http.StatusConflict, "NAMESPACE_TERMINATING", err.Error())
+		default:
+			log.Printf("approve: provision namespace error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace ไม่สำเร็จ")
 		}
 		return
 	}
@@ -830,8 +833,18 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 
 	if req.StudentID != nil {
 		// ถ้ามีการเปลี่ยนรหัสนักศึกษา ต้องยัดลง eligible_students กันติด FK ก่อน
+		//
+		// เช็ค error ตรงนี้เพื่อให้ข้อความที่ผู้ใช้เห็นตรงกับสาเหตุจริง: ถ้าปล่อยผ่าน แถวนี้จะไม่ถูก
+		// สร้าง แล้วไปพังที่ Updates ข้างล่างด้วย FK violation ซึ่งตอบกลับเป็น "อัปเดตข้อมูลผู้ใช้งาน
+		// ไม่สำเร็จ" — แอดมินจะไล่หาสาเหตุผิดจุดเพราะปัญหาจริงอยู่คนละตารางกัน
 		eligible := entity.EligibleStudent{StudentID: *req.StudentID, Major: "Updated by Admin"}
-		h.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible)
+		if err := h.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&eligible).Error; err != nil {
+			log.Printf("update user: ensure eligible student %q error: %v", *req.StudentID, err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL",
+				"เพิ่มรหัสนักศึกษาใหม่เข้ารายชื่อที่อนุญาตไม่สำเร็จ")
+			return
+		}
 		updates["student_id"] = *req.StudentID
 	}
 	if req.RealName != nil {
@@ -855,7 +868,11 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	h.db.First(&user, id) // ดึงข้อมูลล่าสุดมาตอบ
+	// ดึงข้อมูลล่าสุดมาตอบ — เหตุผลเดียวกับ UpdateRequestTemplate: UPDATE ผ่านไปแล้ว
+	// อ่านกลับไม่ได้ไม่ถือว่าคำสั่งล้มเหลว แต่ต้องมีร่องรอยว่าค่าที่ตอบกลับอาจไม่ใช่ค่าล่าสุด
+	if err := h.db.WithContext(ctx).First(&user, id).Error; err != nil {
+		log.Printf("update user: re-read id=%d error: %v", id, err)
+	}
 
 	// ตอบพร้อม year_level + โควตาของ namespace เหมือน ListUsers — ไม่งั้นแถวนี้ในตารางฝั่ง frontend
 	// จะเห็น year_level/quota หายไปทันทีหลังบันทึก (ถูกแทนที่ด้วย response ที่ไม่มีฟิลด์นี้)

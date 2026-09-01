@@ -87,7 +87,7 @@ func Setup(
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)
 		api.POST("/reset-password", authCtl.ResetPassword)
 
-		protected := api.Group("", middlewares.Auth(cfg.JWTSecret))
+		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db))
 		{
 			protected.GET("/me", authCtl.Me)
 			protected.GET("/request-templates", tmplCtl.List)
@@ -129,7 +129,7 @@ func Setup(
 			protected.GET("/ai-review-requests/:request_id", aiReviewReqCtl.Get)
 		}
 
-		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret), middlewares.AdminOnly())
+		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret, db), middlewares.AdminOnly())
 		{
 			admin.GET("/eligible-students", adminCtl.ListEligibleStudents)
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
