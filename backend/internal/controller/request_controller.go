@@ -52,9 +52,17 @@ func (h *RequestController) Create(c *gin.Context) {
 		return
 	}
 
+	// ต้องเช็ค error ของ Count ด้วย ไม่ใช่ดูแต่ตัวเลข: ถ้า query ล้มเหลว pendingCount จะเป็น 0
+	// ซึ่งแปลว่า "ไม่มีคำขอค้าง" แล้วโค้ดจะเดินต่อไปสร้างคำขอซ้ำให้ทันที — กติกาถูกข้ามไปเงียบๆ
+	// เพราะฐานข้อมูลมีปัญหา ไม่ใช่เพราะผู้ใช้มีสิทธิ์สร้างจริง
 	var pendingCount int64
-	h.db.WithContext(ctx).Model(&entity.Request{}).
-		Where("user_id = ? AND status = ?", userID, entity.RequestPending).Count(&pendingCount)
+	if err := h.db.WithContext(ctx).Model(&entity.Request{}).
+		Where("user_id = ? AND status = ?", userID, entity.RequestPending).
+		Count(&pendingCount).Error; err != nil {
+		log.Printf("create request: count pending error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+		return
+	}
 	if pendingCount > 0 {
 		utils.Error(c, http.StatusConflict, "REQUEST_PENDING", "คุณมีคำขอที่รอการอนุมัติอยู่แล้ว")
 		return

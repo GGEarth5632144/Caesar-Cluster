@@ -187,13 +187,32 @@ func (m *InviteManager) Accept(ctx context.Context, userID, inviteID int) (*enti
 		return nil, err
 	}
 
+	// เงื่อนไขทั้งสองข้อถูกเช็คไปแล้วข้างบน แต่ต้องเช็คซ้ำ "ในคำสั่ง UPDATE เอง" อีกที
+	// เพราะการเช็คข้างบนอยู่นอก transaction: ระหว่างนั้นผู้ใช้อาจกด accept คำเชิญอีกใบพร้อมกัน
+	// (หรือกดใบเดิมสองครั้ง) แล้วทั้งสอง request ผ่านด่านมาได้ทั้งคู่ ผลคือคนที่เขียนทีหลังชนะ
+	// และคำเชิญอีกใบถูกทำเครื่องหมายว่า accepted ทั้งที่ไม่ได้พาเข้า namespace นั้นจริง
+	//
+	// ให้ฐานข้อมูลตัดสินแทน: ใครมาถึงก่อนได้ไป คนที่มาทีหลังได้ RowsAffected = 0 แล้ว rollback
 	err = m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&entity.User{}).Where("id = ?", userID).
-			Update("namespace_id", ns.ID).Error; err != nil {
-			return err
+		joined := tx.Model(&entity.User{}).Where("id = ? AND namespace_id IS NULL", userID).
+			Update("namespace_id", ns.ID)
+		if joined.Error != nil {
+			return joined.Error
 		}
-		return tx.Model(&entity.NamespaceInvite{}).Where("id = ?", invite.ID).
-			Update("status", entity.InviteStatusAccepted).Error
+		if joined.RowsAffected == 0 {
+			return ErrAlreadyInNamespace
+		}
+
+		accepted := tx.Model(&entity.NamespaceInvite{}).
+			Where("id = ? AND status = ?", invite.ID, entity.InviteStatusPending).
+			Update("status", entity.InviteStatusAccepted)
+		if accepted.Error != nil {
+			return accepted.Error
+		}
+		if accepted.RowsAffected == 0 {
+			return ErrInviteNotPending
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

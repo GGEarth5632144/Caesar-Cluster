@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -14,7 +16,7 @@ import (
 
 // รหัสผ่านตั้งต้นของ admin — ต้องเปลี่ยนทันทีหลัง login ครั้งแรก
 const adminStudentID = "admin"
-const adminPassword = "changeme123"
+const devAdminPassword = "changeme123"
 
 const StudentID = "B6618452"
 const userPassword = "Banana1234"
@@ -32,16 +34,69 @@ const userPassword = "Banana1234"
 //     POST /api/admin/eligible-students เองก่อนทุกครั้ง
 //
 // รัน: go run ./cmd/seed
+//
+// # ข้อมูลจำเป็น กับ ข้อมูลสาธิต — แยกกันคนละชุด
+//
+// ข้อ 1-3 คือของที่ระบบขาดไม่ได้ (ไม่มี role "user" = สมัครสมาชิกไม่ได้เลย) รันทุกครั้งเสมอ
+// ส่วนข้อ 4-5 เป็นบัญชี/รายชื่อสำหรับทดสอบที่มีรหัสผ่านเขียนตายไว้ในซอร์สที่ใครก็อ่านได้จาก repo
+// จึงถูกกั้นด้วย SEED_DEMO_DATA ซึ่ง "ปิดเองอัตโนมัติเมื่อ APP_ENV=production"
+//
+// เลือกกั้นแทนการลบทิ้ง เพราะบัญชีพวกนี้คือสิ่งที่ใช้ทดสอบ flow สมัครสมาชิกบนเครื่อง dev อยู่จริง
+// ลบออกไปเลยจะทำให้ทุกคนต้องยิง POST /api/admin/eligible-students เองก่อนทุกครั้งที่ตั้งเครื่องใหม่
+// — ปัญหาไม่ได้อยู่ที่ "มีบัญชีทดสอบ" แต่อยู่ที่ "มันตามขึ้นเครื่องจริงไปด้วยโดยไม่มีใครทันสังเกต"
 func main() {
 	cfg := config.Load()
 	db := config.ConnectDB(cfg.DBUrl)
+
 	seedRoles(db)
-	seedAdmin(db)
-	seeduser(db)
+	seedAdmin(db, cfg)
 	seedRequestTemplates(db)
+
+	if !seedDemoData(cfg) {
+		log.Println("ข้ามข้อมูลสาธิต (บัญชีทดสอบ + รายชื่อ eligible ปลอม) — " +
+			"ตั้ง SEED_DEMO_DATA=true ถ้าต้องการจริงๆ")
+		log.Println("seed เสร็จแล้ว ✓")
+		return
+	}
+	seeduser(db)
 	seedTestEligibleStudents(db)
 
 	log.Println("seed เสร็จแล้ว ✓")
+}
+
+// seedDemoData ตัดสินว่าจะใส่ข้อมูลสาธิตหรือไม่
+//
+// ค่าปกติ: ใส่ตอน dev, ไม่ใส่ตอน production — ตั้ง SEED_DEMO_DATA ทับได้ทั้งสองทาง
+// (เผื่ออยากได้เครื่อง staging ที่มีข้อมูลทดสอบครบ หรืออยากได้เครื่อง dev ที่สะอาด)
+func seedDemoData(cfg *config.Config) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SEED_DEMO_DATA"))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return !cfg.IsProduction()
+	}
+}
+
+// adminPasswordFor เลือกรหัสผ่านตั้งต้นของ admin
+//
+// บนเครื่องจริงห้ามใช้ค่าที่เขียนไว้ในซอร์ส — ใครอ่าน repo ก็ล็อกอินเป็นแอดมินได้ทันที
+// จึงบังคับให้ตั้ง SEED_ADMIN_PASSWORD เอง และไม่ยอมให้ตั้งซ้ำกับค่าตัวอย่าง
+// (หลักการเดียวกับที่ config.Load ไม่ยอมให้ production ใช้ JWT_SECRET=dev-secret)
+func adminPasswordFor(cfg *config.Config) string {
+	pw := os.Getenv("SEED_ADMIN_PASSWORD")
+	if !cfg.IsProduction() {
+		if pw == "" {
+			return devAdminPassword
+		}
+		return pw
+	}
+	if pw == "" || pw == devAdminPassword || len(pw) < 12 {
+		log.Fatal("APP_ENV=production ต้องตั้ง SEED_ADMIN_PASSWORD เป็นรหัสผ่านของตัวเอง " +
+			"ยาวอย่างน้อย 12 ตัวอักษร และห้ามใช้ค่าตัวอย่างในซอร์ส")
+	}
+	return pw
 }
 
 // seedRoles ใส่ role ตั้งต้น (user, admin) ลงตาราง roles
@@ -105,7 +160,7 @@ func seedRequestTemplates(db *gorm.DB) {
 // → hash password → INSERT users พร้อม role_id ของ admin
 //
 // ลำดับสำคัญ: ข้าม eligible_students ไม่ได้ ต่อให้เป็น admin ก็ต้องอยู่ในรายชื่อ (กฎเดียวกันทั้งระบบ)
-func seedAdmin(db *gorm.DB) {
+func seedAdmin(db *gorm.DB, cfg *config.Config) {
 	var adminRole entity.Role
 	if err := db.Where("name = ?", entity.RoleAdmin).First(&adminRole).Error; err != nil {
 		log.Fatalf("หา role admin ไม่เจอ: %v", err)
@@ -124,7 +179,7 @@ func seedAdmin(db *gorm.DB) {
 		log.Fatalf("seed eligible admin ไม่สำเร็จ: %v", err)
 	}
 
-	hashadmin, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	hashadmin, err := bcrypt.GenerateFromPassword([]byte(adminPasswordFor(cfg)), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("hash ไม่สำเร็จ: %v", err)
 	}

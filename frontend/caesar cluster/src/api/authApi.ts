@@ -41,6 +41,14 @@ export function getApiErrorMessage(err: unknown, fallback: string) {
 }
 
 export const authApi = {
+  // ดึงสถานะล่าสุดของบัญชีตัวเอง — role/namespace_id อาจเปลี่ยนไปแล้วตั้งแต่ตอน login
+  // (แอดมินเลื่อน/ถอนสิทธิ์, ถูกเชิญเข้ากลุ่ม, space ถูกลบ) backend อ่านค่าพวกนี้จาก DB สดทุก request
+  // อยู่แล้ว ฝั่งหน้าเว็บจึงต้องซิงก์ตามด้วย ไม่งั้นเมนูที่โชว์จะไม่ตรงกับสิทธิ์จริง
+  me: async () => {
+    const response = await axiosClient.get<{ data: AuthUser }>('/me');
+    return response.data.data;
+  },
+
   login: async (payload: { student_id: string; password: string; remember: boolean }) => {
     const response = await axiosClient.post<{ data: LoginResponse }>('/login', payload);
     return response.data.data;

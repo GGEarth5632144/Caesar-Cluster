@@ -108,6 +108,19 @@ go run ./cmd/seed
 ตอนสมัคร เช็ค 2 ชั้น: (1) มี student_id นี้ในตารางไหม (2) major ตรงกับ CPE ไหม — ไม่ผ่านชั้นไหนก็สมัครไม่ได้
 นอกจากนี้ยังมี FK `users.student_id → eligible_students.student_id` กันอีกชั้นที่ระดับ DB
 
+**5. สิทธิ์อ่านจาก DB สดทุก request — ไม่เชื่อ token**
+
+`middlewares.Auth` ตรวจลายเซ็น JWT แล้วเอา `sub` ไปอ่าน role + namespace ปัจจุบันจากฐานข้อมูลใหม่ทุกครั้ง
+claim `role` ที่อยู่ใน token **ไม่ถูกใช้ตัดสินสิทธิ์**
+
+เหตุผล: JWT เซ็นแล้วเรียกคืนไม่ได้ ข้อมูลข้างในคือภาพ ณ วินาทีที่ล็อกอิน ถ้าเชื่อ claim ตรงๆ
+การถอนสิทธิ์แอดมินหรือลบบัญชีจะไม่มีผลจนกว่า token จะหมดอายุ — ซึ่งนานถึง 30 วันถ้าติ๊ก Remember
+ตอนนี้ทั้งการเลื่อนขั้น ถอนสิทธิ์ และลบบัญชี **มีผลทันทีในคำขอถัดไป**
+
+ราคาที่จ่ายคือ SELECT ด้วย primary key หนึ่งครั้งต่อ request ซึ่งถูกกว่าที่ handler ส่วนใหญ่ทำอยู่เดิม
+(หลาย handler เคยยิง `First(&user, userID)` ของตัวเองซ้ำอยู่แล้ว ตอนนี้อ่านรอบเดียวแล้วแชร์ผ่าน
+`gin.Context` — ดู `currentNamespaceID` ใน `controller/helper.go`)
+
 ### เพดานทรัพยากร
 
 ค่าคงที่ทั้งหมดอยู่ใน [`internal/entity/namespace.go`](internal/entity/namespace.go)
@@ -304,6 +317,8 @@ admin import รายชื่อ → user register → login
 | `INVITE_SELF` | เชิญ student_id ของตัวเอง |
 | `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |
 | `INVITE_NOT_PENDING` | คำเชิญถูก accept/decline/cancel ไปแล้ว ตอบซ้ำไม่ได้ |
+| `ACCOUNT_GONE` | token ยังไม่หมดอายุ แต่บัญชีถูกลบออกจากระบบไปแล้ว — หน้าเว็บควรเคลียร์ session แล้วพากลับไปหน้า login |
+| `ADMIN_ONLY` | เรียก endpoint ของแอดมินด้วยบัญชีที่ไม่ใช่แอดมิน (เช็คจาก role ใน DB สดๆ ไม่ใช่จาก token) |
 
 ---
 
@@ -317,7 +332,12 @@ admin import รายชื่อ → user register → login
 3. 🔴 **เขียน `KubernetesProvisioner` จริง** — Namespace + ResourceQuota + LimitRange + NetworkPolicy (default-deny กัน traffic ข้าม namespace) + Deployment
 4. 🟠 **ผู้ใช้เข้าถึง service ตัวเองยังไง** — schema มี `services.node_port` แล้ว (เลือกทาง NodePort)
    แต่ `KubernetesProvisioner.DeployService` ยังไม่ implement จริง เลยยังไม่มีใครเซ็ตค่านี้ (ดูข้อ 3)
-5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running`
+5. 🟠 **หน้าเว็บฝั่งแอดมินยังเป็นกล่องเปล่าอยู่หลายหน้า** — `AdminDashboard` (ซึ่งเป็นหน้าแรกที่
+   แอดมินเห็นทันทีหลังล็อกอิน), `Alertadmin`, `Auditlog`, `IPCmanagement`, `Service`
+   ยัง render กล่องสีเทาว่างๆ ทั้งที่เมนูใน sidebar ชี้ไปหาแล้ว
+   ตาราง `system_alerts` ก็ยังไม่มีโค้ดตรงไหนเขียนลงไปเลย (สถานะเดียวกับ `user_alerts`
+   ก่อนที่จะทำ LogAlertScanner) — API ยังไม่มี ต้องทำทั้ง backend และ frontend
+6. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running`
    ต้องมี reconcile loop — ตอนนี้ผู้ใช้พอรู้ตัวได้ล่วงหน้าจากหน้า Alerts (ตัวสแกน log เจอ error ก่อน) แต่ป้ายสถานะบนการ์ด service ยังโกหกอยู่
-6. 🟠 **persistent storage** (volume) — ยังไม่มี
-7. 🟡 production hardening — `JWT_SECRET` ยังเป็น `dev-secret`, ยังไม่มี TLS / rate limit
+7. 🟠 **persistent storage** (volume) — ยังไม่มี
+8. 🟡 production hardening — TLS / rate limit ที่เก็บใน memory ใช้ได้กับ backend ตัวเดียว ถ้าขยายเป็นหลาย replica ต้องย้ายไป store ที่แชร์กัน
