@@ -170,6 +170,15 @@ func addForeignKeys(db *gorm.DB) error {
 			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
 		},
 		{
+			// SET NULL ไม่ใช่ CASCADE โดยตั้งใจ: ลบ service ทิ้งแล้ว "ประวัติว่ามันเคยพัง" ยังมีค่าอยู่
+			// (ชื่อ service เก็บไว้ใน source_name อยู่แล้ว อ่านย้อนหลังได้)
+			// แต่ service_id ต้องกลายเป็น NULL ไม่งั้นหน้าเว็บจะยังโชว์ปุ่ม "ดู log" ที่กดแล้วพา
+			// ไปหา service ที่ไม่มีอยู่แล้ว — frontend เช็ค service_id !== null อยู่แล้ว ปุ่มจะหายเอง
+			name: "fk_user_alerts_service_id",
+			ddl: `ALTER TABLE user_alerts ADD CONSTRAINT fk_user_alerts_service_id
+			      FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL`,
+		},
+		{
 			name: "fk_requests_user_id",
 			ddl: `ALTER TABLE requests ADD CONSTRAINT fk_requests_user_id
 			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,

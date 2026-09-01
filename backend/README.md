@@ -19,6 +19,7 @@
 | กติกาทั้งหมด (eligible gate, 1 คน 1 space, limits) | ✅ ของจริง |
 | **สร้าง namespace / deploy container จริง** | ❌ **MOCK — แค่ log ออกมา ไม่มีอะไรเกิดขึ้นจริง** |
 | ดู log ของ service แบบสด | ✅ ของจริงกับ mock provisioner — `GET /api/services/:id/logs` (ฝั่ง `KubernetesProvisioner` ยังเป็น stub) |
+| แจ้งเตือนเมื่อ log มี error | ✅ ของจริง — `LogAlertScanner` สแกนเป็นรอบแล้วส่งเข้าหน้า Alerts |
 
 พูดอีกแบบ: ตอนนี้มี **control plane ที่ทำงานจริง** (จองโควตา จดบัญชี ตรวจสิทธิ์)
 แต่ยัง **ไม่มีมือที่ไปสร้างของจริง** — `KubernetesProvisioner` ยังเป็น stub ทุก method
@@ -175,6 +176,31 @@ internal/
 | `provisioner.go` | **interface** — จุดเดียวที่ผูกกับ k8s ที่เหลือไม่รู้จัก k8s เลย |
 | `provisioner_mock.go` | ตัวที่ใช้อยู่ตอนนี้ (แค่ log) |
 | `provisioner_k8s.go` | **ยังเป็น stub** — ของจริงต้องเขียนที่นี่ |
+| `alert_manager.go` | สร้าง/อ่าน/ลบแจ้งเตือนรายคน + ยุบ error เรื่องเดียวกันให้เหลือแถวเดียว |
+| `log_alert_scanner.go` | งานเบื้องหลัง — อ่าน log ของทุก service ที่ running เป็นรอบๆ เจอ error แล้วสร้างแจ้งเตือน |
+
+### แจ้งเตือนจาก log ทำงานยังไง
+
+```
+LogAlertScanner (ทุก 60 วิ)
+  └─ SELECT services ที่ status=running
+      └─ Provisioner.Logs(since=120s, follow=false)   ← ตัวเดียวกับที่หน้า Logs ใช้
+          └─ classifyLogLine() ทีละบรรทัด             ← 4 ชั้น: level=error → [error] → วลีที่แปลว่าพัง → คำลอยๆ
+              └─ ยุบบรรทัดที่ fingerprint ตรงกัน       ← แทนตัวเลขด้วย # ก่อนแฮช retry ครั้งที่ 17/18 จึงเป็นเรื่องเดียวกัน
+                  └─ AlertManager.Raise() ให้สมาชิกทุกคนใน namespace
+```
+
+จุดที่ตั้งใจออกแบบไว้แบบนี้:
+
+- **poll เป็นรอบ ไม่ follow ค้าง** — follow ต้องเปิด connection ค้างกับ Kubernetes API หนึ่งเส้น
+  ต่อหนึ่ง service ตลอดเวลา ซึ่งโตตามจำนวน service ไม่มีเพดาน ส่วน poll ต้นทุนคงที่
+  แลกกับ "ช้าไปหนึ่งรอบ" ซึ่งรับได้สำหรับระบบแจ้งเตือน
+- **ยุบด้วย fingerprint** — container ที่พังจริงพ่น error บรรทัดเดิมวินาทีละหลายรอบ
+  ถ้า INSERT ทุกบรรทัด หน้า Alerts จะกลายเป็นกำแพงข้อความเดียวกันจนหาเรื่องอื่นไม่เจอ
+- **ยุบแล้วไม่รีเซ็ต `is_read`** — ถ้ารีเซ็ต ตัวเลขแดงบน Sidebar จะกดให้หายไม่ได้เลยตราบใดที่
+  service ยังพังอยู่ กลายเป็นตัวเลขที่ผู้ใช้ทำอะไรกับมันไม่ได้จนเลิกสนใจ
+  ปล่อยให้ `count` เดินเงียบๆ แล้วไปเด้งใหม่เมื่อพ้นหน้าต่าง 6 ชม. แทน
+- **ส่งเฉพาะ error** — `warning` ถูกกรองทิ้งตาม default เปิดได้ด้วย `ALERT_SCAN_INCLUDE_WARNINGS=true`
 
 ### Export RBAC manifest
 
@@ -237,6 +263,11 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
 | GET | `/api/services/:id/logs` | สตรีม log สด — `tail`, `since`, `follow=true` (ตอบเป็น `text/plain` ไม่ใช่ JSON) |
+| GET | `/api/alerts` | แจ้งเตือนของฉัน — `unread=true`, `limit=<n>` |
+| GET | `/api/alerts/unread-count` | จำนวนที่ยังไม่อ่าน (ตัวเลขวงกลมแดงบน Sidebar) |
+| PATCH | `/api/alerts/read` | `{"ids":[...]}` หรือ `{"all":true}` |
+| DELETE | `/api/alerts/read` | ล้างเฉพาะที่อ่านแล้ว (ไม่แตะที่ยังไม่อ่าน) |
+| DELETE | `/api/alerts/:id` | ลบทีละอัน |
 
 ### Admin เท่านั้น
 
@@ -286,6 +317,7 @@ admin import รายชื่อ → user register → login
 3. 🔴 **เขียน `KubernetesProvisioner` จริง** — Namespace + ResourceQuota + LimitRange + NetworkPolicy (default-deny กัน traffic ข้าม namespace) + Deployment
 4. 🟠 **ผู้ใช้เข้าถึง service ตัวเองยังไง** — schema มี `services.node_port` แล้ว (เลือกทาง NodePort)
    แต่ `KubernetesProvisioner.DeployService` ยังไม่ implement จริง เลยยังไม่มีใครเซ็ตค่านี้ (ดูข้อ 3)
-5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop
+5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running`
+   ต้องมี reconcile loop — ตอนนี้ผู้ใช้พอรู้ตัวได้ล่วงหน้าจากหน้า Alerts (ตัวสแกน log เจอ error ก่อน) แต่ป้ายสถานะบนการ์ด service ยังโกหกอยู่
 6. 🟠 **persistent storage** (volume) — ยังไม่มี
 7. 🟡 production hardening — `JWT_SECRET` ยังเป็น `dev-secret`, ยังไม่มี TLS / rate limit

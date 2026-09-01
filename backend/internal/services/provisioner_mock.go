@@ -87,7 +87,7 @@ func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts
 			return
 		}
 		for i := int64(0); i < tail; i++ {
-			if !writeLine(fmt.Sprintf("[mock] GET / 200 %dms", 5+i%30)) {
+			if !writeLine(mockLogLine(i)) {
 				return
 			}
 		}
@@ -102,7 +102,7 @@ func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts
 			case <-ctx.Done(): // ผู้ใช้ปิดหน้าเว็บ/เปลี่ยนหน้า — HTTP request context ถูก cancel
 				return
 			case <-ticker.C:
-				if !writeLine(fmt.Sprintf("[mock] GET / 200 %dms", 5+n%30)) {
+				if !writeLine(mockLogLine(n)) {
 					return
 				}
 			}
@@ -110,4 +110,26 @@ func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts
 	}()
 
 	return pr, nil
+}
+
+// mockLogLine สร้างเนื้อ log ปลอมของบรรทัดที่ n — ส่วนใหญ่เป็น access log ปกติ
+// แต่แทรกบรรทัดที่เป็น error/warning เป็นระยะ
+//
+// ที่ต้องมีบรรทัด error ปนอยู่ด้วยเพราะ LogAlertScanner อ่าน log จาก provisioner ตัวเดียวกันนี้
+// ถ้า mock พ่นแต่ "GET / 200" ล้วน ฟีเจอร์แจ้งเตือนจะทดสอบบนเครื่อง dev ไม่ได้เลย
+// ต้องมีคลัสเตอร์จริงกับ container ที่พังจริงเท่านั้นถึงจะเห็นว่าทำงานไหม
+//
+// เลือกใช้ n % k แทนการสุ่ม เพื่อให้ผลลัพธ์นิ่งพอที่เทสต์จะยืนยันได้ว่าเกิดกี่บรรทัด
+func mockLogLine(n int64) string {
+	switch {
+	case n%17 == 16:
+		return "[mock] level=error msg=\"upstream connection refused\" upstream=127.0.0.1:5432 attempt=" +
+			fmt.Sprint(n)
+	case n%11 == 10:
+		return fmt.Sprintf("[mock] 10.244.0.1 - - \"GET /api/items HTTP/1.1\" 503 0 %dms", 800+n%200)
+	case n%7 == 6:
+		return fmt.Sprintf("[mock] level=warn msg=\"request took longer than expected\" duration=%dms", 900+n%100)
+	default:
+		return fmt.Sprintf("[mock] GET / 200 %dms", 5+n%30)
+	}
 }

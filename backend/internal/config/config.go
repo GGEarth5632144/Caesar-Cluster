@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -30,6 +31,29 @@ type Config struct {
 	ResendAPIKey         string // API key ของ Resend — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
 	MailFrom             string // ผู้ส่ง เช่น "Caesar Cluster <no-reply@your-domain>"
 	ResetTokenTTLMinutes int    // อายุของลิงก์รีเซ็ตรหัสผ่าน (นาที)
+
+	// AlertScan = ค่าของตัวสแกน log หา error แล้วส่งเข้าหน้า Alerts
+	AlertScan AlertScanConfig
+}
+
+// AlertScanConfig = ค่าที่คุม LogAlertScanner (ตัวที่เดินอ่าน log ของทุก service เป็นรอบๆ)
+type AlertScanConfig struct {
+	// Enabled = เปิด/ปิดตัวสแกนทั้งก้อน — ปิดแล้วหน้า Alerts ยังใช้งานได้ปกติ
+	// เพียงแต่จะไม่มีแจ้งเตือนใหม่จาก log เข้ามาเอง
+	Enabled bool
+
+	// IntervalSeconds = ทุกกี่วินาทีจะเดินสแกนหนึ่งรอบ
+	// ค่า default 60 วินาที: ถี่พอที่ผู้ใช้จะรู้ตัวว่า service พังภายในหนึ่งนาที แต่ไม่ถี่จน
+	// ยิง Kubernetes API รัวๆ บน control-plane ตัวเดียวที่เป็น Atom
+	IntervalSeconds int
+
+	// MaxLinesPerScan = ดึง log ย้อนหลังสูงสุดกี่บรรทัดต่อ 1 service ต่อ 1 รอบ
+	// กัน container ที่พ่น log เป็นหมื่นบรรทัดต่อนาทีดูดแรม/แบนด์วิดท์ของ backend ไปทั้งหมด
+	MaxLinesPerScan int
+
+	// IncludeWarnings = ส่ง warning เข้าหน้า Alerts ด้วยหรือไม่
+	// default false ตามที่ตกลงกันว่า "ส่งเฉพาะที่มัน error" — เปิดได้ถ้าอยากเห็นละเอียดขึ้น
+	IncludeWarnings bool
 }
 
 // Load อ่านค่า config จาก environment (โหลด .env ให้ก่อนถ้ามี)
@@ -52,6 +76,13 @@ func Load() *Config {
 		ResendAPIKey:         getEnv("RESEND_API_KEY", ""),
 		MailFrom:             getEnv("MAIL_FROM", "Caesar Cluster <onboarding@resend.dev>"),
 		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
+
+		AlertScan: AlertScanConfig{
+			Enabled:         getEnvBool("ALERT_SCAN_ENABLED", true),
+			IntervalSeconds: getEnvInt("ALERT_SCAN_INTERVAL_SECONDS", 60),
+			MaxLinesPerScan: getEnvInt("ALERT_SCAN_MAX_LINES", 500),
+			IncludeWarnings: getEnvBool("ALERT_SCAN_INCLUDE_WARNINGS", false),
+		},
 	}
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
@@ -85,4 +116,21 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// getEnvBool อ่าน env ที่เป็นค่าเปิด/ปิด — รับได้ทั้ง true/false, 1/0, yes/no, on/off
+// ค่าที่แปลไม่ออกจะคืน fallback พร้อม log เตือน (แบบเดียวกับ getEnvInt) ไม่เงียบหายไปเฉยๆ
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		log.Printf("ค่า env %s=%q ไม่ใช่ค่าเปิด/ปิด ใช้ค่า default %v แทน", key, v, fallback)
+		return fallback
+	}
 }
