@@ -55,6 +55,32 @@ type Config struct {
 	// AllowedImageRegistries = prefix ของ image ที่ผู้ใช้ deploy ได้ (คั่นด้วย comma)
 	// ว่าง = อนุญาตทุก image (พฤติกรรมเดิม) — ตั้งบนเครื่องจริงเพื่อกันคนเอา image ขุดเหรียญมารัน
 	AllowedImageRegistries []string
+
+	// AlertScan = ค่าของตัวสแกน log หา error แล้วส่งเข้าหน้า Alerts
+	AlertScan AlertScanConfig
+}
+
+// AlertScanConfig = ค่าที่คุม LogAlertScanner (ตัวที่เดินอ่าน log ของทุก service เป็นรอบๆ)
+//
+// แยกเป็นก้อนของตัวเองเพราะเป็นงานเบื้องหลังที่ปิดทิ้งได้ทั้งก้อนโดยระบบส่วนอื่นไม่กระทบ
+// (ต่างจาก K8sConfig ที่ถ้าตั้งผิดคือ deploy ไม่ได้เลย)
+type AlertScanConfig struct {
+	// Enabled = เปิด/ปิดตัวสแกนทั้งก้อน — ปิดแล้วหน้า Alerts ยังใช้งานได้ปกติ
+	// เพียงแต่จะไม่มีแจ้งเตือนใหม่จาก log เข้ามาเอง
+	Enabled bool
+
+	// IntervalSeconds = ทุกกี่วินาทีจะเดินสแกนหนึ่งรอบ
+	// ค่า default 60 วินาที: ถี่พอที่ผู้ใช้จะรู้ตัวว่า service พังภายในหนึ่งนาที แต่ไม่ถี่จน
+	// ยิง Kubernetes API รัวๆ บน control-plane ตัวเดียวที่เป็น Atom
+	IntervalSeconds int
+
+	// MaxLinesPerScan = ดึง log ย้อนหลังสูงสุดกี่บรรทัดต่อ 1 service ต่อ 1 รอบ
+	// กัน container ที่พ่น log เป็นหมื่นบรรทัดต่อนาทีดูดแรม/แบนด์วิดท์ของ backend ไปทั้งหมด
+	MaxLinesPerScan int
+
+	// IncludeWarnings = ส่ง warning เข้าหน้า Alerts ด้วยหรือไม่
+	// default false ตามที่ตกลงกันว่า "ส่งเฉพาะที่มัน error" — เปิดได้ถ้าอยากเห็นละเอียดขึ้น
+	IncludeWarnings bool
 }
 
 // K8sConfig = ค่าที่ KubernetesProvisioner ต้องใช้ตอนสร้างของจริงบนคลัสเตอร์
@@ -119,6 +145,13 @@ func Load() *Config {
 		},
 
 		AllowedImageRegistries: getEnvList("ALLOWED_IMAGE_REGISTRIES", ""),
+
+		AlertScan: AlertScanConfig{
+			Enabled:         getEnvBool("ALERT_SCAN_ENABLED", true),
+			IntervalSeconds: getEnvInt("ALERT_SCAN_INTERVAL_SECONDS", 60),
+			MaxLinesPerScan: getEnvInt("ALERT_SCAN_MAX_LINES", 500),
+			IncludeWarnings: getEnvBool("ALERT_SCAN_INCLUDE_WARNINGS", false),
+		},
 	}
 
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
@@ -182,6 +215,23 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// getEnvBool อ่าน env ที่เป็นค่าเปิด/ปิด — รับได้ทั้ง true/false, 1/0, yes/no, on/off
+// ค่าที่แปลไม่ออกจะคืน fallback พร้อม log เตือน (แบบเดียวกับ getEnvInt) ไม่เงียบหายไปเฉยๆ
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		log.Printf("ค่า env %s=%q ไม่ใช่ค่าเปิด/ปิด ใช้ค่า default %v แทน", key, v, fallback)
+		return fallback
+	}
 }
 
 // getEnvList อ่าน env ที่เป็นรายการคั่นด้วย comma แล้วคืนเป็น slice (ตัดช่องว่าง/ตัวว่างทิ้ง)

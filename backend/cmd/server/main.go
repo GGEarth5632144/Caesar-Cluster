@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -53,8 +58,22 @@ func main() {
 	nsMgr := services.NewNamespaceManager(db, quota, prov)
 	svcMgr := services.NewServiceManager(db, quota, prov, cfg.AllowedImageRegistries)
 	inviteMgr := services.NewInviteManager(db)
+	alertMgr := services.NewAlertManager(db)
 
-	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr)
+	// ตัวสแกน log หา error แล้วสร้างแจ้งเตือน — รันเป็นงานเบื้องหลังคู่ไปกับ HTTP server
+	//
+	// ผูก context ไว้กับสัญญาณปิดโปรแกรม (SIGINT/SIGTERM) เพื่อให้รอบที่กำลังอ่าน log ค้างอยู่
+	// ถูกตัดทันทีตอน container ถูกสั่งหยุด ไม่ค้างรอ Kubernetes API จนโดน SIGKILL
+	scanCtx, stopScan := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopScan()
+	go services.NewLogAlertScanner(db, prov, alertMgr, services.LogScanConfig{
+		Enabled:         cfg.AlertScan.Enabled,
+		Interval:        time.Duration(cfg.AlertScan.IntervalSeconds) * time.Second,
+		MaxLinesPerScan: int64(cfg.AlertScan.MaxLinesPerScan),
+		IncludeWarnings: cfg.AlertScan.IncludeWarnings,
+	}).Run(scanCtx)
+
+	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, alertMgr)
 
 	log.Printf("server running on :%s (env=%s)", cfg.Port, cfg.AppEnv)
 	if err := r.Run(":" + cfg.Port); err != nil {

@@ -85,6 +85,13 @@ export default function Sidebar({
           // เช็คว่า URL ปัจจุบันตรงกับ path ของเมนูนี้หรือไม่
           const isActive = location.pathname === item.path;
 
+          // ตัวเลขวงกลมแดง: ขึ้นเมื่อมีค่ามากกว่า 0 เท่านั้น
+          // เช็ค > 0 ตรงๆ ไม่ใช้ความ falsy ของ 0 เพราะ "ไม่มีแจ้งเตือน" (0) กับ "เมนูนี้ไม่มี
+          // badge เลย" (undefined) เป็นคนละเรื่องกัน แต่ต้องแสดงผลเหมือนกันคือไม่โชว์อะไร
+          const badgeCount = item.badge ?? 0;
+          const hasBadge = badgeCount > 0;
+          const badgeLabel = badgeCount > 99 ? "99+" : String(badgeCount);
+
           // ลบ cursor-not-allowed ออก และเพิ่ม hover effect เข้าไปแทน
           const itemClassName = cn(
             "relative flex w-full items-center rounded-xl py-3 text-left transition-colors",
@@ -104,15 +111,19 @@ export default function Sidebar({
             >
               <Icon size={20} className="shrink-0" />
               {collapsed ? (
-                item.badge ? (
-                  <span className="absolute top-1.5 right-2.5 flex size-2 rounded-full bg-red-500" />
+                // sidebar หุบอยู่ = ไม่มีที่พอใส่ตัวเลข เหลือแค่จุดแดงบอกว่า "มีอะไรรออยู่"
+                hasBadge ? (
+                  <span
+                    className="absolute top-1.5 right-2.5 flex size-2 rounded-full bg-red-500"
+                    aria-label={`${badgeLabel} รายการใหม่`}
+                  />
                 ) : null
               ) : (
                 <>
                   <span className="flex-1 text-base">{item.label}</span>
-                  {item.badge ? (
+                  {hasBadge ? (
                     <Badge className="h-6 min-w-6 justify-center bg-red-500 px-1.5 text-sm text-white">
-                      {item.badge}
+                      {badgeLabel}
                     </Badge>
                   ) : null}
                 </>

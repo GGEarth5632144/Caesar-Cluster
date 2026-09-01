@@ -27,13 +27,15 @@ export const userNavItems: NavItem[] = [
     icon: FileText, 
     path: `/${PATHS.requestResources}` 
   },
-  { 
-    label: "Alerts", 
-    icon: Bell, 
-    badge: 3, 
-    path: `/${PATHS.alertuser}`, 
-    requiresVm: true 
-  },//กำลังทำ
+  {
+    label: "Alerts",
+    icon: Bell,
+    // ไม่ตั้ง badge เป็นเลขตายตัวตรงนี้ — DashboardLayout เติมจำนวนที่ยังไม่ได้อ่านจริง
+    // จาก useAlertStore ให้ตอน render ไม่มีแจ้งเตือน = ไม่มีวงกลมแดงเลย
+    badgeSource: "alerts",
+    path: `/${PATHS.alertuser}`,
+    requiresVm: true
+  },
   
   // 4. การตั้งค่าบัญชี (System) - ไว้ล่างสุดเสมอ
   { label: "Settings", icon: Settings, path: `/${PATHS.settings}` },//กำลังทำ

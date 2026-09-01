@@ -18,7 +18,8 @@
 | **สร้าง namespace / deploy container จริงบน k8s** | ✅ ของจริง — `KubernetesProvisioner` เขียนเสร็จแล้ว |
 | จำกัด image ที่ผู้ใช้รันได้ | ✅ มีแล้ว ผ่าน `ALLOWED_IMAGE_REGISTRIES` (ว่าง = ไม่จำกัด) |
 | ดู log ของ service แบบสด | ✅ ของจริง — `GET /api/services/:id/logs` สตรีมตรงจาก container |
-| sync สถานะ pod กลับเข้า DB | ❌ ยังไม่มี reconcile loop |
+| แจ้งเตือนเมื่อ log มี error | ✅ ของจริง — `LogAlertScanner` สแกนเป็นรอบแล้วส่งเข้าหน้า Alerts |
+| sync สถานะ pod กลับเข้า DB | ❌ ยังไม่มี reconcile loop (แต่ตัวสแกน log ทำให้ผู้ใช้รู้ตัวว่า service มีปัญหาแล้ว) |
 | persistent storage (volume) | ❌ ยังไม่รองรับ (ResourceQuota ปิด PVC ไว้) |
 
 ตั้ง `PROVISIONER=kubernetes` แล้วระบบจะสร้างของจริงบนคลัสเตอร์ทันที
@@ -191,6 +192,31 @@ internal/
 | `provisioner.go` | **interface** — จุดเดียวที่ผูกกับ k8s ที่เหลือไม่รู้จัก k8s เลย |
 | `provisioner_mock.go` | ตัวที่ใช้อยู่ตอนนี้ (แค่ log) |
 | `provisioner_k8s.go` | ของจริงที่คุยกับ Kubernetes ผ่าน client-go (ใช้เมื่อ `PROVISIONER=kubernetes`) |
+| `alert_manager.go` | สร้าง/อ่าน/ลบแจ้งเตือนรายคน + ยุบ error เรื่องเดียวกันให้เหลือแถวเดียว |
+| `log_alert_scanner.go` | งานเบื้องหลัง — อ่าน log ของทุก service ที่ running เป็นรอบๆ เจอ error แล้วสร้างแจ้งเตือน |
+
+### แจ้งเตือนจาก log ทำงานยังไง
+
+```
+LogAlertScanner (ทุก 60 วิ)
+  └─ SELECT services ที่ status=running
+      └─ Provisioner.Logs(since=120s, follow=false)   ← ตัวเดียวกับที่หน้า Logs ใช้
+          └─ classifyLogLine() ทีละบรรทัด             ← 4 ชั้น: level=error → [error] → วลีที่แปลว่าพัง → คำลอยๆ
+              └─ ยุบบรรทัดที่ fingerprint ตรงกัน       ← แทนตัวเลขด้วย # ก่อนแฮช retry ครั้งที่ 17/18 จึงเป็นเรื่องเดียวกัน
+                  └─ AlertManager.Raise() ให้สมาชิกทุกคนใน namespace
+```
+
+จุดที่ตั้งใจออกแบบไว้แบบนี้:
+
+- **poll เป็นรอบ ไม่ follow ค้าง** — follow ต้องเปิด connection ค้างกับ Kubernetes API หนึ่งเส้น
+  ต่อหนึ่ง service ตลอดเวลา ซึ่งโตตามจำนวน service ไม่มีเพดาน ส่วน poll ต้นทุนคงที่
+  แลกกับ "ช้าไปหนึ่งรอบ" ซึ่งรับได้สำหรับระบบแจ้งเตือน
+- **ยุบด้วย fingerprint** — container ที่พังจริงพ่น error บรรทัดเดิมวินาทีละหลายรอบ
+  ถ้า INSERT ทุกบรรทัด หน้า Alerts จะกลายเป็นกำแพงข้อความเดียวกันจนหาเรื่องอื่นไม่เจอ
+- **ยุบแล้วไม่รีเซ็ต `is_read`** — ถ้ารีเซ็ต ตัวเลขแดงบน Sidebar จะกดให้หายไม่ได้เลยตราบใดที่
+  service ยังพังอยู่ กลายเป็นตัวเลขที่ผู้ใช้ทำอะไรกับมันไม่ได้จนเลิกสนใจ
+  ปล่อยให้ `count` เดินเงียบๆ แล้วไปเด้งใหม่เมื่อพ้นหน้าต่าง 6 ชม. แทน
+- **ส่งเฉพาะ error** — `warning` ถูกกรองทิ้งตาม default เปิดได้ด้วย `ALERT_SCAN_INCLUDE_WARNINGS=true`
 
 ### Export RBAC manifest
 
@@ -253,6 +279,11 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
 | GET | `/api/services/:id/logs` | สตรีม log สด — `tail`, `since`, `follow=true` (ตอบเป็น `text/plain` ไม่ใช่ JSON) |
+| GET | `/api/alerts` | แจ้งเตือนของฉัน — `unread=true`, `limit=<n>` |
+| GET | `/api/alerts/unread-count` | จำนวนที่ยังไม่อ่าน (ตัวเลขวงกลมแดงบน Sidebar) |
+| PATCH | `/api/alerts/read` | `{"ids":[...]}` หรือ `{"all":true}` |
+| DELETE | `/api/alerts/read` | ล้างเฉพาะที่อ่านแล้ว (ไม่แตะที่ยังไม่อ่าน) |
+| DELETE | `/api/alerts/:id` | ลบทีละอัน |
 
 ### Admin เท่านั้น
 
@@ -305,6 +336,8 @@ admin import รายชื่อ → user register → login
 2. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว
    ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop มาอ่านสถานะ pod กลับเข้ามา
    (สิทธิ์อ่าน pod เตรียมไว้ใน `deploy/k8s/caesar-backend-rbac.yaml` ให้แล้ว)
+   ตอนนี้ผู้ใช้ยังรู้ตัวได้จากหน้า Alerts (ตัวสแกน log เจอ error ก่อน) แต่ป้ายสถานะบนการ์ด
+   service ยังโกหกอยู่ — ทั้งสองอย่างควรมาจากแหล่งเดียวกันในที่สุด
 3. 🟠 **persistent storage (volume)** — ยังไม่รองรับ ตอนนี้ ResourceQuota ปิดการขอ PVC ไว้
    เพื่อไม่ให้ผู้ใช้สร้างสิ่งที่ระบบยังจัดการต่อไม่ได้
 4. 🟠 **หน้าเว็บยังไม่มีช่องกรอก `container_port`** — API รับแล้ว แต่ฟอร์มยังไม่ส่งมา

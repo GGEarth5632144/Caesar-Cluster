@@ -30,6 +30,8 @@ import (
 //	               GET /api/namespaces/invites/sent, PATCH /api/namespaces/invites/:id/accept,
 //	               PATCH /api/namespaces/invites/:id/decline, DELETE /api/namespaces/invites/:id (ยกเลิก),
 //	               GET|POST /api/services, DELETE /api/services/:id, GET /api/services/:id/logs,
+//	               GET /api/alerts, GET /api/alerts/unread-count, PATCH /api/alerts/read,
+//	               DELETE /api/alerts/read, DELETE /api/alerts/:id,
 //	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
 //	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
 //	               POST /api/admin/request-templates, GET /api/admin/namespaces,
@@ -42,6 +44,7 @@ func Setup(
 	nsMgr *services.NamespaceManager,
 	svcMgr *services.ServiceManager,
 	inviteMgr *services.InviteManager,
+	alertMgr *services.AlertManager,
 ) *gin.Engine {
 
 	authCtl := controller.NewAuthController(db, cfg)
@@ -52,6 +55,7 @@ func Setup(
 	reqCtl := controller.NewRequestController(db)
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 	inviteCtl := controller.NewInviteController(inviteMgr)
+	alertCtl := controller.NewAlertController(alertMgr)
 
 	r := gin.Default()
 
@@ -107,6 +111,17 @@ func Setup(
 			protected.POST("/services", svcCtl.Create)
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
+
+			// แจ้งเตือนรายคน — /unread-count ถูกหน้าเว็บ poll ถี่ที่สุดในกลุ่มนี้ (ทุกหน้า ทุกนาที)
+			// เลยแยกเป็น endpoint เบาๆ ที่ตอบแค่ตัวเลข ไม่ต้องดึงทั้งรายการมานับ
+			//
+			// DELETE /alerts/read ต้องประกาศก่อน DELETE /alerts/:id — gin จับคู่ static segment
+			// ก่อน wildcard อยู่แล้ว แต่เรียงแบบนี้ไว้ให้คนอ่านเห็นชัดว่าตั้งใจ ไม่ใช่บังเอิญ
+			protected.GET("/alerts", alertCtl.List)
+			protected.GET("/alerts/unread-count", alertCtl.UnreadCount)
+			protected.PATCH("/alerts/read", alertCtl.MarkRead)
+			protected.DELETE("/alerts/read", alertCtl.DeleteRead)
+			protected.DELETE("/alerts/:id", alertCtl.Delete)
 
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
