@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { ServiceCardsSkeleton, TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
 import axiosClient from "@/api/axiosClient";
 import { serviceApi, type AppService } from "@/api/services";
+import { imageRefError } from "@/lib/imageRef";
 import { getApiErrorMessage } from "@/api/authApi";
 import type { RequestTemplate } from "@/api/adminrequest";
 import { aiDeployApi, aiReviewApi } from "@/api/aiDeployApi";
@@ -233,7 +234,6 @@ interface CreateServiceModalProps {
 }
 
 function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
-  const navigate = useNavigate();
 
   const [image, setImage] = useState("");
   const [name, setName] = useState("");
@@ -283,8 +283,12 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
   const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
   const nameHasError = name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
 
+  // รูปแบบ image ตรวจด้วยกฎเดียวกับที่ backend ใช้ (ดู @/lib/imageRef)
+  const imageError = imageRefError(image);
+
   const canSubmit =
     image.trim().length >= 3 &&
+    imageError === null &&
     name.trim().length >= 3 &&
     NAME_PATTERN.test(name.trim()) &&
     (mode === "preset"
@@ -412,16 +416,24 @@ function CreateServiceModal({ onClose, onCreated }: CreateServiceModalProps) {
             <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
               Container Image
             </label>
-            <div className="flex items-center gap-2 rounded-xl border border-black/10 bg-white px-3.5 py-2.5">
+            <div
+              className={cn(
+                "flex items-center gap-2 rounded-xl border bg-white px-3.5 py-2.5",
+                imageError ? "border-red-300 focus-within:border-red-400" : "border-black/10",
+              )}
+            >
               <Box size={16} className="text-[#211a14]/30 shrink-0" />
               <input
                 value={image}
                 onChange={(e) => setImage(e.target.value)}
                 disabled={submitting}
-                placeholder="nginx:latest, ghcr.io/you/app:tag"
+                placeholder="nginx:1.27-alpine, ghcr.io/you/app:v1"
                 className="w-full bg-transparent text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
               />
             </div>
+            <p className={cn("text-[11px]", imageError ? "text-red-500" : "text-[#211a14]/40")}>
+              {imageError ?? "[registry/]ชื่อ[:tag] — ชื่อ image ต้องเป็นตัวพิมพ์เล็ก"}
+            </p>
           </div>
 
           {/* Service Name */}

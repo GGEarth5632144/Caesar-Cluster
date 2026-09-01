@@ -285,6 +285,8 @@ admin import รายชื่อ → user register → login
 | `HAS_OWN_SERVICES` | สมาชิกพยายามออกจาก space ทั้งที่ยังมี service ที่ตัวเองสร้างค้างอยู่ (ออกไปแล้วจะลบเองไม่ได้อีก) |
 | `NAME_TAKEN` | ชื่อ space ซ้ำ — ซ้ำใน DB หรือมี namespace ชื่อนี้อยู่บนคลัสเตอร์แล้ว ต้องเปลี่ยนชื่อ |
 | `NAMESPACE_TERMINATING` | namespace ชื่อเดิมยังถูกลบไม่เสร็จ (k8s ลบแบบ async) รอสักครู่แล้วลองใหม่ ไม่ต้องเปลี่ยนชื่อ |
+| `INVALID_IMAGE` | รูปแบบ image ไม่ถูกต้องตามไวยากรณ์ของ Docker (ชื่อต้องเป็นตัวพิมพ์เล็ก, ห้ามมีช่องว่าง, ห้ามใส่ http://) |
+| `IMAGE_NOT_ALLOWED` | image ที่ขอไม่อยู่ใน `ALLOWED_IMAGE_REGISTRIES` |
 | `NOT_CONTRIBUTOR` | เฉพาะเจ้าของ space เท่านั้นที่เชิญ/ดูคำเชิญที่ส่งไปได้ |
 | `INVITE_SELF` | เชิญ student_id ของตัวเอง |
 | `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |

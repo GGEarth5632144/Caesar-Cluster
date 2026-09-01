@@ -67,6 +67,13 @@ func (h *ServiceController) Create(c *gin.Context) {
 			"ชื่อต้องเป็นตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และขึ้นต้น-ลงท้ายด้วยตัวอักษรหรือตัวเลข")
 		return
 	}
+	if !isValidImageRef(req.Image) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_IMAGE",
+			"รูปแบบ image ไม่ถูกต้อง — ต้องเป็นรูป [registry/]ชื่อ[:tag][@digest] "+
+				"เช่น nginx:1.27-alpine หรือ ghcr.io/org/app:v1 "+
+				"(ชื่อ image ต้องเป็นตัวพิมพ์เล็กเท่านั้น)")
+		return
+	}
 	if !isValidEnvVars(req.EnvVars) {
 		utils.Error(c, http.StatusBadRequest, "INVALID_ENV_VARS",
 			"env vars ต้องมีไม่เกิน 20 ตัว ชื่อ key เป็นตัวอักษร/เลข/underscore และขึ้นต้นด้วยตัวอักษรหรือ underscore เท่านั้น")
