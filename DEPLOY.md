@@ -52,16 +52,16 @@ openssl rand -base64 48  # เอาไปใส่ JWT_SECRET
 ### 2. ให้สิทธิ์ backend บนคลัสเตอร์
 
 ```bash
-kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml
-chmod +x deploy/make-kubeconfig.sh
-./deploy/make-kubeconfig.sh
+kubectl apply -f backend/deploy/k8s/caesar-backend-rbac.yaml
+chmod +x backend/deploy/make-kubeconfig.sh
+./backend/deploy/make-kubeconfig.sh
 ```
 
 สคริปต์จะเขียน `secrets/kubeconfig` ที่ใช้สิทธิ์ของ ServiceAccount ตัวเดียว ไม่ใช่ `admin.conf`
 ถ้าสคริปต์บอกว่า API server เป็น `127.0.0.1` ให้รันใหม่พร้อมระบุ IP จริง
 
 ```bash
-APISERVER=https://192.168.100.1:6443 ./deploy/make-kubeconfig.sh
+APISERVER=https://192.168.100.1:6443 ./backend/deploy/make-kubeconfig.sh
 ```
 
 ตรวจว่าสิทธิ์ใช้ได้จริง
@@ -210,7 +210,7 @@ ssh -N -L 5433:localhost:5433 nuc@192.168.192.1
 ```bash
 docker compose -f docker-compose.prod.yml down
 sudo rm -rf secrets/kubeconfig
-./deploy/make-kubeconfig.sh
+./backend/deploy/make-kubeconfig.sh
 ```
 
 อีกสาเหตุคือ `server:` ใน kubeconfig ชี้ไป `127.0.0.1` ซึ่งใน container หมายถึงตัว container เอง
@@ -275,7 +275,7 @@ kubectl wait --for=condition=Ready nodes --all --timeout=300s
 เพื่อทดสอบไปด้วยว่าสิทธิ์ที่กำหนดไว้ใน `caesar-backend-rbac.yaml` เพียงพอจริง
 
 ```bash
-kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml
+kubectl apply -f backend/deploy/k8s/caesar-backend-rbac.yaml
 
 NS=caesar-system
 TOKEN=$(kubectl -n $NS get secret caesar-backend-token -o jsonpath='{.data.token}' | base64 -d)
@@ -298,7 +298,7 @@ users:
 EOF
 ```
 
-ไม่ใช้ `deploy/make-kubeconfig.sh` ในขั้นนี้ เพราะสคริปต์นั้นตั้งใจปฏิเสธ server ที่เป็น
+ไม่ใช้ `backend/deploy/make-kubeconfig.sh` ในขั้นนี้ เพราะสคริปต์นั้นตั้งใจปฏิเสธ server ที่เป็น
 `127.0.0.1` ไว้ (กันพลาดตอน mount เข้า container บน NUC) แต่ตรงนี้ backend รันตรงบนเครื่อง
 ไม่ได้อยู่ใน container จึงคุย `127.0.0.1` ของ kind ได้ปกติ
 

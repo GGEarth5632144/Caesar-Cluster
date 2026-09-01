@@ -30,8 +30,8 @@
 
 ```bash
 cp .env.example .env                                   # กรอกรหัสผ่าน DB และ JWT_SECRET
-kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml   # ให้สิทธิ์ backend บนคลัสเตอร์
-./deploy/make-kubeconfig.sh                            # สร้าง kubeconfig ให้ container
+kubectl apply -f backend/deploy/k8s/caesar-backend-rbac.yaml   # ให้สิทธิ์ backend บนคลัสเตอร์
+./backend/deploy/make-kubeconfig.sh                            # สร้าง kubeconfig ให้ container
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml --profile tools run --rm seed
 ```

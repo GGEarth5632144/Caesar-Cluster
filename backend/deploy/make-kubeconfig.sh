@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # สร้าง kubeconfig ที่ใช้สิทธิ์ของ ServiceAccount caesar-backend แล้ววางไว้ให้ container ใช้
 #
-# รันบนเครื่อง NUC หลัง apply deploy/k8s/caesar-backend-rbac.yaml แล้ว:
-#   ./deploy/make-kubeconfig.sh
+# รันบนเครื่อง NUC หลัง apply backend/deploy/k8s/caesar-backend-rbac.yaml แล้ว:
+#   ./backend/deploy/make-kubeconfig.sh
 #
 # ถ้า server ใน kubeconfig ของแอดมินเป็น 127.0.0.1 (container จะต่อไม่ได้) ให้ระบุเอง:
-#   APISERVER=https://192.168.100.1:6443 ./deploy/make-kubeconfig.sh
+#   APISERVER=https://192.168.100.1:6443 ./backend/deploy/make-kubeconfig.sh
 set -euo pipefail
 
 NS=caesar-system
@@ -15,7 +15,7 @@ CONTAINER_UID=10001   # uid ของ user caesar ใน image ของ backend
 
 if ! kubectl -n "$NS" get secret "$SECRET" >/dev/null 2>&1; then
   echo "ไม่พบ secret $SECRET ใน namespace $NS" >&2
-  echo "ต้อง kubectl apply -f deploy/k8s/caesar-backend-rbac.yaml ก่อน" >&2
+  echo "ต้อง kubectl apply -f backend/deploy/k8s/caesar-backend-rbac.yaml ก่อน" >&2
   exit 1
 fi
 
