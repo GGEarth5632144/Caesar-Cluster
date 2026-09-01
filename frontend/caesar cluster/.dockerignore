@@ -1,11 +1,25 @@
+# ห้ามหลุดเข้า build context — Vite ฝังค่า VITE_* ลงในไฟล์ JS ตอน build
+# ถ้า .env จริงหลุดเข้ามา ความลับจะไปโผล่ในบันเดิลที่ทุกคนเปิดดูได้จากเบราว์เซอร์
+# (โปรเจกต์นี้เลี่ยงปัญหานั้นด้วยการอ่าน config ตอน runtime จาก config.js อยู่แล้ว
+#  แต่กันไว้อีกชั้นเผื่อมีคนเผลอกลับไปใช้ VITE_ ในอนาคต)
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+secrets/
+**/kubeconfig
+*.pem
+*.key
+
 node_modules
 dist
 dist-ssr
 .git
+.gitignore
+.dockerignore
+Dockerfile
 *.log
-.env
-.env.local
-.env.*.local
 .vscode
 .idea
 README.md

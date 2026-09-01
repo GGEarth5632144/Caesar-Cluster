@@ -1,6 +1,10 @@
 # ค่าจริงของเครื่อง production — มีรหัสผ่าน DB และ JWT_SECRET อยู่ ห้าม commit
 .env
 
+# ไฟล์ค่าจริงแบบอื่นๆ (.env.local, .env.production, ...) — เก็บไว้เฉพาะ .env.example ที่เป็นแม่แบบ
+.env.*
+!.env.example
+
 # kubeconfig ที่ mount เข้า backend — เป็นกุญแจเข้าคลัสเตอร์ทั้งก้อน
 secrets/
 
@@ -9,3 +13,15 @@ out/
 
 # kubeconfig ชั่วคราวสำหรับทดสอบด้วย kind บนเครื่อง dev — เป็นความลับเฉพาะเครื่องนั้น
 deploy/kind/kubeconfig
+
+# กันพลาดแบบที่เสียหายที่สุด: เผลอ copy kubeconfig มาวางไว้ในโปรเจกต์แล้ว commit ขึ้น GitHub
+# ไฟล์นั้นมี token ของ ServiceAccount อยู่ข้างใน = ใครได้ไปก็สั่งงานคลัสเตอร์ได้ทันที
+# ดักไว้ทุกตำแหน่ง ไม่ใช่เฉพาะ path ที่รู้จัก เพราะที่พลาดกันจริงคือ path ที่ไม่มีใครคิดถึง
+**/kubeconfig
+*.kubeconfig
+
+# certificate / private key ที่อาจเผลอวางไว้ตอนทำ TLS
+*.pem
+*.key
+*.crt
+*.p12

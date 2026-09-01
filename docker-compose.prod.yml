@@ -48,7 +48,7 @@ services:
   backend:
     build:
       context: ./backend
-    image: caesar-cluster/backend:latest
+    image: ${BACKEND_IMAGE:-caesar-cluster/backend:latest}
     container_name: caesar-backend
     restart: unless-stopped
     env_file:
@@ -78,6 +78,7 @@ services:
   frontend:
     build:
       context: "./frontend/caesar cluster"
+    image: ${FRONTEND_IMAGE:-caesar-cluster/frontend:latest}
     container_name: caesar-frontend
     restart: unless-stopped
     environment:
@@ -107,7 +108,7 @@ services:
   seed:
     build:
       context: ./backend
-    image: caesar-cluster/backend:latest
+    image: ${BACKEND_IMAGE:-caesar-cluster/backend:latest}
     profiles: ["tools"]
     entrypoint: ["/app/seed"]
     env_file:
@@ -128,7 +129,7 @@ services:
   export-rbac:
     build:
       context: ./backend
-    image: caesar-cluster/backend:latest
+    image: ${BACKEND_IMAGE:-caesar-cluster/backend:latest}
     profiles: ["tools"]
     entrypoint: ["/app/export-rbac", "--out=/out/rbac.yaml"]
     env_file:

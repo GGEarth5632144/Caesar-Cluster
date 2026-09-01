@@ -361,6 +361,64 @@ kind delete cluster --name caesar-test
 
 ---
 
+## เอาโค้ดขึ้น GitHub / เอา image ขึ้น Docker Hub
+
+### ความลับอยู่ที่ไหน และทำไมมันไม่ตามขึ้นไปด้วย
+
+ค่าที่เป็นความลับทั้งหมด (รหัสผ่าน DB, `JWT_SECRET`, API key, kubeconfig) อยู่ใน `.env`
+กับโฟลเดอร์ `secrets/` เท่านั้น ทั้งสองอย่างถูก `.gitignore` และ `.dockerignore` กันไว้
+ไม่มีค่าไหนถูก compile ติดไปกับ binary หรือฝังใน image เลย — backend อ่านจาก environment
+ตอนรัน และหน้าเว็บอ่านจาก `/config.js` ที่ nginx เขียนให้ตอน container start
+
+แปลว่า image ก้อนเดียวเอาไปรันได้ทุกเครื่องโดยเปลี่ยนแค่ `.env` ไม่ต้อง build ใหม่
+และเอาขึ้น Docker Hub แบบ public ได้โดยไม่มีอะไรรั่ว
+
+ตรวจเองได้ว่าจริงไหม:
+
+```bash
+# 1. ใน image ต้องมีแค่ไบนารี ไม่มี .env หรือ kubeconfig ติดไปด้วย
+docker run --rm --entrypoint sh $BACKEND_IMAGE -c 'ls -la /app; find / -name ".env*" -o -name "kubeconfig" 2>/dev/null'
+
+# 2. ค้นทุก layer ว่ามีค่าลับหลุดไปไหม (ต้องไม่เจอ)
+docker save $BACKEND_IMAGE -o /tmp/img.tar
+grep -c "$(grep ^JWT_SECRET= .env | cut -d= -f2-)" /tmp/img.tar   # ต้องได้ 0
+rm /tmp/img.tar
+```
+
+> เจอคำว่า `RESEND_API_KEY` หรือ `kubeconfig` ใน image เป็นเรื่องปกติ — นั่นคือ**ชื่อ**
+> ตัวแปรที่ compile ติดมากับโค้ดที่เรียก `os.Getenv` ไม่ใช่**ค่า**ของมัน
+
+### push ขึ้น GitHub
+
+```bash
+git status --short          # ต้องไม่มี .env, secrets/ หรือ kubeconfig โผล่มา
+git push origin <branch>
+```
+
+ถ้าเผลอ commit ความลับไปแล้ว การลบไฟล์ใน commit ถัดไป**ไม่พอ** ของเดิมยังอยู่ในประวัติ
+และดึงกลับมาอ่านได้ ต้องถือว่าค่านั้นรั่วแล้วและเปลี่ยนใหม่ทันที (`JWT_SECRET` เปลี่ยนแล้ว
+ทุกคนต้อง login ใหม่ ส่วน token ของ ServiceAccount ให้ลบ Secret แล้วรัน make-kubeconfig ใหม่)
+
+### push image ขึ้น Docker Hub
+
+ตั้งชื่อ image ใน `.env` ให้เป็นบัญชีของตัวเองก่อน แล้ว build กับ push
+
+```bash
+docker login
+
+# ใน .env:  BACKEND_IMAGE=<user>/caesar-backend:v1.0.0
+#           FRONTEND_IMAGE=<user>/caesar-frontend:v1.0.0
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml push
+```
+
+ฝั่งเครื่องที่จะใช้งาน ตั้ง `BACKEND_IMAGE`/`FRONTEND_IMAGE` เป็น tag เดียวกันแล้วสั่ง
+`docker compose -f docker-compose.prod.yml pull && ... up -d` โดยไม่ต้อง build เอง
+
+ตั้ง tag เป็นเลขเวอร์ชันเสมอ อย่าใช้ `latest` อย่างเดียว — ไม่งั้นเวลามีปัญหาจะบอกไม่ได้ว่า
+เครื่องนั้นรันโค้ดชุดไหนอยู่ และย้อนกลับไปเวอร์ชันก่อนหน้าไม่ได้
+
+---
 ## เรื่องที่ยังค้างอยู่
 
 เรียงตามความสำคัญ ไม่มีข้อไหนที่บล็อกการใช้งานปกติ แต่ควรรู้ก่อนเปิดให้นักศึกษาใช้จริง

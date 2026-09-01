@@ -1,4 +1,24 @@
+# สิ่งที่ห้ามหลุดเข้า build context เด็ดขาด — ทุกอย่างใน context ถูกส่งให้ Docker daemon
+# และถูก COPY เข้า builder stage ต่อ ถ้ามีความลับปนไป มันจะค้างอยู่ใน layer ของ image
+# ที่ push ขึ้น Docker Hub แม้ stage สุดท้ายจะไม่ได้ copy ไฟล์นั้นออกมาก็ตาม
 .env
+.env.*
+!.env.example
+secrets/
+**/kubeconfig
+*.pem
+*.key
+
+# ของที่ไม่ได้ใช้ตอน build — ตัดออกให้ context เล็กและ build เร็วขึ้น
 .git
+.gitignore
+.dockerignore
+Dockerfile
 *.md
 setup_backend.txt
+
+# manifest กับสคริปต์สำหรับ kubectl/แอดมิน ไม่เกี่ยวกับการ compile
+deploy/
+
+# ผลลัพธ์ของ cmd/export-rbac ตอนรันบนเครื่อง
+out/
