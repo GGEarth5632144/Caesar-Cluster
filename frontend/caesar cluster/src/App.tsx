@@ -34,6 +34,7 @@ const Createservice = lazy(() => import("@/pages/user/Createservice"));
 const Alertuser = lazy(() => import("@/pages/user/Alertuser"));
 const Myservice = lazy(() => import("@/pages/user/Myservice"));
 const AIReviewPage = lazy(() => import("@/pages/user/AIReviewPage"));
+const ServiceLogs = lazy(() => import("@/pages/user/ServiceLogs"));
 const GeneralDashboard = lazy(() => import("@/pages/user/GeneralDashboard"));
 const WorkspaceOnboarding = lazy(() => import("@/pages/user/WorkspaceOnboarding"));
 
@@ -79,6 +80,7 @@ return (
                   <Route path={PATHS.myService} element={<Myservice />} />
                   <Route path={PATHS.createService} element={<Createservice />} />
                   <Route path={`${PATHS.aiReview}/:requestId`} element={<AIReviewPage />} />
+                  <Route path={`${PATHS.serviceLogs}/:serviceId`} element={<ServiceLogs />} />
                   <Route path={PATHS.generalDashboard} element={<GeneralDashboard user={user} />} />
                   <Route path={PATHS.workspaceOnboarding} element={<WorkspaceOnboarding />} />
                 </>

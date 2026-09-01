@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"sort"
 	"strconv"
@@ -657,6 +658,43 @@ func (k *KubernetesProvisioner) deleteWorkload(ctx context.Context, nsName, svcN
 		return fmt.Errorf("ลบ Deployment %q ใน %q ไม่สำเร็จ: %w", svcName, nsName, err)
 	}
 	return nil
+}
+
+// Logs เปิด stream ของ log จาก container ที่รัน service นี้อยู่ (เหมือนกด "Logs" ในหน้า Cloud Run)
+//
+// แยก context เป็น 2 ช่วงโดยตั้งใจ: เฟส "หาว่า pod ไหน" ใส่ timeout สั้น 10 วิ กันไม่ให้ค้าง
+// ถ้า API server ตอบช้า ส่วนเฟส "อ่าน log จริง" ใช้ ctx ที่รับมาตรงๆ ไม่ครอบ timeout เพิ่ม
+// เพราะตอน opts.Follow=true ต้องปล่อยให้ stream มีชีวิตอยู่ได้นานเท่าที่ผู้ใช้เปิดหน้าเว็บค้างไว้
+// (ผู้เรียกที่ชั้น controller ผูก ctx นี้กับอายุของ HTTP request ไว้แล้ว ปิดหน้าเว็บเมื่อไร ctx ก็ตายตาม)
+func (k *KubernetesProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
+	lookupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	if err := k.assertManagedNamespace(lookupCtx, nsName); err != nil {
+		return nil, err
+	}
+	pod, err := k.findPod(lookupCtx, nsName, svcName)
+	if err != nil {
+		return nil, err
+	}
+
+	logOpts := &corev1.PodLogOptions{
+		Container:  "app", // ชื่อ container เดียวที่ทุก pod ของระบบนี้มี (ดู applyDeployment)
+		Follow:     opts.Follow,
+		Timestamps: opts.Timestamps,
+	}
+	if opts.TailLines > 0 {
+		logOpts.TailLines = &opts.TailLines
+	}
+	if opts.SinceSeconds > 0 {
+		logOpts.SinceSeconds = &opts.SinceSeconds
+	}
+
+	stream, err := k.cs.CoreV1().Pods(nsName).GetLogs(pod.Name, logOpts).Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ดึง log ของ %q ไม่สำเร็จ: %w", svcName, err)
+	}
+	return stream, nil
 }
 
 // findPod หา pod ของ service หนึ่งตัว — Deployment ของระบบนี้มี replica เดียวเสมอ (ดู applyDeployment)

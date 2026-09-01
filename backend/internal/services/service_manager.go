@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"gorm.io/gorm"
@@ -211,4 +212,30 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 		return err
 	}
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
+}
+
+// Logs เปิด stream ของ log จาก service หนึ่งตัว — ไม่แตะ DB เลยนอกจากเช็คสิทธิ์ว่า service นี้
+// อยู่ใน namespace ของผู้เรียกจริง (กันดู log ของคนอื่นข้าม space) เพราะ log ไม่ใช่สิ่งที่ระบบนี้
+// เก็บสำเนาไว้ อ่านสดจากคลัสเตอร์ทุกครั้งที่ขอ
+//
+// data flow: ตรวจว่า service นี้เป็นของ namespace ที่อ้างจริง (แบบเดียวกับ Delete)
+// → หาชื่อ namespace บนคลัสเตอร์ → ส่งต่อให้ provisioner เปิด stream → คืน io.ReadCloser
+// ให้ ServiceController อ่านต่อออกไปที่ HTTP response โดยตรง ผู้เรียกมีหน้าที่ Close() เสมอ
+func (m *ServiceManager) Logs(ctx context.Context, serviceID, namespaceID int, opts LogOptions) (io.ReadCloser, error) {
+	var svc entity.Service
+	err := m.db.WithContext(ctx).
+		Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrServiceNotFound
+		}
+		return nil, err
+	}
+
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
+		return nil, err
+	}
+
+	return m.prov.Logs(ctx, ns.Name, svc.Name, opts)
 }

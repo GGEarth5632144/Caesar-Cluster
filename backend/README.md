@@ -17,6 +17,7 @@
 | กติกาทั้งหมด (eligible gate, 1 คน 1 space, limits) | ✅ ของจริง |
 | **สร้าง namespace / deploy container จริงบน k8s** | ✅ ของจริง — `KubernetesProvisioner` เขียนเสร็จแล้ว |
 | จำกัด image ที่ผู้ใช้รันได้ | ✅ มีแล้ว ผ่าน `ALLOWED_IMAGE_REGISTRIES` (ว่าง = ไม่จำกัด) |
+| ดู log ของ service แบบสด | ✅ ของจริง — `GET /api/services/:id/logs` สตรีมตรงจาก container |
 | sync สถานะ pod กลับเข้า DB | ❌ ยังไม่มี reconcile loop |
 | persistent storage (volume) | ❌ ยังไม่รองรับ (ResourceQuota ปิด PVC ไว้) |
 
@@ -251,6 +252,7 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | GET | `/api/services` | service ทั้งหมดใน space |
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
+| GET | `/api/services/:id/logs` | สตรีม log สด — `tail`, `since`, `follow=true` (ตอบเป็น `text/plain` ไม่ใช่ JSON) |
 
 ### Admin เท่านั้น
 

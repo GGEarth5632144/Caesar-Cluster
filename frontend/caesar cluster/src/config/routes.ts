@@ -26,6 +26,7 @@ export const PATHS = {
   createService: encodePath("create-service"),
 
   aiReview: encodePath("ai-review"),
+  serviceLogs: encodePath("service-logs"),
 
   generalDashboard: encodePath("general-dashboard"),
   workspaceOnboarding: encodePath("workspace-onboarding"),

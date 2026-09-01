@@ -29,7 +29,7 @@ import (
 //	               POST /api/namespaces/invites (contributor เชิญ), GET /api/namespaces/invites/mine,
 //	               GET /api/namespaces/invites/sent, PATCH /api/namespaces/invites/:id/accept,
 //	               PATCH /api/namespaces/invites/:id/decline, DELETE /api/namespaces/invites/:id (ยกเลิก),
-//	               GET|POST /api/services, DELETE /api/services/:id,
+//	               GET|POST /api/services, DELETE /api/services/:id, GET /api/services/:id/logs,
 //	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
 //	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
 //	               POST /api/admin/request-templates, GET /api/admin/namespaces,
@@ -106,6 +106,7 @@ func Setup(
 			protected.GET("/services", svcCtl.List)
 			protected.POST("/services", svcCtl.Create)
 			protected.DELETE("/services/:id", svcCtl.Delete)
+			protected.GET("/services/:id/logs", svcCtl.Logs)
 
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
