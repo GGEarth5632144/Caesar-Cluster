@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -47,23 +50,47 @@ func main() {
 
 	alertMgr := services.NewAlertManager(db)
 
-	// ตัวสแกน log หา error แล้วสร้างแจ้งเตือน — รันเป็นงานเบื้องหลังคู่ไปกับ HTTP server
-	//
-	// ผูก context ไว้กับสัญญาณปิดโปรแกรม (SIGINT/SIGTERM) เพื่อให้รอบที่กำลังอ่าน log ค้างอยู่
-	// ถูกตัดทันทีตอน container ถูกสั่งหยุด ไม่ค้างรอ Kubernetes API จนโดน SIGKILL
-	scanCtx, stopScan := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopScan()
-	go services.NewLogAlertScanner(db, prov, alertMgr, services.LogScanConfig{
-		Enabled:         cfg.AlertScan.Enabled,
-		Interval:        time.Duration(cfg.AlertScan.IntervalSeconds) * time.Second,
-		MaxLinesPerScan: int64(cfg.AlertScan.MaxLinesPerScan),
-		IncludeWarnings: cfg.AlertScan.IncludeWarnings,
-	}).Run(scanCtx)
+	// ผูก context ไว้กับสัญญาณปิดโปรแกรม (SIGINT/SIGTERM) ให้ทั้ง HTTP server และ background
+	// worker ปิดตัวจากสัญญาณเดียวกัน — เดิม r.Run() (ที่ ListenAndServe ข้างในบล็อกอยู่)
+	// ไม่ได้ผูกกับ context นี้เลย กด Ctrl+C แล้วตัวสแกน log จะหยุดแต่ตัวโปรแกรมค้างต่อ
+	// เพราะ HTTP server ยังรอ connection อยู่ ไม่มีอะไรไปสั่ง Shutdown ให้
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		services.NewLogAlertScanner(db, prov, alertMgr, services.LogScanConfig{
+			Enabled:         cfg.AlertScan.Enabled,
+			Interval:        time.Duration(cfg.AlertScan.IntervalSeconds) * time.Second,
+			MaxLinesPerScan: int64(cfg.AlertScan.MaxLinesPerScan),
+			IncludeWarnings: cfg.AlertScan.IncludeWarnings,
+		}).Run(ctx)
+	}()
 
 	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, alertMgr)
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 
-	log.Println("server running on http://localhost:" + cfg.Port)
-	if err := r.Run(":" + cfg.Port); err != nil {
-		log.Fatal(err)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Println("server running on http://localhost:" + cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("กำลังปิดเซิร์ฟเวอร์...")
+
+	// ให้เวลา request ที่ค้างอยู่ตอนนี้ทำงานจนจบก่อนปิดจริง แทนการตัดทิ้งทันที
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("ปิด HTTP server ไม่ราบรื่น: %v", err)
 	}
+
+	wg.Wait()
+	log.Println("ปิดเซิร์ฟเวอร์เรียบร้อย")
 }
