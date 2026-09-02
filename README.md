@@ -112,12 +112,15 @@ Cluster AI (Go + Python AI)      →  AGX Orin (NUC Cluster)
 
 ## การรันโปรเจค
 
+### รัน frontend อย่างเดียว (npm)
+
 ```bash
+cd "frontend/caesar cluster"
 npm install
 npm run dev
 ```
 
-### Environment Variables
+#### Environment Variables
 
 | Variable | Default | ความหมาย |
 |----------|---------|-----------|
@@ -125,6 +128,42 @@ npm run dev
 | `VITE_MOCK_AI` | `false` | `true` = จำลอง AI pipeline ทั้งหมด ไม่ต้องรัน backend |
 
 คัดลอก `.env.local.example` → `.env.local` แล้วแก้ค่าตามต้องการ
+
+### รันทั้ง stack ด้วย Docker (frontend + backend + db)
+
+ใช้ตอนอยากทดสอบระบบแบบ end-to-end (login จริงผ่าน backend + postgres) โดยไม่ต้องติดตั้ง
+Go/Node/Postgres บนเครื่องเอง — ต้องมีแค่ Docker + Docker Compose
+
+> **หมายเหตุ:** สำหรับ dev เท่านั้น backend รันแบบ `PROVISIONER=mock` (ไม่แตะ k8s จริง)
+> และ frontend รันเป็น Vite dev server (ไม่ใช่ production build)
+
+```bash
+cp .env.example .env      # ค่า default ใช้ได้เลย ไม่ต้องแก้อะไร
+docker compose up --build
+```
+
+รอจน `seed` service รันจบ (สร้าง roles + admin + ข้อมูลทดสอบให้อัตโนมัติ) แล้วเข้าใช้งานได้ที่:
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8080 |
+| Postgres | `localhost:5433` (user `postgres` / pass `password`, db `cloud_cluster`) |
+
+Login ด้วย admin ที่ seed ให้อัตโนมัติ: `student_id=admin` / `password=changeme123`
+(**เปลี่ยนรหัสทันทีถ้าจะใช้งานต่อ** — ตัวนี้มีไว้ทดสอบเท่านั้น)
+
+คำสั่งที่ใช้บ่อย:
+
+```bash
+docker compose logs -f          # ดู log ทุก service แบบ real-time
+docker compose logs -f backend  # ดู log เฉพาะ service เดียว
+docker compose down             # หยุด+ลบ container (เก็บข้อมูล db/node_modules ไว้ใน volume)
+docker compose down -v          # หยุด+ลบ container พร้อมล้าง volume (ล้าง db สะอาด)
+```
+
+แก้ไข frontend source code แล้ว hot reload ได้ทันที (bind mount) ส่วน backend เป็น compiled Go binary
+— แก้โค้ด backend แล้วต้องรัน `docker compose up --build backend` ใหม่ถึงจะเห็นผล
 
 ---
 
