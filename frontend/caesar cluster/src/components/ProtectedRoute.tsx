@@ -36,22 +36,21 @@ export default function ProtectedRoute() {
     if (!token || startedRef.current) return;
     startedRef.current = true;
 
-    let cancelled = false;
+    // ไม่มี cancel flag ตรงนี้โดยตั้งใจ: StrictMode ตอน dev รัน effect → cleanup → effect ซ้ำบน
+    // instance เดิม ถ้า cleanup ตั้งธง cancel ไว้ รอบสองจะถูก startedRef กันไม่ให้ยิงใหม่ แล้วผลลัพธ์
+    // ของรอบแรกก็ถูกทิ้งเพราะธง — checked ค้าง false ตลอดกาล = ค้างหน้า loader ไม่ยอมไปไหน
+    // setState หลัง unmount จริงใน React 18+ เป็น no-op เงียบๆ อยู่แล้ว ไม่ต้องกันเอง
     authApi
       .me()
       .then((fresh) => {
-        if (!cancelled) refreshUser(fresh);
+        refreshUser(fresh);
       })
       .catch(() => {
         /* 401 → interceptor จัดการแล้ว ; error อื่น → ใช้ค่าเดิมต่อ (ดูเหตุผลใน doc ข้างบน) */
       })
       .finally(() => {
-        if (!cancelled) setChecked(true);
+        setChecked(true);
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [token, refreshUser]);
 
   if (!token) {

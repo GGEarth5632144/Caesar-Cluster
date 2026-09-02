@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
 import { PATHS } from "@/config/routes";
+import AuthHeroArt from "@/components/AuthHeroArt";
 
 const registerSchema = z
   .object({
@@ -170,7 +171,9 @@ export default function Register() {
         </form>
       </div>
 
-      <div className="hidden flex-1 bg-[#FFF8E8] md:block" />
+      <div className="hidden flex-1 md:block">
+        <AuthHeroArt />
+      </div>
     </div>
   );
 }
