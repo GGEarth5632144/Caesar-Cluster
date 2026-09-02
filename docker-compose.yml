@@ -1,0 +1,65 @@
+# Spins up the whole stack (db + backend + frontend) for local dev.
+# Not for production: backend runs with PROVISIONER=mock (no real k8s calls)
+# and frontend runs the Vite dev server, not a production build.
+#
+# Setup:
+#   cp .env.example .env
+#   docker compose up --build
+#   frontend → http://localhost:5173
+#   backend  → http://localhost:8080
+#   db       → localhost:5433 (postgres/password, db cloud_cluster)
+#
+# admin login seeded by `seed`: student_id=admin / password=changeme123
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  seed:
+    build:
+      context: ./backend
+    entrypoint: ["./seed"]
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    env_file: .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: "./frontend/caesar cluster"
+      dockerfile: Dockerfile.dev
+    env_file: .env
+    ports:
+      - "5173:5173"
+    volumes:
+      - "./frontend/caesar cluster:/app"
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  frontend_node_modules:
