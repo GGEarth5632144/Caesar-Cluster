@@ -37,8 +37,10 @@ func main() {
 	nsMgr := services.NewNamespaceManager(db, quota, prov)
 	svcMgr := services.NewServiceManager(db, quota, prov)
 	inviteMgr := services.NewInviteManager(db)
+	telemetrySvc := services.NewTelemetryService(db)
+	telemetrySvc.StartTelemetryWorker()
 
-	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr)
+	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc)
 
 	log.Println("server running on http://localhost:" + cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

@@ -42,6 +42,7 @@ func Setup(
 	nsMgr *services.NamespaceManager,
 	svcMgr *services.ServiceManager,
 	inviteMgr *services.InviteManager,
+	telemetrySvc *services.TelemetryService,
 ) *gin.Engine {
 
 	authCtl := controller.NewAuthController(db, cfg)
@@ -52,9 +53,9 @@ func Setup(
 	reqCtl := controller.NewRequestController(db)
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 	inviteCtl := controller.NewInviteController(inviteMgr)
-
+	telemetryCtrl := controller.NewTelemetryController(telemetrySvc)
 	r := gin.Default()
-
+	
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: allowOriginFor(cfg),
 		AllowMethods:    []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
@@ -82,6 +83,7 @@ func Setup(
 		// รีเซ็ตรหัสผ่านผ่านอีเมล (public) — /forgot-password มี rate limit ต่อ IP กันสแปม/email-bombing
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)
 		api.POST("/reset-password", authCtl.ResetPassword)
+		api.GET("/telemetry", telemetryCtrl.GetTelemetry)
 
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret))
 		{

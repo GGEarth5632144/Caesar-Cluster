@@ -57,6 +57,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.UserAlert{},
 		&entity.SystemAlert{},
 		&entity.AuditLog{},
+		&entity.NodeTelemetry{},
 	); err != nil {
 		log.Fatalf("automigrate failed: %v", err)
 	}
