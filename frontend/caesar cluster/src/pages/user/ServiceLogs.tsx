@@ -10,9 +10,8 @@ import { serviceApi, type AppService } from "@/api/services";
 import { streamServiceLogs, type LogLine } from "@/api/logs";
 import { PATHS } from "@/config/routes";
 
-// เพดานบรรทัดที่เก็บไว้ในหน่วยความจำของเบราว์เซอร์ — โหมด live tail เปิดค้างไว้เป็นชั่วโมงได้
-// ถ้าไม่ตัดทิ้ง tab จะกินแรมขึ้นเรื่อยๆ ไม่มีที่สิ้นสุด (คล้าย log viewer ของ Cloud Run ที่ก็จำกัด
-// จำนวนบรรทัดที่ render พร้อมกันเหมือนกัน ไม่ใช่ scroll ย้อนได้ไม่จำกัด)
+// เพดานบรรทัดที่เก็บไว้ในหน่วยความจำ — live tail เปิดค้างเป็นชั่วโมงได้
+// ถ้าไม่ตัดทิ้ง แท็บจะกินแรมขึ้นเรื่อยๆ ไม่มีที่สิ้นสุด
 const MAX_BUFFERED_LINES = 5000;
 
 const TAIL_OPTIONS = [100, 200, 500, 1000] as const;
@@ -44,8 +43,8 @@ export default function ServiceLogs() {
   const abortRef = useRef<AbortController | null>(null);
   const genRef = useRef(0); // กันผลลัพธ์ของ stream เก่าที่ยัง cleanup ไม่ทันมาปนกับ stream ใหม่
 
-  // โหลดข้อมูล service (ชื่อ, image, สถานะ) มาโชว์บนหัวหน้า — เอาจาก list เพราะ backend
-  // ยังไม่มี endpoint ดึงทีละตัว และจำนวน service ต่อ space มีไม่มากจนต้องแยก endpoint
+  // โหลดชื่อ/image ของ service มาโชว์บนหัวหน้า — ดึงจาก list เพราะ backend ยังไม่มี
+  // endpoint รายตัว และจำนวน service ต่อ space มีไม่มากจนต้องแยก endpoint
   useEffect(() => {
     let cancelled = false;
     serviceApi
@@ -97,7 +96,13 @@ export default function ServiceLogs() {
   }, [id, tail, follow]);
 
   useEffect(() => {
-    if (!Number.isFinite(id)) return;
+    // :serviceId ที่ไม่ใช่ตัวเลข (พิมพ์ URL เอง / ลิงก์เสีย) ต้องบอกไปตรงๆ
+    // ไม่ใช่ค้างที่ "กำลังเชื่อมต่อ..." ตลอดไปเพราะไม่มีใครเปิด stream ให้
+    if (!Number.isFinite(id)) {
+      setConnState("error");
+      setErrorMsg("ลิงก์ไม่ถูกต้อง — ไม่พบหมายเลข service ใน URL");
+      return;
+    }
     startStream();
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps

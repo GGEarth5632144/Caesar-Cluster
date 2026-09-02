@@ -128,20 +128,20 @@ func (h *ServiceController) Delete(c *gin.Context) {
 	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
 }
 
-// Logs สตรีม log ของ service กลับไปให้หน้าเว็บแบบ real-time (หน้า log viewer แบบเดียวกับ Cloud Run)
+// Logs สตรีม log ของ service กลับไปให้หน้าเว็บแบบ real-time
 //
-// query param ที่รับ:
+// query param:
 //
-//	tail   จำนวนบรรทัดล่าสุดที่จะดึงตอนเปิดหน้า (ไม่ใส่ = ให้ provisioner เลือก default เอง)
-//	since  ดึงย้อนหลังกี่วินาที (ไม่ใส่ = ไม่จำกัด เท่าที่ node ยังเก็บ log ไว้)
+//	tail   ดึงกี่บรรทัดล่าสุดตอนเปิดหน้า (ไม่ใส่ = ให้ provisioner เลือกเอง)
+//	since  ดึงย้อนหลังกี่วินาที (ไม่ใส่ = เท่าที่ node ยังเก็บไว้)
 //	follow "true" = ไม่ปิด stream หลังส่ง log เดิมครบ รอส่งบรรทัดใหม่ต่อไปเรื่อยๆ
 //
-// data flow: อ่าน query param → ServiceManager.Logs เปิด stream จาก provisioner
-// → คัดลอกออกไปที่ HTTP response ทีละก้อนพร้อม Flush ทันที ไม่ buffer ทั้งก้อนไว้ก่อนค่อยส่ง
-// (ไม่งั้นเบราว์เซอร์จะไม่เห็นอะไรเลยจนกว่า stream จะปิด ทำให้ follow mode ดูเหมือนค้าง)
+// data flow: query param → ServiceManager.Logs เปิด stream จาก provisioner → คัดลอกออก
+// HTTP response ทีละก้อนพร้อม Flush ทันที ไม่ buffer ไว้ก่อน ไม่งั้นเบราว์เซอร์จะไม่เห็นอะไรเลย
+// จนกว่า stream จะปิด ทำให้ follow mode ดูเหมือนค้าง
 //
-// อายุของ stream ผูกกับ c.Request.Context() ตรงๆ — ผู้ใช้ปิดหน้าเว็บ/เปลี่ยนหน้าเมื่อไร
-// เบราว์เซอร์ตัดการเชื่อมต่อ HTTP แล้ว context นี้จะถูก cancel ให้เอง ไม่ต้องมี timeout เพิ่ม
+// อายุของ stream ผูกกับ c.Request.Context(): ผู้ใช้ปิดหน้าเว็บ = เบราว์เซอร์ตัด HTTP
+// แล้ว context ถูก cancel ให้เอง ไม่ต้องมี timeout เพิ่ม
 func (h *ServiceController) Logs(c *gin.Context) {
 	nsID, ok := currentNamespaceID(c, h.db)
 	if !ok {

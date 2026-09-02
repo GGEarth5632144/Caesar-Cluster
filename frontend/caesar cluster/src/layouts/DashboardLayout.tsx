@@ -23,10 +23,9 @@ export default function DashboardLayout() {
   const isAdmin = user?.role === "admin";
   const hasVm = Boolean(user?.namespace_id);
 
-  // เริ่ม/หยุด poll จำนวนแจ้งเตือนตามอายุของ layout — วางไว้ที่นี่เพราะ Sidebar ต้องรู้ตัวเลขนี้
-  // จากทุกหน้า ไม่ใช่เฉพาะตอนเปิดหน้า Alerts อยู่ (ไม่งั้นวงกลมแดงจะขึ้นก็ต่อเมื่อเข้าไปดูแล้ว
-  // ซึ่งไม่มีประโยชน์อะไรเลย) เฉพาะ user ที่มี namespace เท่านั้น เพราะเมนู Alerts เองก็ซ่อน
-  // อยู่จนกว่าจะมี namespace และ admin ใช้หน้าแจ้งเตือนคนละตัวกัน
+  // poll จำนวนแจ้งเตือนตามอายุของ layout — วางที่นี่เพราะ Sidebar ต้องรู้ตัวเลขนี้จากทุกหน้า
+  // ไม่ใช่เฉพาะตอนเปิดหน้า Alerts อยู่ (ไม่งั้นวงกลมแดงขึ้นก็ต่อเมื่อเข้าไปดูแล้ว ซึ่งไร้ประโยชน์)
+  // เฉพาะ user ที่มี namespace: เมนู Alerts ซ่อนอยู่จนกว่าจะมี namespace และ admin ใช้หน้าคนละตัว
   const shouldPollAlerts = !isAdmin && hasVm;
   useEffect(() => {
     if (!shouldPollAlerts) {
@@ -40,8 +39,8 @@ export default function DashboardLayout() {
     () =>
       (isAdmin ? adminNavItems : userNavItems)
         .filter((item) => !item.requiresVm || hasVm)
-        // เติมตัวเลขวงกลมแดงจากค่าจริง — undefined เมื่อเป็น 0 เพื่อให้ Sidebar ไม่ render
-        // อะไรเลย (0 เป็น falsy อยู่แล้ว แต่เขียนให้ชัดว่าตั้งใจ ไม่ใช่พึ่งพฤติกรรมของ JS)
+        // เติมตัวเลขวงกลมแดงจากค่าจริง — undefined เมื่อเป็น 0 ให้ Sidebar ไม่ render อะไรเลย
+        // (เขียนเงื่อนไขให้ชัดว่าตั้งใจ ไม่พึ่งความ falsy ของ 0)
         .map((item) =>
           item.badgeSource === "alerts"
             ? { ...item, badge: unreadAlerts > 0 ? unreadAlerts : undefined }

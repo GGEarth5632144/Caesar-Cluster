@@ -49,6 +49,11 @@ func Setup(
 	telemetrySvc *services.TelemetryService,
 	alertMgr *services.AlertManager,
 ) *gin.Engine {
+	// โหมด release ตอน production: ปิด route dump ตอน start และ debug log ราย request
+	// ที่ไม่ควรอยู่บนเครื่องจริง (ตรงกับที่ backend/.env.example บอกไว้เรื่อง APP_ENV)
+	if cfg.IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	}
 
 	authCtl := controller.NewAuthController(db, cfg)
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
@@ -62,7 +67,7 @@ func Setup(
 	alertCtl := controller.NewAlertController(alertMgr)
 
 	r := gin.Default()
-	
+
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: allowOriginFor(cfg),
 		AllowMethods:    []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
@@ -88,9 +93,9 @@ func Setup(
 		api.POST("/login", authCtl.Login)
 
 		// ยืนยันตัวตนด้วย OTP ทางอีเมล (public — ยังไม่มี JWT ตอนเรียกสองเส้นนี้)
-		// ทั้งคู่ไม่ได้ใส่ rate limit ต่อ IP โดยตั้งใจ เพราะนักศึกษาทั้งแล็บออกเน็ตผ่าน IP เดียวกัน
-		// จะกลายเป็นบล็อกกันเอง — ตัวคุมจริงอยู่ที่ระดับ "ใบ" แทน: กรอกผิดได้จำกัดครั้ง,
-		// ขอรหัสใหม่มี cooldown + เพดาน, และออกใบใหม่ได้จำกัดครั้งต่อ user (ดู auth_otp.go)
+		// ไม่ใส่ rate limit ต่อ IP โดยตั้งใจ เพราะนักศึกษาทั้งแล็บออกเน็ตผ่าน IP เดียวกัน
+		// จะกลายเป็นบล็อกกันเอง — คุมที่ระดับ "ใบ" แทน (กรอกผิดจำกัดครั้ง, resend มี cooldown
+		// + เพดาน, ออกใบใหม่จำกัดครั้งต่อ user) ดู auth_otp.go
 		api.POST("/verify-otp", authCtl.VerifyOTP)
 		api.POST("/resend-otp", authCtl.ResendOTP)
 
@@ -169,14 +174,15 @@ func Setup(
 	return r
 }
 
-// allowOriginFor สร้างฟังก์ชันเช็ค CORS origin ให้ cors.Config:
-//   - อนุญาต origin ที่ตั้งค่าไว้ใน FRONTEND_ORIGIN เสมอ (ใช้ตอน deploy จริง)
-//   - ตอน dev (PROVISIONER=mock) อนุญาต localhost / 127.0.0.1 / ::1 ทุกพอร์ตเพิ่มด้วย
-//     เพราะ Vite อาจสลับพอร์ตเอง (5173→5174 ถ้าพอร์ตถูกใช้อยู่) หรือเปิดผ่าน 127.0.0.1
-//     ซึ่ง browser ถือเป็นคนละ origin กับ localhost ทำให้ preflight เด้ง 403 ทั้งที่เป็นเครื่องเดียวกัน
-//   - ตอน prod (PROVISIONER=kubernetes) จะล็อกไว้ที่ FRONTEND_ORIGIN อย่างเดียว ไม่เปิดกว้าง
+// allowOriginFor สร้างฟังก์ชันเช็ค CORS origin ให้ cors.Config
+//
+// FRONTEND_ORIGIN ผ่านเสมอ ส่วน localhost/127.0.0.1/::1 ทุกพอร์ตผ่านเพิ่มเฉพาะตอน dev
+// (Vite สลับพอร์ตเองได้ 5173→5174 และ 127.0.0.1 ถือเป็นคนละ origin กับ localhost ในสายตา browser)
+//
+// ตัดสินจาก APP_ENV ไม่ใช่ PROVISIONER: การรัน mock provisioner บนเครื่องจริงเพราะคลัสเตอร์
+// ยังไม่พร้อม ไม่ใช่เหตุผลที่จะเปิด CORS ให้ localhost ตามไปด้วย
 func allowOriginFor(cfg *config.Config) func(string) bool {
-	devMode := cfg.Provisioner == config.ProvisionerMock
+	devMode := !cfg.IsProduction()
 	return func(origin string) bool {
 		if origin == cfg.FrontendOrigin {
 			return true

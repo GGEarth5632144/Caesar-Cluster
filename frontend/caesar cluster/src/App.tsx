@@ -62,8 +62,8 @@ return (
           <Route path={PATHS.login} element={<Login />} />
           <Route path={PATHS.register} element={<Register />} />
           <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
-          {/* กรอก OTP — public เพราะยังไม่มี token จนกว่าจะกรอกรหัสผ่าน
-              หน้าเองกันคนที่เดินมาผิดทางด้วยการเช็คใบยืนยันที่ค้างอยู่ใน sessionStorage */}
+          {/* กรอก OTP — public เพราะยังไม่มี token จนกว่าจะยืนยันเสร็จ
+              หน้าเองกันคนเดินมาผิดทางด้วยการเช็คใบยืนยันที่ค้างใน sessionStorage */}
           <Route path={PATHS.verifyOtp} element={<VerifyOtp />} />
           <Route path={PATHS.resetPassword} element={<ResetPassword />} />
           <Route path="/reset-password" element={<ResetPasswordRedirect />} />

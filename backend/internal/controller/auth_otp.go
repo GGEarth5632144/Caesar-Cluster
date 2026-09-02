@@ -19,43 +19,37 @@ import (
 	"backend/internal/utils"
 )
 
-// ค่าคุมพฤติกรรมของ OTP — ตั้งเป็น const ในโค้ดไม่ใช่ env โดยตั้งใจ
-// ค่าพวกนี้เป็น "การตัดสินใจด้านความปลอดภัย" ไม่ใช่ค่าที่ต่างกันไปตามเครื่องที่ deploy
-// ถ้าเปิดให้ตั้งผ่าน .env ได้ ก็เปิดช่องให้ใครสักคนตั้ง trustedDeviceTTL เป็น 3650 วันตอนดึกๆ
-// แล้วระบบ OTP ทั้งระบบก็ไม่เหลือความหมาย — อยากเปลี่ยนให้แก้ตรงนี้แล้ว review กันตามปกติ
+// ค่าคุมพฤติกรรมของ OTP — เป็น const ในโค้ด ไม่ใช่ env โดยตั้งใจ
+// ทั้งหมดเป็นการตัดสินใจด้านความปลอดภัย ไม่ใช่ค่าที่ควรต่างกันไปตามเครื่องที่ deploy
+// (เปิดให้ตั้งผ่าน .env = เปิดช่องให้ตั้ง trustedDeviceTTL เป็น 10 ปีจนระบบ OTP ไม่เหลือความหมาย)
 const (
-	// otpTTL = อายุของรหัสหนึ่งชุด สั้นพอที่รหัสที่หลุดไปจะใช้ไม่ทัน แต่ยาวพอให้คนเปิดอีเมลในมือถือทัน
+	// อายุของรหัสหนึ่งชุด — สั้นพอที่รหัสหลุดแล้วใช้ไม่ทัน ยาวพอให้เปิดอีเมลในมือถือทัน
 	otpTTL = 10 * time.Minute
 
-	// otpMaxAttempts = กรอกผิดได้กี่ครั้งต่อหนึ่งใบก่อนใบนั้นตาย
-	// รหัส 6 หลักมีล้านค่า ถ้าปล่อยให้เดาไม่จำกัดก็เดาถูกได้ในไม่กี่นาที
+	// กรอกผิดได้กี่ครั้งต่อใบก่อนใบตาย — รหัส 6 หลักมีล้านค่า ปล่อยให้เดาไม่จำกัดก็เดาถูกในไม่กี่นาที
 	// 5 ครั้งเผื่อคนพิมพ์ผิด/อ่านเลขสลับหลัก แต่โอกาสเดาถูกยังเหลือ 5 ในล้าน
 	otpMaxAttempts = 5
 
-	// otpResendCooldown = ต้องรอกี่วินาทีถึงกด "ส่งรหัสใหม่" ได้อีกครั้ง
+	// cooldown + เพดานของปุ่ม "ส่งรหัสใหม่" ต่อหนึ่งใบ (ปกติคนกดครั้งเดียวตอนอีเมลมาช้า)
 	otpResendCooldown = 60 * time.Second
+	otpMaxResends     = 3
 
-	// otpMaxResends = ขอรหัสใหม่ได้กี่ครั้งต่อหนึ่งใบ — ปกติคนต้องการแค่ครั้งเดียวตอนอีเมลมาช้า
-	otpMaxResends = 3
-
-	// otpMaxChallengesPerWindow / otpChallengeWindow = ออกใบใหม่ให้ user คนหนึ่งได้กี่ใบต่อช่วงเวลา
-	// กันคนที่รู้รหัสผ่านของเหยื่ออยู่แล้วเอามาล็อกอินซ้ำๆ เพื่อถล่มอีเมลเหยื่อ
+	// ออกใบใหม่ให้ user คนหนึ่งได้กี่ใบต่อช่วงเวลา — กันคนที่รู้รหัสผ่านเหยื่ออยู่แล้ว
+	// ล็อกอินซ้ำๆ เพื่อถล่มอีเมลเหยื่อ
 	otpMaxChallengesPerWindow = 5
 	otpChallengeWindow        = 15 * time.Minute
 
-	// trustedDeviceTTL = ผ่าน OTP หนึ่งครั้งแล้วเครื่องนั้นข้าม OTP ได้นานแค่ไหน
-	// เลือก 30 วันให้ตรงกับ "Remember For 30 Days" ที่หน้า login มีอยู่แล้ว ผู้ใช้จะได้ไม่ต้องจำ
-	// สองช่วงเวลาที่ต่างกัน — ในทางปฏิบัติคือ "เดือนละครั้งต่อหนึ่งเครื่อง"
+	// ผ่าน OTP หนึ่งครั้งแล้วเครื่องนั้นข้าม OTP ได้นานแค่ไหน
+	// 30 วันให้ตรงกับ "Remember For 30 Days" ที่หน้า login มีอยู่แล้ว จะได้ไม่มีสองช่วงเวลาให้จำ
 	trustedDeviceTTL = 30 * 24 * time.Hour
 
-	// otpChallengeMaxLifetime = ใบหนึ่งใบมีชีวิตรวมได้นานแค่ไหน นับจากตอนล็อกอิน
-	// ยาวกว่า otpTTL เพราะ "รหัสหมดอายุ" กับ "ใบตาย" คนละเรื่องกัน — คนที่เปิดอีเมลช้าไป 12 นาที
-	// ควรกดขอรหัสใหม่ได้เลย ไม่ต้องกลับไปกรอกรหัสผ่านใหม่ทั้งหมด แต่ก็ต้องมีเพดานไม่งั้น
-	// ใบเดียวจะถูกยืดอายุด้วยการกดขอรหัสใหม่ไปได้เรื่อยๆ ไม่รู้จบ
+	// อายุรวมของใบหนึ่งใบ นับจากตอนล็อกอิน — ยาวกว่า otpTTL เพราะ "รหัสหมดอายุ" กับ "ใบตาย"
+	// คนละเรื่อง (เปิดอีเมลช้าไปควรกดขอรหัสใหม่ได้ ไม่ต้องกรอกรหัสผ่านใหม่) แต่ต้องมีเพดาน
+	// ไม่งั้นใบเดียวถูกยืดอายุด้วยการขอรหัสใหม่ไปเรื่อยๆ — บังคับที่ ResendOTP
 	otpChallengeMaxLifetime = 30 * time.Minute
 
-	// otpChallengeRetention = เก็บใบที่ใช้แล้ว/หมดอายุไว้นานแค่ไหนก่อนกวาดทิ้ง
-	// กวาดตอนมีคนล็อกอินแทนที่จะตั้ง background job — ตารางนี้โตช้ามาก ไม่คุ้มกับ goroutine อีกตัว
+	// เก็บใบที่ใช้แล้ว/หมดอายุไว้นานแค่ไหนก่อนกวาดทิ้ง
+	// กวาดตอนมีคนล็อกอินแทน background job — ตารางนี้โตช้ามาก ไม่คุ้มกับ goroutine อีกตัว
 	otpChallengeRetention = 24 * time.Hour
 )
 
@@ -140,9 +134,9 @@ func (h *AuthController) VerifyOTP(c *gin.Context) {
 
 // ResendOTP ออกรหัสใหม่ให้ใบเดิมแล้วส่งอีเมลอีกรอบ (กรณีอีเมลไม่มา/ลบทิ้งไปแล้ว)
 //
-// ใช้ใบเดิมไม่ออกใบใหม่ เพราะ challenge token ที่ client ถืออยู่จะได้ไม่ต้องเปลี่ยน
-// และ attempts ที่กรอกผิดไปแล้ว "ไม่รีเซ็ต" โดยตั้งใจ — ไม่งั้นการกดส่งรหัสใหม่จะกลายเป็น
-// ช่องให้ไล่เดารหัสได้ไม่จำกัด (ผิดครบ 5 ครั้ง → กดส่งใหม่ → เดาต่อได้อีก 5 ครั้ง วนไปเรื่อยๆ)
+// ใช้ใบเดิมไม่ออกใบใหม่ challenge token ที่ client ถืออยู่จะได้ไม่ต้องเปลี่ยน
+// attempts ที่กรอกผิดไปแล้วไม่รีเซ็ตโดยตั้งใจ ไม่งั้นการกดส่งรหัสใหม่จะเป็นช่องให้เดารหัสไม่จำกัด
+// (ผิดครบ 5 ครั้ง → กดส่งใหม่ → เดาต่อได้อีก 5 ครั้ง วนไปเรื่อยๆ)
 func (h *AuthController) ResendOTP(c *gin.Context) {
 	var req dto.ResendOTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -172,6 +166,20 @@ func (h *AuthController) ResendOTP(c *gin.Context) {
 		return
 	}
 
+	// รหัสใหม่ต้องไม่ยืดใบให้เกิน otpChallengeMaxLifetime — ไม่งั้นการกดขอรหัสใหม่ตอนใบใกล้ตาย
+	// จะต่ออายุใบออกไปอีก otpTTL เต็มๆ ทุกครั้ง ทำให้อายุรวมจริงยาวกว่าเพดานที่ประกาศไว้
+	now := time.Now()
+	expiresAt := now.Add(otpTTL)
+	if deadline := challenge.CreatedAt.Add(otpChallengeMaxLifetime); expiresAt.After(deadline) {
+		expiresAt = deadline
+	}
+	// เหลือเวลาไม่พอให้เปิดอีเมลมากรอกทัน — ให้เริ่มล็อกอินใหม่ ดีกว่าส่งรหัสที่ตายก่อนถึงมือ
+	if time.Until(expiresAt) < otpResendCooldown {
+		utils.Error(c, http.StatusBadRequest, "INVALID_CHALLENGE",
+			"คำขอยืนยันตัวตนนี้หมดอายุแล้ว กรุณาเข้าสู่ระบบใหม่อีกครั้ง")
+		return
+	}
+
 	var user entity.User
 	if err := db.First(&user, challenge.UserID).Error; err != nil {
 		log.Printf("resend-otp: หา user %d ไม่เจอ: %v", challenge.UserID, err)
@@ -186,8 +194,6 @@ func (h *AuthController) ResendOTP(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
-	expiresAt := now.Add(otpTTL)
 	if err := db.Model(challenge).Updates(map[string]any{
 		"code_hash":    codeHash,
 		"expires_at":   expiresAt,
@@ -199,8 +205,9 @@ func (h *AuthController) ResendOTP(c *gin.Context) {
 		return
 	}
 
+	// บอกเวลาที่เหลือจริง ไม่ใช่ otpTTL เต็ม — รหัสรอบท้ายๆ อาจถูกหนีบด้วยเพดานอายุใบ
 	if err := h.mailer.SendOTPEmail(
-		c.Request.Context(), user.Gmail, user.RealName, code, int(otpTTL.Minutes()),
+		c.Request.Context(), user.Gmail, user.RealName, code, int(time.Until(expiresAt).Minutes()),
 	); err != nil {
 		log.Printf("resend-otp: ส่งอีเมลให้ user %d ไม่สำเร็จ: %v", user.ID, err)
 		utils.Error(c, http.StatusBadGateway, "MAIL_FAILED",
@@ -273,15 +280,14 @@ func (h *AuthController) startOTPChallenge(c *gin.Context, db *gorm.DB, user *en
 		return
 	}
 
-	// ต่างจาก /forgot-password ที่ต้องปิดบังว่าส่งสำเร็จหรือไม่ (กันเดาว่ามีบัญชีนี้ไหม) —
-	// ตรงนี้ผู้ใช้กรอกรหัสผ่านถูกมาแล้ว ไม่มีอะไรให้ปิดบังอีก บอกไปตรงๆ ว่าอีเมลส่งไม่ออก
-	// ดีกว่าปล่อยให้นั่งรอรหัสที่ไม่มีวันมา
+	// ต่างจาก /forgot-password ที่ต้องปิดบังผลการส่ง (กันเดาว่ามีบัญชีนี้ไหม) — ตรงนี้ผู้ใช้กรอก
+	// รหัสผ่านถูกมาแล้ว ไม่มีอะไรให้ปิดบัง บอกตรงๆ ดีกว่าปล่อยให้นั่งรอรหัสที่ไม่มีวันมา
 	if err := h.mailer.SendOTPEmail(
 		c.Request.Context(), user.Gmail, user.RealName, code, int(otpTTL.Minutes()),
 	); err != nil {
 		log.Printf("login: ส่งอีเมล OTP ให้ user %d ไม่สำเร็จ: %v", user.ID, err)
-		// ลบใบที่เพิ่งสร้างทิ้ง เพราะไม่มีรหัสออกไปถึงมือใครเลย ถ้าปล่อยไว้มันจะไปกิน
-		// โควตา otpMaxChallengesPerWindow จนผู้ใช้โดนล็อก 15 นาทีเพราะ SMTP ล่ม ไม่ใช่เพราะตัวเอง
+		// ลบใบที่เพิ่งสร้างทิ้ง เพราะไม่มีรหัสออกไปถึงมือใคร ถ้าปล่อยไว้จะไปกินโควตา
+		// otpMaxChallengesPerWindow จนผู้ใช้โดนล็อก 15 นาทีเพราะ SMTP ล่ม ไม่ใช่เพราะตัวเอง
 		if delErr := db.Delete(&challenge).Error; delErr != nil {
 			log.Printf("login: ลบ challenge %d ที่ส่งเมลไม่ออกไม่สำเร็จ: %v", challenge.ID, delErr)
 		}
@@ -299,10 +305,10 @@ func (h *AuthController) startOTPChallenge(c *gin.Context, db *gorm.DB, user *en
 }
 
 // deviceTrusted บอกว่า device token ที่ client แนบมาเป็นเครื่องที่เคยผ่าน OTP ของ user คนนี้ไหม
-// ถ้าใช่จะอัปเดต last_used_at ให้ด้วย แล้วคืน true ให้ Login ข้ามขั้น OTP ไปเลย
+// ถ้าใช่จะอัปเดต last_used_at ให้ด้วย แล้วคืน true ให้ Login ข้ามขั้น OTP
 //
-// ผูกกับ user_id ด้วยเสมอ ไม่ใช่ดูแค่ว่า token มีอยู่จริง — ไม่งั้นใบผ่านของคนหนึ่ง
-// จะถูกเอาไปใช้ข้าม OTP ของอีกคนได้ ขอแค่รู้รหัสผ่านของเขา
+// เงื่อนไขต้องมี user_id เสมอ ไม่ใช่ดูแค่ว่า token มีอยู่จริง — ไม่งั้นใบผ่านของคนหนึ่ง
+// ถูกเอาไปข้าม OTP ของอีกคนได้ ขอแค่รู้รหัสผ่านของเขา
 func deviceTrusted(db *gorm.DB, userID int, plainToken string) bool {
 	if plainToken == "" {
 		return false
@@ -357,9 +363,9 @@ func findLiveChallenge(db *gorm.DB, plainToken string) (*entity.OTPChallenge, er
 	return &challenge, nil
 }
 
-// findResendableChallenge หาใบที่ยัง "ขอรหัสใหม่ได้" — เงื่อนไขต่างจาก findLiveChallenge ตรงที่
-// ยอมให้รหัสหมดอายุไปแล้ว (นั่นคือเหตุผลที่ผู้ใช้กดขอใหม่) แต่ใบต้องยังไม่ถูกใช้ ยังกรอกผิดไม่ครบ
-// เพดาน และยังไม่เกินอายุรวมของใบ
+// findResendableChallenge หาใบที่ยัง "ขอรหัสใหม่ได้"
+// ต่างจาก findLiveChallenge ตรงที่ยอมให้รหัสหมดอายุไปแล้ว (นั่นคือเหตุผลที่ผู้ใช้กดขอใหม่)
+// แต่ใบต้องยังไม่ถูกใช้ ยังกรอกผิดไม่ครบเพดาน และยังไม่เกิน otpChallengeMaxLifetime
 func findResendableChallenge(db *gorm.DB, plainToken string) (*entity.OTPChallenge, error) {
 	var challenge entity.OTPChallenge
 	err := db.Where("token_hash = ? AND consumed_at IS NULL AND attempts < ? AND created_at > ?",
@@ -371,11 +377,10 @@ func findResendableChallenge(db *gorm.DB, plainToken string) (*entity.OTPChallen
 	return &challenge, nil
 }
 
-// newOTPCode สุ่มรหัส 6 หลัก คืนทั้งตัวจริง (ไว้ส่งอีเมล) และ bcrypt hash (ไว้เก็บลง DB)
+// newOTPCode สุ่มรหัส 6 หลัก คืนทั้งตัวจริง (ส่งอีเมล) และ bcrypt hash (เก็บลง DB)
 //
-// ใช้ crypto/rand ไม่ใช่ math/rand — รหัสที่เดาลำดับได้เท่ากับไม่มีรหัส
-// เติมศูนย์หน้าให้ครบ 6 หลักเสมอ ("007431" ไม่ใช่ "7431") ไม่งั้นความยาวจะไม่คงที่
-// และช่อง OTP ฝั่งหน้าเว็บที่บังคับ 6 ตัวจะกรอกไม่ได้
+// crypto/rand ไม่ใช่ math/rand — รหัสที่เดาลำดับได้เท่ากับไม่มีรหัส
+// เติมศูนย์หน้าให้ครบ 6 หลักเสมอ ("007431" ไม่ใช่ "7431") ไม่งั้นช่องกรอกที่บังคับ 6 ตัวใช้ไม่ได้
 func newOTPCode() (code, hash string, err error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -399,10 +404,10 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-// maskEmail ปิดบังอีเมลให้เหลือแค่พอให้เจ้าตัวรู้ว่าไปดูที่กล่องไหน เช่น b6618452@g.sut.ac.th → b6****@g.sut.ac.th
+// maskEmail ปิดบังอีเมลให้เหลือแค่พอให้เจ้าตัวรู้ว่าไปดูกล่องไหน
+// เช่น b6618452@g.sut.ac.th → b6****@g.sut.ac.th
 //
-// จำนวนดอกจันคงที่ ไม่ผูกกับความยาวจริงของชื่อ — ไม่งั้นหน้าเว็บก็บอกความยาวอีเมลให้คนที่
-// ขโมยรหัสผ่านมาไปเดาต่อได้ฟรีๆ
+// จำนวนดอกจันคงที่ ไม่ผูกกับความยาวจริง ไม่งั้นเท่ากับบอกความยาวอีเมลให้คนที่ขโมยรหัสผ่านมา
 func maskEmail(email string) string {
 	at := strings.LastIndex(email, "@")
 	if at <= 0 {

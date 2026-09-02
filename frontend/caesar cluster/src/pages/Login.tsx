@@ -49,8 +49,8 @@ export default function Login() {
         remember: values.remember,
       });
 
-      // รหัสผ่านถูกแล้ว แต่เป็นผู้ใช้ทั่วไปที่มาจากเครื่องที่ยังไม่เคยยืนยัน — backend ส่งรหัส
-      // ไปทางอีเมลแล้ว ยังไม่ให้ token มา ต้องไปกรอกรหัสที่หน้า verify ก่อน
+      // รหัสผ่านถูก แต่มาจากเครื่องที่ยังไม่เคยยืนยัน — backend ส่งรหัสไปทางอีเมลแล้ว
+      // ยังไม่ให้ token มา ต้องไปกรอกรหัสที่หน้า verify ก่อน
       if (result.otp_required) {
         writePendingOtp({
           challengeToken: result.challenge_token,

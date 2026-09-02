@@ -13,6 +13,11 @@ import { PATHS } from "@/config/routes";
 
 type Filter = "all" | "unread" | "critical";
 
+// ดึงมาให้ครบเท่าที่ backend เก็บไว้ต่อคน (maxAlertsPerUser ใน services/alert_manager.go)
+// ถ้าดึงน้อยกว่านั้น ตัวเลข "N total / N unread" บนหัวหน้าจะนับได้แค่หน้าที่โหลดมา
+// แล้วรายงานตัวเลขที่ต่ำกว่าความจริงโดยไม่มีอะไรบอกผู้ใช้ว่ายังมีที่เหลืออยู่
+const ALERT_PAGE_LIMIT = 200;
+
 // หน้าตาของแต่ละระดับความรุนแรง — ใช้โทนเดียวกับการ์ด service ในหน้า My Services
 const SEVERITY_STYLE: Record<AlertSeverity, {
   label: string; icon: typeof XCircle; chip: string; iconWrap: string; bar: string;
@@ -40,8 +45,8 @@ const SEVERITY_STYLE: Record<AlertSeverity, {
   },
 };
 
-// แสดงเวลาแบบ "เมื่อสักครู่ / 5 นาทีที่แล้ว" เพราะสิ่งที่ผู้ใช้อยากรู้จากหน้านี้คือ
-// "มันเพิ่งเกิดหรือเกิดนานแล้ว" ไม่ใช่เวลาเป๊ะๆ (เวลาเต็มอยู่ใน title ให้ hover ดูได้)
+// แสดงเวลาแบบ "เมื่อสักครู่ / 5 นาทีที่แล้ว" เพราะจากหน้านี้ผู้ใช้อยากรู้ว่าเพิ่งเกิดหรือนานแล้ว
+// ไม่ใช่เวลาเป๊ะๆ (เวลาเต็มอยู่ใน title ให้ hover ดู)
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
@@ -68,10 +73,10 @@ export default function Alertuser() {
     if (isRefresh) setRefreshing(true);
     setError(null);
     try {
-      const list = await alertApi.list({ limit: 100 });
+      const list = await alertApi.list({ limit: ALERT_PAGE_LIMIT });
       setAlerts(list);
       // นับจากข้อมูลชุดที่เพิ่งได้มา แทนที่จะยิงถาม unread-count อีกรอบ — ประหยัดหนึ่ง request
-      // และรับประกันว่าตัวเลขบน Sidebar ตรงกับรายการที่ผู้ใช้เห็นอยู่ตรงหน้าเสมอ
+      // และตัวเลขบน Sidebar ตรงกับรายการที่ผู้ใช้เห็นอยู่ตรงหน้าเสมอ (ดู ALERT_PAGE_LIMIT)
       setUnread(list.filter((a) => !a.is_read).length);
     } catch (err) {
       setError(getApiErrorMessage(err, "โหลดแจ้งเตือนไม่สำเร็จ"));

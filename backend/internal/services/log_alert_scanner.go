@@ -19,17 +19,16 @@ import (
 
 // ตัวจับระดับความรุนแรงจากบรรทัด log — เรียงจาก "มั่นใจมาก" ไป "มั่นใจน้อย"
 //
-// ทำไมต้องแบ่งชั้นแทนที่จะ grep คำว่า error ตรงๆ: log ของ container ไม่มีมาตรฐานกลาง
-// ถ้าจับหลวมเกินไป บรรทัด access log อย่าง `GET /error-page 200` จะกลายเป็นแจ้งเตือน
-// ถ้าจับแน่นเกินไป (ต้องมี level= เท่านั้น) แอปที่พิมพ์ `panic: ...` เฉยๆ จะหลุดหมด
-// เลยไล่จากรูปแบบที่ตีความผิดยากที่สุดก่อน แล้วค่อยตกมาที่คำลอยๆ เป็นด่านสุดท้าย
+// ที่ต้องแบ่งชั้นแทนการ grep คำว่า error ตรงๆ เพราะ log ของ container ไม่มีมาตรฐานกลาง:
+// จับหลวมไป access log อย่าง `GET /error-page 200` กลายเป็นแจ้งเตือน / จับแน่นไป (ต้องมี level=)
+// แอปที่พิมพ์ `panic: ...` เฉยๆ หลุดหมด จึงไล่จากรูปที่ตีความผิดยากที่สุดไปหาคำลอยๆ เป็นด่านท้าย
 var (
 	// ชั้น 1: log แบบมีโครงสร้าง — level=error, "severity":"critical", lvl=fatal
 	structuredErrorRe = regexp.MustCompile(`(?i)(^|[\s\[{("',])(level|lvl|severity)["']?\s*[=:]\s*["']?(error|fatal|critical|crit|panic|emerg)\b`)
 	structuredWarnRe  = regexp.MustCompile(`(?i)(^|[\s\[{("',])(level|lvl|severity)["']?\s*[=:]\s*["']?(warn|warning)\b`)
 
-	// ชั้น 2: ป้ายระดับที่คั่นด้วยวงเล็บ/โคลอน/ขีด — [error] ERROR: | E | (พบมากที่สุดในของจริง
-	// ทั้ง nginx error log, postgres, java, python logging module ใช้รูปนี้กันหมด)
+	// ชั้น 2: ป้ายระดับคั่นด้วยวงเล็บ/โคลอน/ขีด — [error] ERROR: | E |
+	// พบมากที่สุดในของจริง (nginx, postgres, java, python logging ใช้รูปนี้กันหมด)
 	labeledErrorRe = regexp.MustCompile(`(?i)(^|[\s\[|(])(error|fatal|panic|critical|crit|emerg|severe)\s*[\]:|)\-]`)
 	labeledWarnRe  = regexp.MustCompile(`(?i)(^|[\s\[|(])(warn|warning)\s*[\]:|)\-]`)
 
@@ -40,27 +39,25 @@ var (
 		`crashloopbackoff|failed to |failed with |cannot connect|could not connect|` +
 		`address already in use|too many open files|deadlock detected)`)
 
-	// ชั้น 4 (อ่อนที่สุด): คำว่า error/exception ลอยๆ ในบรรทัด
-	// ตั้งใจไม่ใส่ failed/failure ไว้ชั้นนี้ เพราะแอปจำนวนมากพิมพ์ "0 failed" ในบรรทัดสรุปปกติ
+	// ชั้น 4 (อ่อนที่สุด): คำว่า error/exception ลอยๆ — ไม่รวม failed/failure เพราะแอปจำนวนมาก
+	// พิมพ์ "0 failed" ในบรรทัดสรุปปกติ
 	//
-	// ไม่ใช้ \b เฉยๆ เพราะ \b ถือว่า - / . _ เป็นขอบคำ ทำให้ access log ปกติอย่าง
-	// `GET /static/error-page.html 200` กลายเป็นแจ้งเตือน ทั้งที่ "error" ในนั้นเป็นแค่ชื่อไฟล์
-	// จึงบังคับว่าตัวอักษรที่ขนาบต้องไม่ใช่อักขระที่ใช้ประกอบ path/ตัวแปร
+	// ไม่ใช้ \b เพราะ \b ถือว่า - / . _ เป็นขอบคำ ทำให้ `GET /static/error-page.html 200`
+	// กลายเป็นแจ้งเตือนทั้งที่ "error" เป็นแค่ชื่อไฟล์ จึงบังคับว่าตัวขนาบต้องไม่ใช่อักขระใน path
 	looseErrorRe = regexp.MustCompile(`(?i)(^|[^\w/.\-])(errors?|exceptions?)([^\w/.\-]|$)`)
 
-	// HTTP 5xx ใน access log — ต้องอยู่ในรูปที่เป็น status code จริงๆ ไม่ใช่เลขอะไรก็ได้ที่ขึ้นต้นด้วย 5
-	// (ไม่งั้น "GET / 200 512ms" จะโดนจับเพราะมี 512 อยู่)
+	// HTTP 5xx ใน access log — ต้องอยู่ในรูปที่เป็น status code จริง ไม่ใช่เลขอะไรก็ได้ที่ขึ้นต้นด้วย 5
+	// (ไม่งั้น "GET / 200 512ms" โดนจับเพราะมี 512)
 	httpServerErrorRe = regexp.MustCompile(`"\s*[A-Z]{3,7} [^"]*"\s+5\d{2}\b|(?i)\b(status|status_code|code)["']?\s*[=:]\s*["']?5\d{2}\b`)
 
-	// กันบวกปลอมที่เจอบ่อยที่สุด: บรรทัดสรุปที่บอกว่า "ไม่มี error"
-	// เช่น "0 errors", "errors=0", "error_count: 0", "no errors found"
+	// กันบวกปลอมที่เจอบ่อยที่สุด: บรรทัดสรุปที่บอกว่าไม่มี error
+	// ("0 errors", "errors=0", "error_count: 0", "no errors found")
 	noErrorRe = regexp.MustCompile(`(?i)\b(0|no|zero|none)\s+(errors?|exceptions?|failures?)\b|` +
 		`(?i)\b(errors?|error_count|failures?)["']?\s*[=:]\s*["']?(0|false|null|none)\b`)
 
-	// ตัวเลข/hex/uuid ที่ต่างกันทุกบรรทัดแต่เป็น "error เดียวกัน" — แทนที่ก่อนคำนวณ fingerprint
-	//
-	// ส่วนของตัวเลขตั้งใจไม่ครอบด้วย \b เพราะเลขมักติดกับหน่วยโดยไม่มีขอบคำคั่น (1230ms, 8080/tcp)
-	// ถ้าบังคับ \b ท้าย เลขพวกนี้จะรอดไปทั้งก้อน แล้ว retry แต่ละครั้งจะกลายเป็นคนละ fingerprint
+	// ตัวเลข/hex/uuid ที่ต่างกันทุกบรรทัดแต่เป็น error เดียวกัน — แทนที่ก่อนคำนวณ fingerprint
+	// ส่วนตัวเลขไม่ครอบด้วย \b เพราะเลขมักติดหน่วยโดยไม่มีขอบคำคั่น (1230ms, 8080/tcp)
+	// ถ้าบังคับ \b ท้าย เลขพวกนี้จะรอดไปทั้งก้อน แล้ว retry แต่ละครั้งกลายเป็นคนละ fingerprint
 	fingerprintNoiseRe = regexp.MustCompile(`(?i)\b(0x)?[0-9a-f]{8,}\b|\d+`)
 )
 
@@ -93,15 +90,14 @@ func classifyLogLine(text string) (string, bool) {
 	return "", false
 }
 
-// alertFingerprint ย่อบรรทัด log ให้เหลือ "แก่นของเรื่อง" แล้วแฮชเป็นตัวชี้ว่าซ้ำกันหรือไม่
+// alertFingerprint ย่อบรรทัด log ให้เหลือแก่นของเรื่อง แล้วแฮชเป็นตัวชี้ว่าซ้ำกันหรือไม่
 //
-// ตัวเลขทุกตัวถูกแทนด้วย # ก่อนแฮช เพราะบรรทัดอย่าง
+// ตัวเลขถูกแทนด้วย # ก่อนแฮช เพราะสองบรรทัดนี้เป็นปัญหาเดียวกันเป๊ะ ต่างกันแค่เลขที่ไม่มีความหมาย
 //
 //	connection refused to 10.0.0.5:5432 (attempt 17)
 //	connection refused to 10.0.0.5:5432 (attempt 18)
 //
-// เป็นปัญหาเดียวกันเป๊ะ ต่างกันแค่เลขที่ไม่มีความหมายเชิงเนื้อหา ถ้าไม่ตัดทิ้งจะได้แจ้งเตือน
-// คนละแถวทุกครั้งที่ retry ซึ่งทำให้ระบบยุบเรื่องซ้ำไม่ได้เลย
+// ถ้าไม่ตัดทิ้ง แต่ละ retry จะได้แจ้งเตือนคนละแถว ซึ่งทำให้ยุบเรื่องซ้ำไม่ได้เลย
 func alertFingerprint(serviceID int, text string) string {
 	normalized := fingerprintNoiseRe.ReplaceAllString(strings.ToLower(text), "#")
 	normalized = strings.Join(strings.Fields(normalized), " ")
@@ -138,23 +134,22 @@ type logFinding struct {
 //	→ classifyLogLine ทีละบรรทัด → ยุบบรรทัดที่ fingerprint เดียวกันเข้าด้วยกัน
 //	→ AlertManager.Raise ให้สมาชิกทุกคนใน namespace นั้น
 //
-// ทำไมเลือก "poll เป็นรอบ" แทน "follow ค้างไว้ทุก service":
-// การ follow ต้องเปิด HTTP connection ค้างกับ Kubernetes API หนึ่งเส้นต่อหนึ่ง service ตลอดเวลา
-// ซึ่งบน NUC ที่เป็น control-plane ตัวเดียวจะกลายเป็นภาระถาวรที่โตตามจำนวน service
-// ส่วนการ poll เปิด-ปิดเป็นครั้งๆ ต้นทุนคงที่ และ "ช้าไปหนึ่งรอบ" เป็นราคาที่ยอมรับได้สำหรับ
-// ระบบแจ้งเตือน (ไม่ใช่ระบบ monitoring แบบ real-time ที่ต้องรู้ภายในวินาที)
+// เลือก poll เป็นรอบแทน follow ค้างทุก service เพราะ follow ต้องเปิด HTTP connection ค้างกับ
+// Kubernetes API หนึ่งเส้นต่อหนึ่ง service ตลอดเวลา ซึ่งบน control-plane ตัวเดียวคือภาระถาวร
+// ที่โตตามจำนวน service ส่วน poll มีต้นทุนคงที่ และ "ช้าไปหนึ่งรอบ" รับได้สำหรับระบบแจ้งเตือน
+// (ไม่ใช่ monitoring แบบ real-time ที่ต้องรู้ภายในวินาที)
 type LogAlertScanner struct {
 	db     *gorm.DB
 	prov   Provisioner
 	alerts *AlertManager
 	cfg    LogScanConfig
 
-	// cursors = timestamp ของบรรทัดสุดท้ายที่เคยประมวลผลไปแล้ว แยกตาม service id
+	// cursors = timestamp ของบรรทัดสุดท้ายที่ประมวลผลไปแล้ว แยกตาม service id
 	//
-	// จำเป็นเพราะแต่ละรอบเราดึง log ย้อนหลัง "กว้างกว่า" ระยะห่างของรอบเล็กน้อย (เผื่อ tick เพี้ยน
-	// หรือรอบก่อนใช้เวลานาน) ทำให้บรรทัดช่วงคาบเกี่ยวถูกอ่านซ้ำ — cursor คือตัวกันไม่ให้นับซ้ำ
-	// เก็บใน memory เฉยๆ พอ: restart แล้ว cursor หาย อย่างมากคือแจ้งเตือนซ้ำหนึ่งรอบ
-	// ซึ่งชั้นยุบด้วย fingerprint ใน AlertManager.Raise รับไว้ให้อยู่แล้ว
+	// จำเป็นเพราะแต่ละรอบดึง log ย้อนหลังกว้างกว่าระยะห่างของรอบ (เผื่อ tick เพี้ยน/รอบก่อนช้า)
+	// บรรทัดช่วงคาบเกี่ยวจึงถูกอ่านซ้ำ — cursor คือตัวกันไม่ให้นับซ้ำ
+	// เก็บใน memory พอ: restart แล้ว cursor หาย อย่างมากคือแจ้งเตือนซ้ำหนึ่งรอบ
+	// ซึ่งชั้นยุบด้วย fingerprint ใน AlertManager.Raise รับไว้อยู่แล้ว
 	cursors map[int]time.Time
 }
 
@@ -302,19 +297,18 @@ func (s *LogAlertScanner) scanService(ctx context.Context, row serviceRow) error
 }
 
 // maxFindingsPerScan = จำนวน "เรื่อง" สูงสุดที่ยอมสร้างจาก service เดียวในรอบเดียว
-//
 // container ที่พังหนักๆ พ่น error คนละข้อความได้เป็นร้อยแบบในไม่กี่วินาที (เช่น stack trace
-// ที่ทุกเฟรมนับเป็นคนละบรรทัด) ถ้าไม่จำกัดไว้ หน้า Alerts จะถูกกลบด้วย service ตัวเดียว
+// ที่ทุกเฟรมเป็นคนละบรรทัด) ถ้าไม่จำกัด หน้า Alerts จะถูกกลบด้วย service ตัวเดียว
 const maxFindingsPerScan = 5
 
 // collectFindings อ่าน stream ทีละบรรทัด แล้วยุบบรรทัดที่เป็นเรื่องเดียวกันเข้าด้วยกัน
+// คืน findings ที่พร้อมสร้างเป็นแจ้งเตือน + timestamp ของบรรทัดสุดท้าย (cursor ของรอบถัดไป)
 //
-// คืน findings ที่พร้อมสร้างเป็นแจ้งเตือน และ timestamp ของบรรทัดสุดท้ายที่อ่าน (cursor รอบถัดไป)
-// แยกออกมาเป็นฟังก์ชันที่รับ io.Reader ตรงๆ เพื่อให้เทสต์ป้อน log ปลอมเข้ามาตรวจได้โดยไม่ต้องมี provisioner
+// รับ io.Reader ตรงๆ เพื่อให้เทสต์ป้อน log ปลอมเข้ามาตรวจได้โดยไม่ต้องมี provisioner
 func (s *LogAlertScanner) collectFindings(r io.Reader, serviceID int, cursor time.Time) ([]logFinding, time.Time) {
 	sc := bufio.NewScanner(r)
-	// บรรทัด log เดียวยาวเกิน default 64KB ของ bufio ได้ (เช่น JSON ก้อนใหญ่) — ขยายเพดานไว้
-	// ไม่งั้น Scanner จะหยุดกลางคันด้วย ErrTooLong แล้วเราจะเงียบไปทั้ง service
+	// บรรทัดเดียวยาวเกิน default 64KB ของ bufio ได้ (เช่น JSON ก้อนใหญ่) — ขยายเพดานไว้
+	// ไม่งั้น Scanner หยุดกลางคันด้วย ErrTooLong แล้วเราจะเงียบไปทั้ง service
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	byFingerprint := map[string]*logFinding{}
@@ -391,15 +385,21 @@ func splitLogTimestamp(line string) (time.Time, string) {
 }
 
 // alertTitleFor ตั้งหัวข้อแจ้งเตือนให้อ่านแล้วรู้เรื่องทันทีจากหน้ารายการ โดยไม่ต้องกดเข้าไปดู
-// จำกัดความยาวให้พอดีกับ varchar(100) ของคอลัมน์ title
+//
+// ตัดตามจำนวน "ตัวอักษร" ไม่ใช่จำนวนไบต์ เพราะ varchar(100) ของ Postgres นับเป็นตัวอักษร
+// และหัวข้อขึ้นต้นด้วยภาษาไทย (ตัวละ 3 ไบต์) — ตัดด้วย title[:100] จะสั้นกว่าที่คอลัมน์รับได้จริง
+// และถ้าจุดตัดไปลงกลางตัวอักษรจะได้ UTF-8 ที่ Postgres ปฏิเสธทั้ง INSERT
 func alertTitleFor(severity, serviceName string) string {
 	label := "พบ error ใน service"
 	if severity == entity.SeverityWarning {
 		label = "พบคำเตือนใน service"
 	}
-	title := label + " " + serviceName
-	if len(title) > 100 {
-		title = title[:100]
+	title := []rune(label + " " + serviceName)
+	if len(title) > maxAlertTitleRunes {
+		title = title[:maxAlertTitleRunes]
 	}
-	return title
+	return string(title)
 }
+
+// maxAlertTitleRunes = ความยาวสูงสุดของ UserAlert.Title ต้องตรงกับ varchar(100) ใน entity
+const maxAlertTitleRunes = 100

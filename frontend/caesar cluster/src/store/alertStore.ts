@@ -2,10 +2,9 @@ import { create } from 'zustand';
 
 import { alertApi } from '@/api/alerts';
 
-// ทุกกี่มิลลิวินาทีจะถามจำนวนแจ้งเตือนใหม่จาก backend
-//
-// 60 วินาทีเท่ากับรอบสแกน log ฝั่ง backend (ALERT_SCAN_INTERVAL_SECONDS) — ถี่กว่านี้ก็ไม่มี
-// อะไรใหม่ให้เห็นอยู่ดี เพราะตัวเลขจะเปลี่ยนได้เร็วที่สุดก็ต่อเมื่อ backend สแกนเจอรอบใหม่
+// ถามจำนวนแจ้งเตือนใหม่ทุกกี่มิลลิวินาที
+// 60 วินาทีเท่ากับรอบสแกน log ฝั่ง backend (ALERT_SCAN_INTERVAL_SECONDS) — ถี่กว่านี้ไม่มี
+// อะไรใหม่ให้เห็น เพราะตัวเลขเปลี่ยนได้เร็วที่สุดก็ต่อเมื่อ backend สแกนเจอรอบใหม่
 const POLL_INTERVAL_MS = 60_000;
 
 interface AlertState {

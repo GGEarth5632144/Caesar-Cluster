@@ -72,8 +72,8 @@ export default function Register() {
         remember: true,
       });
 
-      // บัญชีที่เพิ่งสมัครยังไม่มีเครื่องไหนที่ระบบเชื่อใจ /api/login จึงตอบขอ OTP มาเสมอ
-      // ทางนี้คือทางปกติของการสมัคร — พาไปหน้ายืนยันอีเมลแทนที่จะเข้า dashboard เลย
+      // บัญชีที่เพิ่งสมัครยังไม่มีเครื่องไหนที่ระบบเชื่อใจ /api/login จึงขอ OTP มาเสมอ
+      // นี่คือทางปกติของการสมัคร — พาไปหน้ายืนยันอีเมลแทนการเข้า dashboard เลย
       if (result.otp_required) {
         writePendingOtp({
           challengeToken: result.challenge_token,

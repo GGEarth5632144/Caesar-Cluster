@@ -52,16 +52,13 @@ func isValidEnvVars(env map[string]string) bool {
 }
 
 // currentNamespaceID ดึง namespace ของผู้ใช้ที่ล็อกอินอยู่ (กติกา 1 คน = 1 space)
-//
-// data flow: อ่านค่าที่ middleware Auth โหลดมาจาก DB ไว้แล้วใน context → คืน namespace_id
-// ถ้ายังไม่มี space (NULL) จะตอบ 409 NO_NAMESPACE ให้เลย แล้วคืน ok=false เพื่อให้ handler หยุดทำงานต่อ
-//
 // controller ที่ต้องใช้ namespace (service, namespace/me) เรียกตัวนี้เป็นด่านแรกเสมอ
-// จะได้ไม่ต้องเขียน logic เดิมซ้ำในทุก handler
 //
-// ของเดิมยิง SELECT users ซ้ำเองอีกรอบ ทั้งที่ Auth เพิ่งอ่านแถวเดียวกันไปเมื่อครู่ —
-// นอกจากเปลืองแล้วยังเปิดช่องให้สองที่เห็นค่าคนละแบบถ้ามีคนแก้ระหว่างนั้น อ่านครั้งเดียวแล้วใช้ร่วมกัน
-// ตัดทั้งสองปัญหาไปพร้อมกัน (พารามิเตอร์ db คงไว้เพื่อไม่ต้องแก้ผู้เรียกทุกจุด และเผื่อ fallback ข้างล่าง)
+// data flow: อ่านค่าที่ middleware Auth โหลดจาก DB ไว้ใน context แล้ว → คืน namespace_id
+// ยังไม่มี space (NULL) = ตอบ 409 NO_NAMESPACE ให้เลย แล้วคืน ok=false ให้ handler หยุด
+//
+// อ่านจาก context แทนการยิง SELECT users ซ้ำ นอกจากประหยัดแล้วยังกันไม่ให้ middleware
+// กับ handler เห็นค่าคนละแบบถ้ามีคนแก้ระหว่างนั้น (db คงไว้สำหรับ fallback ข้างล่าง)
 func currentNamespaceID(c *gin.Context, db *gorm.DB) (int, bool) {
 	if v, exists := c.Get(middlewares.CtxNamespaceID); exists {
 		nsID, _ := v.(*int)
@@ -77,9 +74,9 @@ func currentNamespaceID(c *gin.Context, db *gorm.DB) (int, bool) {
 	// Auth การอ่าน DB เองยังปลอดภัยกว่าปล่อยให้ค่าศูนย์หลุดไปเป็น namespace_id ของคนอื่น
 	var user entity.User
 	if err := db.WithContext(c.Request.Context()).First(&user, c.GetInt(middlewares.CtxUserID)).Error; err != nil {
-		// แยก "ไม่มี user คนนี้จริงๆ" ออกจาก "ถาม DB ไม่ได้" — ของเดิมตอบ 404 เหมือนกันทั้งคู่
-		// ทำให้ตอน DB ล่ม/connection pool เต็ม ผู้ใช้เห็นข้อความว่า "ไม่พบผู้ใช้" ซึ่งชวนให้เข้าใจว่า
-		// บัญชีตัวเองถูกลบ แล้วไปสมัครใหม่ทั้งที่ระบบแค่มีปัญหาชั่วคราว และไม่มีอะไรเข้า log ให้ตามด้วย
+		// แยก "ไม่มี user คนนี้จริงๆ" ออกจาก "ถาม DB ไม่ได้" — เดิมตอบ 404 เหมือนกันทั้งคู่
+		// ตอน DB ล่ม ผู้ใช้เลยเห็น "ไม่พบผู้ใช้" แล้วเข้าใจว่าบัญชีถูกลบจนไปสมัครใหม่ ทั้งที่ระบบ
+		// แค่มีปัญหาชั่วคราว และไม่มีอะไรเข้า log ให้ตามต่อได้
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
 			return 0, false

@@ -59,16 +59,16 @@ export function getApiErrorMessage(err: unknown, fallback: string) {
 
 export const authApi = {
   // ดึงสถานะล่าสุดของบัญชีตัวเอง — role/namespace_id อาจเปลี่ยนไปแล้วตั้งแต่ตอน login
-  // (แอดมินเลื่อน/ถอนสิทธิ์, ถูกเชิญเข้ากลุ่ม, space ถูกลบ) backend อ่านค่าพวกนี้จาก DB สดทุก request
-  // อยู่แล้ว ฝั่งหน้าเว็บจึงต้องซิงก์ตามด้วย ไม่งั้นเมนูที่โชว์จะไม่ตรงกับสิทธิ์จริง
+  // backend อ่านค่าพวกนี้จาก DB สดทุก request อยู่แล้ว หน้าเว็บจึงต้องซิงก์ตาม
+  // ไม่งั้นเมนูที่โชว์จะไม่ตรงกับสิทธิ์จริง (ดู ProtectedRoute)
   me: async () => {
     const response = await axiosClient.get<{ data: AuthUser }>('/me');
     return response.data.data;
   },
 
-  // แนบ device token ของเครื่องนี้ไปด้วยทุกครั้ง — ถ้า backend รู้จักก็ข้ามขั้น OTP ให้เลย
+  // แนบ device token ของเครื่องนี้ไปทุกครั้ง — backend รู้จักก็ข้ามขั้น OTP ให้เลย
   // ทำที่ชั้น api ไม่ใช่ที่หน้า login เพราะเป็นเรื่องของ "เครื่อง" ไม่ใช่ของฟอร์ม
-  // (หลักการเดียวกับที่ axiosClient แนบ Authorization ให้เองโดยที่หน้าไม่ต้องรู้)
+  // (หลักการเดียวกับที่ axiosClient แนบ Authorization ให้เองโดยหน้าไม่ต้องรู้)
   login: async (payload: { student_id: string; password: string; remember: boolean }) => {
     const response = await axiosClient.post<{ data: LoginResult }>('/login', {
       ...payload,
@@ -78,7 +78,7 @@ export const authApi = {
   },
 
   // แลกรหัส 6 หลักเป็น token — สำเร็จแล้วเก็บ device token ที่ backend ออกให้ไว้ในเครื่อง
-  // เพื่อให้ล็อกอินครั้งถัดไปภายใน 30 วันไม่ต้องกรอก OTP อีก
+  // ล็อกอินครั้งถัดไปภายใน 30 วันจะได้ไม่ต้องกรอก OTP อีก
   verifyOtp: async (payload: { challenge_token: string; code: string }) => {
     const response = await axiosClient.post<{ data: SessionResponse }>('/verify-otp', payload);
     const data = response.data.data;

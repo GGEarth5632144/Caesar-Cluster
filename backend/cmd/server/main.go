@@ -50,10 +50,9 @@ func main() {
 
 	alertMgr := services.NewAlertManager(db)
 
-	// ผูก context ไว้กับสัญญาณปิดโปรแกรม (SIGINT/SIGTERM) ให้ทั้ง HTTP server และ background
-	// worker ปิดตัวจากสัญญาณเดียวกัน — เดิม r.Run() (ที่ ListenAndServe ข้างในบล็อกอยู่)
-	// ไม่ได้ผูกกับ context นี้เลย กด Ctrl+C แล้วตัวสแกน log จะหยุดแต่ตัวโปรแกรมค้างต่อ
-	// เพราะ HTTP server ยังรอ connection อยู่ ไม่มีอะไรไปสั่ง Shutdown ให้
+	// ผูก context ไว้กับสัญญาณปิดโปรแกรม (SIGINT/SIGTERM) ให้ HTTP server และ background worker
+	// ปิดตัวจากสัญญาณเดียวกัน — เดิม r.Run() บล็อกอยู่โดยไม่ผูกกับ context นี้ กด Ctrl+C แล้ว
+	// ตัวสแกน log หยุด แต่โปรแกรมค้างต่อเพราะไม่มีอะไรไปสั่ง Shutdown ให้ HTTP server
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -72,12 +71,18 @@ func main() {
 	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, alertMgr)
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 
+	// ListenAndServe ล้มเหลว (พอร์ตไม่ว่าง, bind ไม่ได้) ต้องไม่ log.Fatal ตรงนี้: os.Exit
+	// ข้ามทั้ง Shutdown และ wg.Wait() ทิ้ง ตัวสแกน log จะถูกฆ่ากลางรอบ เรียก stop() ให้เดิน
+	// ทางปิดปกติแทน แล้วค่อยจบด้วย exit code ที่ถูกหลังทุกอย่างเก็บของเสร็จ
+	// (อ่าน serveErr ได้หลัง wg.Wait() เท่านั้น ซึ่งเป็นจุดที่ happens-before การเขียนแล้ว)
+	var serveErr error
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer stop()
 		log.Println("server running on http://localhost:" + cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
+			serveErr = err
 		}
 	}()
 
@@ -92,5 +97,8 @@ func main() {
 	}
 
 	wg.Wait()
+	if serveErr != nil {
+		log.Fatalf("HTTP server หยุดทำงานเพราะข้อผิดพลาด: %v", serveErr)
+	}
 	log.Println("ปิดเซิร์ฟเวอร์เรียบร้อย")
 }

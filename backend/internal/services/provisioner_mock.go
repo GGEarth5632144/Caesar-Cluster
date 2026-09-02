@@ -54,13 +54,12 @@ func (m *MockProvisioner) DeleteService(ctx context.Context, nsName, svcName str
 	return nil
 }
 
-// Logs จำลอง log ของ container ด้วยข้อความปลอมที่รูปแบบเหมือนจริง (นำหน้าด้วย timestamp
-// เช่นเดียวกับที่ KubernetesProvisioner ส่งมาจริงตอน Timestamps=true) เพื่อให้หน้าเว็บพัฒนา/ทดสอบ
-// หน้า log viewer ได้โดยไม่ต้องมีคลัสเตอร์จริง — สลับไป PROVISIONER=kubernetes เมื่อไรก็ได้ log จริงทันที
+// Logs จำลอง log ของ container ด้วยข้อความปลอมที่รูปแบบเหมือนจริง (มี timestamp นำหน้าแบบเดียวกับ
+// ที่ KubernetesProvisioner ส่งตอน Timestamps=true) เพื่อให้พัฒนา/ทดสอบหน้า log viewer ได้
+// โดยไม่ต้องมีคลัสเตอร์จริง
 //
-// ใช้ io.Pipe เขียนจาก goroutine แยก: ส่งบรรทัดเริ่มต้นให้ก่อน แล้วถ้า opts.Follow=true
-// จะไม่ปิด stream ทันที รอส่งบรรทัดใหม่ทุก 1.5 วินาทีไปเรื่อยๆ จนกว่า ctx จะถูก cancel
-// (ผู้ใช้ปิดหน้าเว็บ) — เหมือนพฤติกรรม "ไหลสด" ของ log จริงที่หน้าเว็บจะได้ทดสอบไปด้วยตัวเดียวกัน
+// ใช้ io.Pipe เขียนจาก goroutine แยก: ส่งบรรทัดเริ่มต้นก่อน แล้วถ้า opts.Follow=true จะไม่ปิด
+// stream แต่ส่งบรรทัดใหม่ทุก 1.5 วินาทีจนกว่า ctx จะถูก cancel — เลียนพฤติกรรม "ไหลสด" ของจริง
 func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 
@@ -113,13 +112,10 @@ func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts
 }
 
 // mockLogLine สร้างเนื้อ log ปลอมของบรรทัดที่ n — ส่วนใหญ่เป็น access log ปกติ
-// แต่แทรกบรรทัดที่เป็น error/warning เป็นระยะ
-//
-// ที่ต้องมีบรรทัด error ปนอยู่ด้วยเพราะ LogAlertScanner อ่าน log จาก provisioner ตัวเดียวกันนี้
+// แทรก error/warning เป็นระยะ เพราะ LogAlertScanner อ่าน log จาก provisioner ตัวเดียวกันนี้
 // ถ้า mock พ่นแต่ "GET / 200" ล้วน ฟีเจอร์แจ้งเตือนจะทดสอบบนเครื่อง dev ไม่ได้เลย
-// ต้องมีคลัสเตอร์จริงกับ container ที่พังจริงเท่านั้นถึงจะเห็นว่าทำงานไหม
 //
-// เลือกใช้ n % k แทนการสุ่ม เพื่อให้ผลลัพธ์นิ่งพอที่เทสต์จะยืนยันได้ว่าเกิดกี่บรรทัด
+// ใช้ n % k แทนการสุ่ม เพื่อให้ผลลัพธ์นิ่งพอที่เทสต์จะยืนยันจำนวนได้
 func mockLogLine(n int64) string {
 	switch {
 	case n%17 == 16:

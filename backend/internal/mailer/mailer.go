@@ -46,8 +46,8 @@ type Config struct {
 }
 
 // Mailer ถือค่า SMTP ไว้ใช้ซ้ำทุก request — สร้างครั้งเดียวตอน start (ดู controller.NewAuthController)
-// ไม่ได้ถือ connection ค้างไว้: เปิด-ปิดต่อการส่งหนึ่งฉบับ เพราะระบบนี้ส่งเมลนานๆ ครั้ง
-// การคาสัญญาณ connection ไว้เฉยๆ มีแต่จะโดน Gmail ตัดทิ้งแล้วต้องมา handle reconnect เอง
+// ไม่ถือ connection ค้าง: เปิด-ปิดต่อการส่งหนึ่งฉบับ เพราะระบบนี้ส่งเมลนานๆ ครั้ง
+// การคา connection ไว้เฉยๆ มีแต่จะโดน Gmail ตัดทิ้งแล้วต้องมา handle reconnect เอง
 type Mailer struct {
 	cfg Config
 }
@@ -176,21 +176,16 @@ func (m *Mailer) send(ctx context.Context, toEmail, subject, textBody, htmlBody 
 
 // buildMessage ห่อเนื้อหาให้เป็นข้อความ MIME ที่ SMTP รับได้
 //
-// โครงเป็น multipart/alternative = ใส่ทั้งเวอร์ชัน text ล้วนและ HTML ไว้ในฉบับเดียว
-// mail client จะเลือกอันท้ายสุด (HTML) ถ้าแสดงได้ ไม่งั้นตกมาที่ text
-//
-// ที่ต้องมี text ล้วนด้วยไม่ใช่เรื่องความสวยงาม แต่เป็นเรื่องเข้า inbox:
+// multipart/alternative = ใส่ทั้ง text ล้วนและ HTML ไว้ในฉบับเดียว mail client เลือกส่วนท้ายสุด
+// (HTML) ถ้าแสดงได้ ไม่งั้นตกมาที่ text — ที่ต้องมี text ด้วยเป็นเรื่องเข้า inbox ไม่ใช่ความสวยงาม
 // อีเมลที่มีแต่ HTML ก้อนเดียวเป็นลายเซ็นคลาสสิกของสแปม (SpamAssassin มีกฎ MIME_HTML_ONLY ตรงๆ)
-// เพราะคนส่งเมลด้วยมือจริงๆ แทบไม่เคยส่งแบบนั้น
 //
-// จุดอื่นที่พลาดง่าย:
-//   - หัวข้อ/ชื่อผู้ส่งเป็นภาษาไทย ต้อง encode ตาม RFC 2047 ไม่งั้นขึ้นเป็นตัวขยะบน mail client
+// จุดที่พลาดง่าย:
+//   - หัวข้อ/ชื่อผู้ส่งภาษาไทยต้อง encode ตาม RFC 2047 ไม่งั้นขึ้นเป็นตัวขยะ
 //     (mail.Address.String() จัดการชื่อผู้ส่งให้เอง ส่วน Subject ใช้ mime.QEncoding)
-//   - เนื้อความ UTF-8 มีบรรทัดยาวเกิน 998 ตัวอักษรที่ RFC 5321 กำหนด เลยต้องเข้ารหัส
-//     ใช้ quoted-printable แทน base64 เพราะตัวกรองบางตัวหักคะแนนเมลที่เอา text ไปหมกใน base64
-//     (เป็นวิธีที่สแปมใช้ซ่อนเนื้อหาจากตัวสแกน) ส่วน quoted-printable ยังอ่านออกด้วยตาเปล่า
-//   - ทุกบรรทัดต้องจบด้วย CRLF ไม่ใช่ LF เดี่ยว — ทั้ง multipart.Writer และ
-//     quotedprintable.Writer ของ stdlib จัดการให้ครบแล้ว
+//   - บรรทัด UTF-8 ยาวเกิน 998 ตัวอักษรตาม RFC 5321 ต้องเข้ารหัส เลือก quoted-printable
+//     ไม่ใช่ base64 เพราะตัวกรองหักคะแนนเมลที่หมก text ไว้ใน base64 (เป็นวิธีที่สแปมใช้ซ่อนเนื้อหา)
+//   - ทุกบรรทัดต้องจบด้วย CRLF — multipart.Writer และ quotedprintable.Writer จัดการให้แล้ว
 func buildMessage(from, to mail.Address, subject, textBody, htmlBody string) ([]byte, error) {
 	var body bytes.Buffer
 	mp := multipart.NewWriter(&body)
@@ -237,8 +232,8 @@ func buildMessage(from, to mail.Address, subject, textBody, htmlBody string) ([]
 // messageID สร้างค่า header Message-ID ให้เมลแต่ละฉบับ
 //
 // เมลที่ไม่มี Message-ID ถูกหักคะแนนโดยตัวกรองแทบทุกตัว (SpamAssassin: MISSING_MID)
-// เพราะโปรแกรมเมลของจริงใส่มาให้เสมอ มีแต่สคริปต์ที่เขียนลวกๆ ที่ลืม
-// ฝั่งขวาของ @ ใช้โดเมนของผู้ส่งเองเพื่อให้สอดคล้องกับ From (โดเมนมั่วก็เป็นสัญญาณต้องสงสัยอีกแบบ)
+// เพราะโปรแกรมเมลของจริงใส่มาให้เสมอ มีแต่สคริปต์ลวกๆ ที่ลืม
+// ฝั่งขวาของ @ ใช้โดเมนผู้ส่งให้สอดคล้องกับ From (โดเมนมั่วเป็นสัญญาณต้องสงสัยอีกแบบ)
 func messageID(fromAddress string) string {
 	domain := "localhost"
 	if at := strings.LastIndex(fromAddress, "@"); at >= 0 && at+1 < len(fromAddress) {
@@ -334,9 +329,9 @@ func buildResetHTML(toName, resetLink string, ttlMinutes int) string {
 
 // resetTextTemplate = เวอร์ชัน text ล้วนของอีเมลฉบับเดียวกัน
 //
-// ต้องสื่อความให้ครบเท่า HTML จริงๆ ไม่ใช่ใส่ "กรุณาเปิดด้วยโปรแกรมที่รองรับ HTML" พอเป็นพิธี
-// เพราะตัวกรองบางตัวเทียบว่าสองส่วนเนื้อหาต่างกันมากไหม (ต่างกันมาก = สัญญาณของการซ่อนเนื้อหา
-// จากตัวสแกน) และคนที่อ่านเมลแบบ text ล้วนก็ต้องรีเซ็ตรหัสผ่านได้จริง
+// ต้องสื่อความครบเท่า HTML ไม่ใช่ใส่ "กรุณาเปิดด้วยโปรแกรมที่รองรับ HTML" พอเป็นพิธี:
+// ตัวกรองเทียบว่าสองส่วนต่างกันมากไหม (ต่างมาก = สัญญาณของการซ่อนเนื้อหาจากตัวสแกน)
+// และคนที่อ่านเมลแบบ text ล้วนก็ต้องรีเซ็ตรหัสผ่านได้จริง
 const resetTextTemplate = `__GREETING__,
 
 เราได้รับคำขอรีเซ็ตรหัสผ่านสำหรับบัญชี Caesar Cluster ของคุณ

@@ -181,8 +181,8 @@ func (h *AuthController) Login(c *gin.Context) {
 		return
 	}
 
-	// OTP บังคับเฉพาะ role "user" ตามที่ตกลงกันไว้ — บัญชี admin ล็อกอินเหมือนเดิมทุกอย่าง
-	// เครื่องที่เคยผ่าน OTP มาแล้วภายใน trustedDeviceTTL ก็ข้ามไปได้ (ดู auth_otp.go)
+	// OTP บังคับเฉพาะ role "user" — บัญชี admin ล็อกอินเหมือนเดิมทุกอย่าง
+	// เครื่องที่เคยผ่าน OTP ภายใน trustedDeviceTTL ก็ข้ามไปได้ (ดู auth_otp.go)
 	if role.Name == entity.RoleUser && !deviceTrusted(db, user.ID, req.DeviceToken) {
 		h.startOTPChallenge(c, db, &user, req.Remember)
 		return
@@ -199,12 +199,11 @@ func (h *AuthController) Login(c *gin.Context) {
 
 // buildSession ประกอบ response ของการล็อกอินที่ผ่านครบทุกด่านแล้ว: JWT + ข้อมูล user
 //
-// แยกออกมาเป็นเมธอดเพราะมีสองทางเข้าที่ต้องได้ผลลัพธ์หน้าตาเดียวกันเป๊ะ — Login (เครื่องที่เชื่อใจ
-// หรือ admin) กับ VerifyOTP (เพิ่งกรอกรหัสถูก) ถ้าปล่อยให้ต่างคนต่างประกอบ วันหนึ่งจะมีฝั่งใดฝั่งหนึ่ง
-// ลืมใส่ field ใหม่แล้วหน้าเว็บพังเฉพาะทางเข้าที่คนไม่ค่อยเดิน
+// แยกเป็นเมธอดเพราะมีสองทางเข้าที่ต้องได้ผลลัพธ์หน้าตาเดียวกันเป๊ะ — Login (เครื่องที่เชื่อใจ
+// หรือ admin) กับ VerifyOTP ถ้าต่างคนต่างประกอบ วันหนึ่งจะมีฝั่งหนึ่งลืมใส่ field ใหม่
+// แล้วหน้าเว็บพังเฉพาะทางเข้าที่คนไม่ค่อยเดิน
 //
-// otp_required: false ติดไปด้วยเสมอ ให้ฝั่งหน้าเว็บดู field เดียวก็แยกออกว่าได้ token มาแล้ว
-// หรือยังต้องไปกรอก OTP ต่อ ไม่ต้องเดาจากการมี/ไม่มีของ field อื่น
+// otp_required: false ติดไปเสมอ ให้หน้าเว็บดู field เดียวก็รู้ว่าได้ token แล้วหรือยังต้องกรอก OTP
 func (h *AuthController) buildSession(user *entity.User, roleName string, remember bool) (gin.H, error) {
 	ttl := time.Duration(h.cfg.JWTTTLHours) * time.Hour
 	if remember {

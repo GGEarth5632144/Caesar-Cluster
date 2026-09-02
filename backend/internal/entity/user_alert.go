@@ -14,15 +14,14 @@ const (
 // error แล้วเรียก AlertManager.Raise สร้างแถวให้สมาชิกทุกคนใน namespace นั้น
 // ข้อมูลไหลออก: AlertController /api/alerts (หน้า Alerts) และ /api/alerts/unread-count (ตัวเลขวงกลมแดงบน Sidebar)
 //
-// ทำไมต้องมี Fingerprint + Count แทนที่จะ INSERT ทุกบรรทัดที่เจอ:
-// container ที่พังจริงมักพ่น error บรรทัดเดิมซ้ำวินาทีละหลายรอบ ถ้า INSERT ทุกบรรทัดหน้า Alerts
-// จะกลายเป็นกำแพงข้อความเดียวกันหมื่นแถวจนหาเรื่องอื่นไม่เจอ และตัวเลขบน Sidebar จะไร้ความหมาย
-// เลยยุบข้อความที่ "เป็นเรื่องเดียวกัน" ให้เหลือแถวเดียวแล้วนับ Count ขึ้นแทน (แบบเดียวกับที่
-// Sentry/Cloud Logging ทำ) — ดู alertFingerprint ใน services/log_alert_scanner.go ว่านับว่าเรื่องเดียวกันยังไง
+// ทำไมต้องมี Fingerprint + Count แทนการ INSERT ทุกบรรทัด: container ที่พังจริงพ่น error บรรทัดเดิม
+// ซ้ำวินาทีละหลายรอบ ถ้า INSERT ทุกบรรทัด หน้า Alerts จะเป็นกำแพงข้อความเดียวกันหมื่นแถวจนหา
+// เรื่องอื่นไม่เจอ เลยยุบข้อความที่เป็นเรื่องเดียวกันให้เหลือแถวเดียวแล้วนับ Count ขึ้นแทน
+// (แบบเดียวกับ Sentry) — ดู alertFingerprint ใน services/log_alert_scanner.go
 //
-// ไม่ใส่ unique index บน fingerprint โดยตั้งใจ: การยุบทำที่ชั้นแอป (SELECT แล้ว UPDATE) เพราะ
-// ต้องยุบ "เฉพาะในหน้าต่างเวลาหนึ่ง" ด้วย — error เดิมที่กลับมาใหม่หลังเงียบไปสามวันควรเป็นแจ้งเตือนใหม่
-// ไม่ใช่ไปบวก Count ของแถวเก่าที่ user อ่านไปแล้วเงียบๆ
+// ไม่ใส่ unique index บน fingerprint โดยตั้งใจ: ต้องยุบ "เฉพาะในหน้าต่างเวลาหนึ่ง" ด้วย
+// error เดิมที่กลับมาหลังเงียบไปสามวันควรเป็นแจ้งเตือนใหม่ ไม่ใช่ไปบวก Count ของแถวที่อ่านไปแล้ว
+// จึงทำที่ชั้นแอป (UPDATE ก่อน ไม่โดนค่อย INSERT)
 type UserAlert struct {
 	ID     int `gorm:"column:id;type:serial;primaryKey" json:"id"`
 	UserID int `gorm:"column:user_id;type:integer;not null;index:idx_user_alerts_user" json:"user_id"`

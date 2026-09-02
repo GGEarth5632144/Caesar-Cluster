@@ -31,14 +31,13 @@ function formatCountdown(totalSeconds: number) {
 }
 
 /**
- * VerifyOtp = หน้ากรอกรหัส 6 หลักที่ส่งไปทางอีเมล คั่นระหว่าง "รหัสผ่านถูก" กับ "ได้เข้าระบบ"
+ * VerifyOtp = หน้ากรอกรหัส 6 หลักจากอีเมล คั่นระหว่าง "รหัสผ่านถูก" กับ "ได้เข้าระบบ"
  *
- * เข้ามาที่นี่ได้สองทาง ทั้งคู่ผ่าน /api/login ที่ตอบ otp_required กลับมา:
- * สมัครสมาชิกเสร็จใหม่ๆ (Register จะ login ต่อให้อัตโนมัติ) หรือล็อกอินจากเครื่องที่ยังไม่เคยยืนยัน
+ * เข้ามาได้สองทาง ทั้งคู่ผ่าน /api/login ที่ตอบ otp_required กลับมา: สมัครสมาชิกเสร็จใหม่ๆ
+ * (Register login ต่อให้อัตโนมัติ) หรือล็อกอินจากเครื่องที่ยังไม่เคยยืนยัน
  *
- * ใบยืนยันที่รออยู่ถูกเก็บใน sessionStorage (ดู lib/otpSession) ไม่ได้ส่งผ่าน route state
- * เพราะผู้ใช้กด refresh ระหว่างสลับไปเปิดอีเมลได้ — เข้ามาแล้วไม่เจอใบค้างอยู่ ก็แปลว่า
- * เดินมาผิดทาง (พิมพ์ URL เอง / ใบตายไปแล้ว) เด้งกลับหน้า login ตามปกติ
+ * ใบยืนยันที่รออยู่เก็บใน sessionStorage (ดู lib/otpSession) ไม่ใช่ route state
+ * เข้ามาแล้วไม่เจอใบค้าง = เดินมาผิดทาง (พิมพ์ URL เอง / ใบตายแล้ว) เด้งกลับหน้า login
  */
 export default function VerifyOtp() {
   const navigate = useNavigate();
@@ -100,8 +99,8 @@ export default function VerifyOtp() {
     setNotice("");
     try {
       const result = await authApi.resendOtp({ challenge_token: pending.challengeToken });
-      // เขียนกลับ sessionStorage ด้วย ไม่ใช่แค่ state ในหน่วยความจำ — ถ้าผู้ใช้ refresh
-      // หลังกดขอรหัสใหม่ หน้าจะได้ไม่อ่านเวลาหมดอายุอันเก่ามาแล้วขึ้นว่าหมดอายุทั้งที่รหัสยังใช้ได้
+      // เขียนกลับ sessionStorage ด้วย ไม่ใช่แค่ state ในหน่วยความจำ — ถ้าผู้ใช้ refresh หลังกด
+      // ขอรหัสใหม่ หน้าจะได้ไม่อ่านเวลาหมดอายุอันเก่ามาขึ้นว่าหมดอายุทั้งที่รหัสยังใช้ได้
       const next = { ...pending, expiresAt: Date.now() + result.expires_in_seconds * 1000 };
       writePendingOtp(next);
       setPending(next);

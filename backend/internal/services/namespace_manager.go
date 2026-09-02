@@ -118,9 +118,9 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) 
 
 	// สร้างของจริงบน cluster — ถ้าพลาดให้ถอย row ที่เพิ่งสร้างออก (กัน DB กับ cluster ไม่ตรงกัน)
 	if err := m.prov.EnsureNamespace(ctx, ns); err != nil {
-		// context.WithoutCancel: ถ้าที่ EnsureNamespace ล้มเพราะผู้ใช้ปิดหน้าเว็บ (ctx ถูก cancel)
-		// การลบด้วย ctx ตัวเดิมจะล้มตามไปด้วยทันที แล้ว namespace ผีจะค้างใน DB ถาวร —
-		// ซึ่งร้ายกว่าปกติตรงที่ users.namespace_id ชี้ไปที่มันแล้ว เจ้าตัวจะสร้าง space ใหม่ไม่ได้อีกเลย
+		// context.WithoutCancel: ถ้า EnsureNamespace ล้มเพราะผู้ใช้ปิดหน้าเว็บ (ctx ถูก cancel)
+		// การลบด้วย ctx ตัวเดิมจะล้มตามทันที แล้ว namespace ผีค้างใน DB ถาวร ซึ่งร้ายเป็นพิเศษ
+		// เพราะ users.namespace_id ชี้ไปที่มันแล้ว เจ้าตัวจะสร้าง space ใหม่ไม่ได้อีกเลย
 		// (ติด ErrAlreadyInNamespace) ทั้งที่บนคลัสเตอร์ไม่มีอะไรอยู่จริง
 		if delErr := m.db.WithContext(context.WithoutCancel(ctx)).
 			Delete(&entity.Namespace{}, ns.ID).Error; delErr != nil { // FK ตั้ง users.namespace_id กลับเป็น NULL ให้เอง
@@ -263,12 +263,10 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, err
 	}
 
-	// ดัน ResourceQuota ใหม่ขึ้น cluster ให้ตรงกับ DB
-	//
-	// ดันไม่ขึ้นต้องถอยค่าใน DB กลับด้วย ไม่ใช่แค่คืน error: DB เป็นตัวที่ QuotaService ใช้
-	// ตัดสินว่า "ขอ deploy เพิ่มได้ไหม" ส่วนคลัสเตอร์เป็นตัวบังคับจริง ถ้าปล่อยให้สองฝั่งไม่ตรงกัน
-	// ผู้ใช้จะถูก DB บอกว่าโควตาพอ แล้วไปเจอ ResourceQuota ของ k8s ปฏิเสธตอน deploy
-	// ซึ่งเป็น error ที่อ่านไม่รู้เรื่องและไม่มีใครเดาได้ว่าเกิดจากแอดมินกดปรับโควตาค้างไว้
+	// ดัน ResourceQuota ใหม่ขึ้น cluster ให้ตรงกับ DB — ดันไม่ขึ้นต้องถอยค่าใน DB กลับด้วย
+	// ไม่ใช่แค่คืน error: DB เป็นตัวที่ QuotaService ใช้ตัดสินว่า "ขอ deploy เพิ่มได้ไหม"
+	// ส่วนคลัสเตอร์เป็นตัวบังคับจริง ถ้าสองฝั่งไม่ตรงกัน ผู้ใช้จะถูก DB บอกว่าโควตาพอ
+	// แล้วไปเจอ ResourceQuota ปฏิเสธตอน deploy ด้วย error ที่ไม่มีใครเดาสาเหตุได้
 	if err := m.prov.EnsureNamespace(ctx, &ns); err != nil {
 		if rbErr := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Namespace{}).
 			Where("id = ?", ns.ID).

@@ -15,11 +15,11 @@ const (
 	ProvisionerKubernetes = "kubernetes"
 )
 
-// โหมดการรัน (ตั้งผ่าน env APP_ENV) — แยกออกจาก PROVISIONER โดยตั้งใจ
+// โหมดการรัน (env APP_ENV) — แยกจาก PROVISIONER โดยตั้งใจ
 //
-// เดิมโค้ดใช้ PROVISIONER=mock เป็นตัวบอกว่า "อยู่ในโหมด dev" แล้วไปเปิด CORS ให้ localhost ทุกพอร์ต
-// ซึ่งมัดสองเรื่องที่ไม่เกี่ยวกันเข้าด้วยกัน: จะแตะคลัสเตอร์จริงหรือไม่ กับจะผ่อน CORS หรือไม่
-// พอเอาขึ้นเครื่องจริงแล้วอยากรัน mock ไว้ก่อน (เช่น คลัสเตอร์ยังไม่พร้อม) จะได้ CORS หลวมติดมาด้วย
+// เดิมใช้ PROVISIONER=mock เป็นตัวบอกว่า "โหมด dev" แล้วผ่อน CORS ตาม ซึ่งมัดสองเรื่องที่ไม่เกี่ยวกัน
+// เข้าด้วยกัน: จะแตะคลัสเตอร์จริงไหม กับจะผ่อน CORS ไหม การรัน mock บนเครื่องจริงเพราะคลัสเตอร์
+// ยังไม่พร้อม จึงไม่ควรลากเอา CORS หลวมติดไปด้วย (ใช้ที่ router.allowOriginFor และ cmd/seed)
 const (
 	EnvDevelopment = "development"
 	EnvProduction  = "production"
@@ -53,21 +53,18 @@ type Config struct {
 
 // AlertScanConfig = ค่าที่คุม LogAlertScanner (ตัวที่เดินอ่าน log ของทุก service เป็นรอบๆ)
 type AlertScanConfig struct {
-	// Enabled = เปิด/ปิดตัวสแกนทั้งก้อน — ปิดแล้วหน้า Alerts ยังใช้งานได้ปกติ
-	// เพียงแต่จะไม่มีแจ้งเตือนใหม่จาก log เข้ามาเอง
+	// เปิด/ปิดตัวสแกนทั้งก้อน — ปิดแล้วหน้า Alerts ยังใช้ได้ปกติ แค่ไม่มีแจ้งเตือนใหม่จาก log
 	Enabled bool
 
-	// IntervalSeconds = ทุกกี่วินาทีจะเดินสแกนหนึ่งรอบ
-	// ค่า default 60 วินาที: ถี่พอที่ผู้ใช้จะรู้ตัวว่า service พังภายในหนึ่งนาที แต่ไม่ถี่จน
-	// ยิง Kubernetes API รัวๆ บน control-plane ตัวเดียวที่เป็น Atom
+	// ทุกกี่วินาทีจะเดินสแกนหนึ่งรอบ — default 60 วิ: ถี่พอให้รู้ตัวว่า service พังภายในหนึ่งนาที
+	// แต่ไม่ถี่จนยิง Kubernetes API รัวๆ บน control-plane ตัวเดียว
 	IntervalSeconds int
 
-	// MaxLinesPerScan = ดึง log ย้อนหลังสูงสุดกี่บรรทัดต่อ 1 service ต่อ 1 รอบ
-	// กัน container ที่พ่น log เป็นหมื่นบรรทัดต่อนาทีดูดแรม/แบนด์วิดท์ของ backend ไปทั้งหมด
+	// ดึง log ย้อนหลังสูงสุดกี่บรรทัดต่อ service ต่อรอบ
+	// กัน container ที่พ่น log เป็นหมื่นบรรทัดต่อนาทีดูดแรม/แบนด์วิดท์ของ backend ไปหมด
 	MaxLinesPerScan int
 
-	// IncludeWarnings = ส่ง warning เข้าหน้า Alerts ด้วยหรือไม่
-	// default false ตามที่ตกลงกันว่า "ส่งเฉพาะที่มัน error" — เปิดได้ถ้าอยากเห็นละเอียดขึ้น
+	// ส่ง warning เข้าหน้า Alerts ด้วยหรือไม่ — default false ("ส่งเฉพาะที่มัน error")
 	IncludeWarnings bool
 }
 
@@ -108,9 +105,10 @@ func Load() *Config {
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
 	}
-	// กันพลาดแบบที่เสียหายที่สุด: เอาขึ้นเครื่องจริงโดยลืมเปลี่ยน secret ตัวอย่าง
-	// ใครก็ตามที่อ่าน repo นี้จะปลอม JWT เป็น admin ได้ทันที เลยไม่ยอมให้ start
-	if cfg.IsProduction() && (cfg.JWTSecret == "dev-secret" || len(cfg.JWTSecret) < 32) {
+	// กันพลาดที่เสียหายที่สุด: ขึ้นเครื่องจริงโดยลืมเปลี่ยน secret ตัวอย่าง
+	// ใครที่อ่าน repo นี้จะปลอม JWT เป็น admin ได้ทันที เลยไม่ยอมให้ start
+	// (ค่าตัวอย่าง "dev-secret" ตกด่านความยาวอยู่แล้ว ไม่ต้องเช็คแยก)
+	if cfg.IsProduction() && len(cfg.JWTSecret) < 32 {
 		log.Fatal("APP_ENV=production ต้องตั้ง JWT_SECRET ใหม่ยาวอย่างน้อย 32 ตัวอักษร " +
 			"สร้างได้ด้วยคำสั่ง: openssl rand -base64 48")
 	}
@@ -126,11 +124,18 @@ func Load() *Config {
 func (c *Config) IsProduction() bool { return c.AppEnv == EnvProduction }
 
 // normalizeAppEnv ยอมรับทั้ง prod/production และ dev/development ให้เขียนสั้นได้
+//
+// ค่าที่สะกดผิดต้องเตือนเสียงดัง ไม่ตกลง development เงียบๆ: APP_ENV=prodution หนึ่งตัวอักษร
+// แปลว่าด่านกัน JWT_SECRET อ่อนและด่านกัน seed ข้อมูลสาธิตถูกปิดทั้งคู่บนเครื่องจริง
 func normalizeAppEnv(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
+	switch normalized := strings.ToLower(strings.TrimSpace(v)); normalized {
 	case "prod", "production":
 		return EnvProduction
+	case "", "dev", "development":
+		return EnvDevelopment
 	default:
+		log.Printf("คำเตือน: ค่า APP_ENV=%q ไม่รู้จัก ใช้โหมด %s แทน "+
+			"(ถ้าตั้งใจจะรันเครื่องจริงต้องเป็น APP_ENV=production เท่านั้น)", v, EnvDevelopment)
 		return EnvDevelopment
 	}
 }

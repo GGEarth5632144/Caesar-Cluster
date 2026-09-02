@@ -44,10 +44,10 @@ type Provisioner interface {
 	// DeleteService ลบ workload ตัวเดียวออกจาก namespace
 	DeleteService(ctx context.Context, nsName, svcName string) error
 
-	// Logs เปิด stream ของ log จาก container ที่รัน service นี้อยู่ (เหมือนกด "Logs" ในหน้า
-	// Cloud Run) — ผู้เรียกมีหน้าที่ Close() เสมอ ไม่งั้น connection ค้างไว้กับ Kubernetes API
+	// Logs เปิด stream ของ log จาก container ที่รัน service นี้อยู่
+	// ผู้เรียกมีหน้าที่ Close() เสมอ ไม่งั้น connection ค้างไว้กับ Kubernetes API
 	//
-	// เมื่อ opts.Follow = true การอ่านจะไม่จบเองจนกว่า ctx จะถูก cancel (ผู้ใช้ปิดหน้าเว็บ/
-	// เปลี่ยนหน้า) — ผู้เรียกต้องผูก ctx กับอายุของ HTTP request ไว้ ไม่ปล่อยให้เปิดค้างตลอดกาล
+	// opts.Follow = true แล้วการอ่านจะไม่จบเองจนกว่า ctx จะถูก cancel — ผู้เรียกต้องผูก ctx
+	// กับอายุของ HTTP request ไว้ ไม่ปล่อยให้เปิดค้างตลอดกาล
 	Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error)
 }

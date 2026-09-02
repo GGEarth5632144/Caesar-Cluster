@@ -9,8 +9,8 @@ import { useAuthStore } from '@/store/authStore';
 const API_URL = import.meta.env.VITE_API_URL;
 
 export interface LogLine {
-  // key เดิม (ก่อนตัด timestamp) ใช้เป็น React key กันบรรทัดที่เนื้อหาซ้ำกันเป๊ะ (เช่น mock
-  // ที่วน "[mock] GET / 200 12ms" ซ้ำได้) แสดงผลชนกันจน React confuse ว่าเป็น element เดิม
+  // ลำดับที่ได้รับในสตรีมนี้ ใช้เป็น React key — บรรทัดที่เนื้อหาซ้ำกันเป๊ะเกิดได้บ่อย
+  // (เช่น "[mock] GET / 200 12ms") ถ้าใช้เนื้อหาเป็น key React จะเข้าใจว่าเป็น element เดิม
   id: number;
   timestamp: string | null;
   text: string;
@@ -25,14 +25,14 @@ export interface StreamLogsOptions {
 }
 
 // backend ส่ง log แต่ละบรรทัดเป็น "<RFC3339Nano timestamp> <เนื้อ log>\n" เสมอ
-// (ทั้ง mock และของจริงบนคลัสเตอร์ ดู backend/internal/controller/service_controller.go)
-// แยกด้วยช่องว่างตัวแรกเท่านั้น เผื่อเนื้อ log เองมีช่องว่างอยู่ข้างในเยอะแค่ไหนก็ตาม
+// (ทั้ง mock และของจริง — กติกาเดียวกับ splitLogTimestamp ฝั่ง Go)
+// ตัดที่ช่องว่างตัวแรกเท่านั้น เนื้อ log จะมีช่องว่างข้างในกี่ตัวก็ไม่กระทบ
 function parseLine(raw: string, id: number): LogLine {
   const sp = raw.indexOf(' ');
   if (sp === -1) return { id, timestamp: null, text: raw };
   const ts = raw.slice(0, sp);
-  // ตรวจคร่าวๆ ว่าท่อนแรกหน้าตาเป็น timestamp จริง (ขึ้นต้นด้วยปี) ไม่ใช่ก็ถือว่าทั้งบรรทัดเป็นเนื้อ log
-  // กันกรณี log ของแอปเองบังเอิญมีช่องว่างในตำแหน่งที่ทำให้ parse ผิดรูป
+  // ท่อนแรกต้องหน้าตาเป็น timestamp จริง (ขึ้นต้นด้วยปี) ไม่งั้นถือว่าทั้งบรรทัดเป็นเนื้อ log
+  // กันกรณี log ของแอปบังเอิญมีช่องว่างในตำแหน่งที่ทำให้ parse ผิดรูป
   if (!/^\d{4}-\d{2}-\d{2}T/.test(ts)) return { id, timestamp: null, text: raw };
   return { id, timestamp: ts, text: raw.slice(sp + 1) };
 }

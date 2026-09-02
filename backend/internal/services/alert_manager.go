@@ -58,8 +58,8 @@ func NewAlertManager(db *gorm.DB) *AlertManager { return &AlertManager{db: db} }
 // → ไม่มีแถวไหนโดน (RowsAffected = 0) ค่อย INSERT แถวใหม่
 //
 // ตั้งใจไม่รีเซ็ต is_read ตอนยุบ: ถ้ารีเซ็ต ตัวเลขบน Sidebar จะกดให้หายไม่ได้เลยตราบใดที่
-// service ยังพ่น error เดิมอยู่ (นับใหม่ทุกรอบสแกน) กลายเป็นตัวเลขแดงที่ผู้ใช้ทำอะไรกับมันไม่ได้
-// จนเลิกสนใจไปในที่สุด — ปล่อยให้ count เดินเงียบๆ แล้วไปเด้งใหม่เมื่อพ้นหน้าต่างเวลาแทน
+// service ยังพ่น error เดิม (นับใหม่ทุกรอบสแกน) กลายเป็นตัวเลขแดงที่ผู้ใช้ทำอะไรไม่ได้จนเลิกสนใจ
+// — ปล่อยให้ count เดินเงียบๆ แล้วไปเด้งใหม่เมื่อพ้นหน้าต่างเวลาแทน
 func (m *AlertManager) Raise(ctx context.Context, p RaiseParams) error {
 	if len(p.UserIDs) == 0 {
 		return nil
@@ -146,9 +146,15 @@ func trimAlerts(tx *gorm.DB, userID int) error {
 
 // ListForUser คืนแจ้งเตือนของ user เรียงใหม่→เก่าตามเวลาที่เจอครั้งล่าสุด
 // data flow: AlertController.List → ที่นี่ → หน้า Alerts ของ frontend
+//
+// limit ที่เกินเพดานถูก "หนีบลงมาที่เพดาน" ไม่ใช่ตกกลับไปเป็น 50 — ไม่งั้นการขอ 300
+// จะได้ของน้อยกว่าการขอ 100 ซึ่งไม่มีใครเดาถูก
 func (m *AlertManager) ListForUser(ctx context.Context, userID, limit int, onlyUnread bool) ([]entity.UserAlert, error) {
-	if limit <= 0 || limit > maxAlertsPerUser {
+	switch {
+	case limit <= 0:
 		limit = 50
+	case limit > maxAlertsPerUser:
+		limit = maxAlertsPerUser
 	}
 	q := m.db.WithContext(ctx).Where("user_id = ?", userID)
 	if onlyUnread {

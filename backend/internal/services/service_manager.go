@@ -121,11 +121,11 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		return nil, err
 	}
 
-	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว (ถ้า deploy สำเร็จ) — persist คู่กับ status ในทีเดียว
+	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว — persist คู่กับ status ในทีเดียว
 	//
-	// ใช้ context ที่ตัด cancel ออกด้วยเหตุผลเดียวกับ releaseReservation: ของถูกสร้างบนคลัสเตอร์
-	// ไปแล้วจริงๆ ถ้าเขียนสถานะกลับไม่ได้เพราะผู้ใช้เพิ่งปิดหน้าเว็บ แถวนี้จะค้างเป็น "creating"
-	// ตลอดกาลทั้งที่ workload รันอยู่ — หน้าเว็บจะโชว์ผิดและไม่มีอะไรมาแก้ให้
+	// ตัด cancel ออกด้วยเหตุผลเดียวกับ releaseReservation: ของถูกสร้างบนคลัสเตอร์ไปแล้วจริง
+	// ถ้าเขียนสถานะกลับไม่ได้เพราะผู้ใช้ปิดหน้าเว็บ แถวนี้จะค้างเป็น "creating" ตลอดกาล
+	// ทั้งที่ workload รันอยู่ และไม่มีอะไรมาแก้ให้
 	if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
 		Where("id = ?", svc.ID).
 		Updates(map[string]any{"status": entity.ServiceRunning, "node_port": svc.NodePort}).Error; err != nil {
@@ -137,13 +137,12 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 
 // releaseReservation ลบแถว service ที่จองโควตาไว้ทิ้ง หลัง deploy ล้มเหลว
 //
-// ต้องใช้ context.WithoutCancel: สาเหตุที่ deploy ล้มเหลวบ่อยที่สุดสาเหตุหนึ่งคือผู้ใช้ปิดหน้าเว็บ
-// ระหว่างรอ ซึ่งทำให้ ctx ของ HTTP request ถูก cancel — ถ้าใช้ ctx ตัวเดิมมาลบ คำสั่ง DELETE
-// จะล้มเหลวทันทีด้วย "context canceled" แล้วแถวที่จองโควตาไว้จะค้างอยู่ตลอดไปโดยไม่มี workload จริง
-// (บั๊กนี้เคยพิสูจน์แล้วว่าเกิดจริง: โควตาหายไป 400m/256MB โดยผู้ใช้เห็นแค่ข้อความ error)
+// ต้องใช้ context.WithoutCancel: สาเหตุที่ deploy ล้มบ่อยที่สุดสาเหตุหนึ่งคือผู้ใช้ปิดหน้าเว็บ
+// ระหว่างรอ ซึ่ง cancel ctx ของ HTTP request ไปด้วย ถ้าใช้ ctx ตัวเดิมมาลบ DELETE จะล้มทันที
+// ด้วย "context canceled" แล้วแถวที่จองโควตาไว้ค้างตลอดไปโดยไม่มี workload จริง
+// (เคยเกิดจริง: โควตาหาย 400m/256MB โดยผู้ใช้เห็นแค่ข้อความ error)
 //
-// error ของการลบต้อง log เสมอ ไม่กลืนทิ้ง — ถ้าลบไม่สำเร็จแปลว่าโควตารั่วจริงๆ
-// ต้องมีร่องรอยให้ตามเก็บได้ ไม่ใช่หายเงียบไปทั้งที่ผู้ใช้เสียโควตาไปแล้ว
+// error ของการลบต้อง log เสมอ ไม่กลืนทิ้ง — ลบไม่สำเร็จแปลว่าโควตารั่วจริง ต้องมีร่องรอยให้ตามเก็บ
 func (m *ServiceManager) releaseReservation(ctx context.Context, serviceID int, cause error) {
 	err := m.db.WithContext(context.WithoutCancel(ctx)).
 		Delete(&entity.Service{}, serviceID).Error
@@ -183,13 +182,12 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
 }
 
-// Logs เปิด stream ของ log จาก service หนึ่งตัว — ไม่แตะ DB เลยนอกจากเช็คสิทธิ์ว่า service นี้
-// อยู่ใน namespace ของผู้เรียกจริง (กันดู log ของคนอื่นข้าม space) เพราะ log ไม่ใช่สิ่งที่ระบบนี้
-// เก็บสำเนาไว้ อ่านสดจากคลัสเตอร์ทุกครั้งที่ขอ
+// Logs เปิด stream ของ log จาก service หนึ่งตัว — ระบบไม่เก็บสำเนา log ไว้ อ่านสดจากคลัสเตอร์ทุกครั้ง
+// แตะ DB แค่เช็คว่า service นี้อยู่ใน namespace ของผู้เรียกจริง (กันดู log ข้าม space)
 //
-// data flow: ตรวจว่า service นี้เป็นของ namespace ที่อ้างจริง (แบบเดียวกับ Delete)
-// → หาชื่อ namespace บนคลัสเตอร์ → ส่งต่อให้ provisioner เปิด stream → คืน io.ReadCloser
-// ให้ ServiceController อ่านต่อออกไปที่ HTTP response โดยตรง ผู้เรียกมีหน้าที่ Close() เสมอ
+// data flow: ตรวจสิทธิ์แบบเดียวกับ Delete → หาชื่อ namespace บนคลัสเตอร์ → ให้ provisioner
+// เปิด stream → คืน io.ReadCloser ให้ ServiceController อ่านต่อออก HTTP response
+// ผู้เรียกมีหน้าที่ Close() เสมอ
 func (m *ServiceManager) Logs(ctx context.Context, serviceID, namespaceID int, opts LogOptions) (io.ReadCloser, error) {
 	var svc entity.Service
 	err := m.db.WithContext(ctx).

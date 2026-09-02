@@ -30,8 +30,7 @@ export const userNavItems: NavItem[] = [
   {
     label: "Alerts",
     icon: Bell,
-    // ไม่ตั้ง badge เป็นเลขตายตัวตรงนี้ — DashboardLayout เติมจำนวนที่ยังไม่ได้อ่านจริง
-    // จาก useAlertStore ให้ตอน render ไม่มีแจ้งเตือน = ไม่มีวงกลมแดงเลย
+    // ไม่ตั้ง badge เป็นเลขตายตัว — DashboardLayout เติมจำนวนที่ยังไม่ได้อ่านจริงให้ตอน render
     badgeSource: "alerts",
     path: `/${PATHS.alertuser}`,
     requiresVm: true
