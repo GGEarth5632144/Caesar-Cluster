@@ -61,7 +61,6 @@ return (
           <Route path={PATHS.register} element={<Register />} />
           <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
           <Route path={PATHS.resetPassword} element={<ResetPassword />} />
-          {/* redirect จาก /reset-password (ที่ backend ส่งในอีเมล) → hashed path จริง */}
           <Route path="/reset-password" element={<ResetPasswordRedirect />} />
           <Route path={PATHS.terms} element={<Terms />} />
           
@@ -101,6 +100,7 @@ return (
               )}
             </Route>
           </Route>
+          <Route path="*" element={<Navigate to={PATHS.login} replace />} />
         </Routes>
       </Suspense>
       <ActionModalHost />
