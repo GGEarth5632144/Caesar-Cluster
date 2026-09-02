@@ -8,16 +8,21 @@
 package mailer
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
 	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +69,7 @@ func (m *Mailer) SendPasswordResetEmail(ctx context.Context, toEmail, toName, re
 		ctx,
 		toEmail,
 		"รีเซ็ตรหัสผ่าน Caesar Cluster",
+		buildResetText(toName, resetLink, ttlMinutes),
 		buildResetHTML(toName, resetLink, ttlMinutes),
 	)
 }
@@ -73,7 +79,7 @@ func (m *Mailer) SendPasswordResetEmail(ctx context.Context, toEmail, toName, re
 // ลำดับตามโปรโตคอล: dial → (STARTTLS ถ้าไม่ใช่พอร์ต 465) → AUTH PLAIN → MAIL FROM → RCPT TO
 // → DATA → QUIT ซึ่ง QUIT สำคัญ: ถ้าไม่เรียก Gmail อาจถือว่า session ถูกตัดกลางคันแล้วไม่ส่งจริง
 // เลยต้องคืน error ของ Quit ด้วย ไม่ใช่ปิด connection เฉยๆ
-func (m *Mailer) send(ctx context.Context, toEmail, subject, htmlBody string) error {
+func (m *Mailer) send(ctx context.Context, toEmail, subject, textBody, htmlBody string) error {
 	if m.cfg.Username == "" || m.cfg.Password == "" {
 		return errors.New("mailer: ยังไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD")
 	}
@@ -84,10 +90,13 @@ func (m *Mailer) send(ctx context.Context, toEmail, subject, htmlBody string) er
 		return fmt.Errorf("mailer: อีเมลปลายทางไม่ถูกต้อง: %w", err)
 	}
 
-	msg := buildMessage(
+	msg, err := buildMessage(
 		mail.Address{Name: m.cfg.FromName, Address: m.cfg.Username},
-		*recipient, subject, htmlBody,
+		*recipient, subject, textBody, htmlBody,
 	)
+	if err != nil {
+		return fmt.Errorf("mailer: ประกอบเนื้อเมลไม่สำเร็จ: %w", err)
+	}
 
 	addr := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
 	dialer := &net.Dialer{Timeout: smtpTimeout}
@@ -151,38 +160,82 @@ func (m *Mailer) send(ctx context.Context, toEmail, subject, htmlBody string) er
 	return nil
 }
 
-// buildMessage ห่อ HTML ให้เป็นข้อความ MIME ที่ SMTP รับได้
+// buildMessage ห่อเนื้อหาให้เป็นข้อความ MIME ที่ SMTP รับได้
 //
-// จุดที่พลาดง่ายและเป็นเหตุผลที่ไม่ประกอบสตริงเอาเองแบบมักง่าย:
+// โครงเป็น multipart/alternative = ใส่ทั้งเวอร์ชัน text ล้วนและ HTML ไว้ในฉบับเดียว
+// mail client จะเลือกอันท้ายสุด (HTML) ถ้าแสดงได้ ไม่งั้นตกมาที่ text
+//
+// ที่ต้องมี text ล้วนด้วยไม่ใช่เรื่องความสวยงาม แต่เป็นเรื่องเข้า inbox:
+// อีเมลที่มีแต่ HTML ก้อนเดียวเป็นลายเซ็นคลาสสิกของสแปม (SpamAssassin มีกฎ MIME_HTML_ONLY ตรงๆ)
+// เพราะคนส่งเมลด้วยมือจริงๆ แทบไม่เคยส่งแบบนั้น
+//
+// จุดอื่นที่พลาดง่าย:
 //   - หัวข้อ/ชื่อผู้ส่งเป็นภาษาไทย ต้อง encode ตาม RFC 2047 ไม่งั้นขึ้นเป็นตัวขยะบน mail client
 //     (mail.Address.String() จัดการชื่อผู้ส่งให้เอง ส่วน Subject ใช้ mime.QEncoding)
-//   - เนื้อ HTML เป็น UTF-8 และมีบรรทัดยาวเกิน 998 ตัวอักษรที่ RFC 5321 กำหนด
-//     เลยเข้ารหัส base64 แล้วตัดบรรทัดที่ 76 ตัว ปลอดภัยกว่าส่ง 8-bit ดิบๆ
-//   - ทุกบรรทัดต้องจบด้วย CRLF ไม่ใช่ LF เดี่ยว
-func buildMessage(from, to mail.Address, subject, htmlBody string) []byte {
+//   - เนื้อความ UTF-8 มีบรรทัดยาวเกิน 998 ตัวอักษรที่ RFC 5321 กำหนด เลยต้องเข้ารหัส
+//     ใช้ quoted-printable แทน base64 เพราะตัวกรองบางตัวหักคะแนนเมลที่เอา text ไปหมกใน base64
+//     (เป็นวิธีที่สแปมใช้ซ่อนเนื้อหาจากตัวสแกน) ส่วน quoted-printable ยังอ่านออกด้วยตาเปล่า
+//   - ทุกบรรทัดต้องจบด้วย CRLF ไม่ใช่ LF เดี่ยว — ทั้ง multipart.Writer และ
+//     quotedprintable.Writer ของ stdlib จัดการให้ครบแล้ว
+func buildMessage(from, to mail.Address, subject, textBody, htmlBody string) ([]byte, error) {
+	var body bytes.Buffer
+	mp := multipart.NewWriter(&body)
+	// เรียง text ก่อน HTML ตาม RFC 2046: ส่วนที่อยู่ท้ายสุดคือส่วนที่ "อยากให้แสดงมากที่สุด"
+	for _, part := range []struct{ contentType, content string }{
+		{`text/plain; charset="UTF-8"`, textBody},
+		{`text/html; charset="UTF-8"`, htmlBody},
+	} {
+		w, err := mp.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {part.contentType},
+			"Content-Transfer-Encoding": {"quoted-printable"},
+		})
+		if err != nil {
+			return nil, err
+		}
+		qp := quotedprintable.NewWriter(w)
+		if _, err := qp.Write([]byte(part.content)); err != nil {
+			return nil, err
+		}
+		if err := qp.Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err := mp.Close(); err != nil {
+		return nil, err
+	}
+
 	var b strings.Builder
 	b.WriteString("From: " + from.String() + "\r\n")
 	b.WriteString("To: " + to.String() + "\r\n")
 	b.WriteString("Subject: " + mime.QEncoding.Encode("UTF-8", subject) + "\r\n")
 	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Message-ID: " + messageID(from.Address) + "\r\n")
+	// บอกว่าเป็นเมลที่ระบบสร้างเอง ไม่ใช่คนพิมพ์ — กันตัวตอบกลับอัตโนมัติ (out-of-office)
+	// ยิงกลับเข้ากล่อง no-reply เป็นลูป ตาม RFC 3834
+	b.WriteString("Auto-Submitted: auto-generated\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
-	b.WriteString("Content-Transfer-Encoding: base64\r\n")
+	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + mp.Boundary() + "\"\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(wrapBase64(base64.StdEncoding.EncodeToString([]byte(htmlBody))))
-	return []byte(b.String())
+	b.WriteString(body.String())
+	return []byte(b.String()), nil
 }
 
-// wrapBase64 ตัดสตริง base64 เป็นบรรทัดละ 76 ตัวคั่นด้วย CRLF ตามที่ RFC 2045 กำหนด
-func wrapBase64(s string) string {
-	const lineLen = 76
-	var b strings.Builder
-	for len(s) > lineLen {
-		b.WriteString(s[:lineLen] + "\r\n")
-		s = s[lineLen:]
+// messageID สร้างค่า header Message-ID ให้เมลแต่ละฉบับ
+//
+// เมลที่ไม่มี Message-ID ถูกหักคะแนนโดยตัวกรองแทบทุกตัว (SpamAssassin: MISSING_MID)
+// เพราะโปรแกรมเมลของจริงใส่มาให้เสมอ มีแต่สคริปต์ที่เขียนลวกๆ ที่ลืม
+// ฝั่งขวาของ @ ใช้โดเมนของผู้ส่งเองเพื่อให้สอดคล้องกับ From (โดเมนมั่วก็เป็นสัญญาณต้องสงสัยอีกแบบ)
+func messageID(fromAddress string) string {
+	domain := "localhost"
+	if at := strings.LastIndex(fromAddress, "@"); at >= 0 && at+1 < len(fromAddress) {
+		domain = fromAddress[at+1:]
 	}
-	b.WriteString(s + "\r\n")
-	return b.String()
+	var randomPart [16]byte
+	if _, err := rand.Read(randomPart[:]); err != nil {
+		// สุ่มไม่ได้ก็ยังต้องมี Message-ID ติดไป — ค่าที่ซ้ำได้ยังดีกว่าไม่มี header เลย
+		return fmt.Sprintf("<%d@%s>", time.Now().UnixNano(), domain)
+	}
+	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), hex.EncodeToString(randomPart[:]), domain)
 }
 
 // resetEmailTemplate = โครง HTML ของอีเมล วางแบบ table-based layout + inline style ล้วน
@@ -192,7 +245,7 @@ func wrapBase64(s string) string {
 const resetEmailTemplate = `<!DOCTYPE html>
 <html lang="th">
   <body style="margin:0;padding:0;background-color:#FFF8E8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <span style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;color:#FFF8E8;">ลิงก์สำหรับตั้งรหัสผ่านใหม่ของคุณ หมดอายุใน __TTL__ นาที</span>
+    <span style="display:none;max-height:0;max-width:0;overflow:hidden;">ลิงก์สำหรับตั้งรหัสผ่านใหม่ของคุณ หมดอายุใน __TTL__ นาที</span>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FFF8E8;">
       <tr>
         <td align="center" style="padding:40px 16px;">
@@ -263,4 +316,39 @@ func buildResetHTML(toName, resetLink string, ttlMinutes int) string {
 		"__TTL__", strconv.Itoa(ttlMinutes),
 	)
 	return replacer.Replace(resetEmailTemplate)
+}
+
+// resetTextTemplate = เวอร์ชัน text ล้วนของอีเมลฉบับเดียวกัน
+//
+// ต้องสื่อความให้ครบเท่า HTML จริงๆ ไม่ใช่ใส่ "กรุณาเปิดด้วยโปรแกรมที่รองรับ HTML" พอเป็นพิธี
+// เพราะตัวกรองบางตัวเทียบว่าสองส่วนเนื้อหาต่างกันมากไหม (ต่างกันมาก = สัญญาณของการซ่อนเนื้อหา
+// จากตัวสแกน) และคนที่อ่านเมลแบบ text ล้วนก็ต้องรีเซ็ตรหัสผ่านได้จริง
+const resetTextTemplate = `__GREETING__,
+
+เราได้รับคำขอรีเซ็ตรหัสผ่านสำหรับบัญชี Caesar Cluster ของคุณ
+เปิดลิงก์ด้านล่างเพื่อตั้งรหัสผ่านใหม่:
+
+__LINK__
+
+ลิงก์นี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว
+ถ้าคุณไม่ได้ร้องขอการรีเซ็ตรหัสผ่าน กรุณาเพิกเฉยต่ออีเมลฉบับนี้ บัญชีของคุณยังปลอดภัยดี
+
+--
+Caesar Cluster - Cloud for CPE Students
+อีเมลนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ
+`
+
+// buildResetText ประกอบเนื้อความ text ล้วนจาก resetTextTemplate
+// ไม่ต้อง escape ชื่อผู้ใช้เหมือนฝั่ง HTML เพราะ text ล้วนไม่มี markup ให้แทรก
+func buildResetText(toName, resetLink string, ttlMinutes int) string {
+	greeting := "สวัสดี"
+	if toName != "" {
+		greeting = "สวัสดีคุณ " + toName
+	}
+	replacer := strings.NewReplacer(
+		"__GREETING__", greeting,
+		"__LINK__", resetLink,
+		"__TTL__", strconv.Itoa(ttlMinutes),
+	)
+	return replacer.Replace(resetTextTemplate)
 }
