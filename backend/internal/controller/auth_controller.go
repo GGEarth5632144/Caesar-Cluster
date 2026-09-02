@@ -36,7 +36,13 @@ func NewAuthController(db *gorm.DB, cfg *config.Config) *AuthController {
 	return &AuthController{
 		db:     db,
 		cfg:    cfg,
-		mailer: mailer.New(cfg.ResendAPIKey, cfg.MailFrom),
+		mailer: mailer.New(mailer.Config{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			FromName: cfg.MailFromName,
+		}),
 	}
 }
 
@@ -246,7 +252,7 @@ const genericForgotMsg = "ถ้ามีบัญชีที่ใช้อี
 //   - หา user จาก gmail — ไม่ว่าจะเจอหรือไม่ ตอบ genericForgotMsg (200) เหมือนกันเป๊ะ กันเดาว่ามีบัญชีไหม
 //   - ถ้าเจอ: generate token (ลบ token เก่าที่ยังไม่ใช้ทิ้งก่อน) → ประกอบลิงก์ FRONTEND_ORIGIN/reset-password?token=...
 //     → ส่งอีเมลผ่าน mailer
-//   - ถ้า mailer พัง (เช่นยังไม่ได้ตั้ง RESEND_API_KEY) แค่ log ไว้ ยังตอบ 200 generic ไม่รั่วให้ client รู้
+//   - ถ้า mailer พัง (เช่นยังไม่ได้ตั้ง SMTP_USERNAME/SMTP_PASSWORD) แค่ log ไว้ ยังตอบ 200 generic ไม่รั่วให้ client รู้
 //
 // route นี้มี rate limit ต่อ IP (ดู router.Setup) กันสแปม/email-bombing
 func (h *AuthController) ForgotPassword(c *gin.Context) {

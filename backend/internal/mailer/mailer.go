@@ -1,89 +1,188 @@
-// Package mailer ส่งอีเมลผ่าน Resend API (https://resend.com) ด้วย net/http ตรงๆ
-// ไม่พึ่ง SDK ภายนอก — เข้ากับสไตล์โปรเจกต์นี้ที่มี dependency น้อย
+// Package mailer ส่งอีเมลผ่าน SMTP ตรงๆ ด้วย net/smtp ใน stdlib
+// ตั้งใจใช้กับบัญชี Gmail แบบ no-reply ที่สร้างไว้ให้ระบบนี้โดยเฉพาะ (smtp.gmail.com)
+// จึงไม่ต้องพึ่งบริการส่งเมลภายนอกและไม่ต้องมี API key ให้ดูแล/หมดอายุ
+//
+// ข้อควรรู้เรื่อง Gmail: ตั้งแต่ปี 2022 Google ปิดการล็อกอิน SMTP ด้วยรหัสผ่านบัญชีปกติแล้ว
+// ต้องเปิด 2-Step Verification ของบัญชี no-reply นั้นก่อน แล้วสร้าง "App Password" (16 ตัวอักษร)
+// มาใส่ใน SMTP_PASSWORD แทน — ดูขั้นตอนใน .env.example
 package mailer
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"crypto/tls"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"html"
-	"io"
-	"net/http"
+	"mime"
+	"net"
+	"net/mail"
+	"net/smtp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// resendEndpoint = endpoint ส่งอีเมลของ Resend
-const resendEndpoint = "https://api.resend.com/emails"
+// smtpTimeout = เพดานเวลาของการคุยกับ SMTP server หนึ่งครั้ง (ตั้งแต่ dial ยัน QUIT)
+// กัน handler ForgotPassword ค้างยาวถ้า Gmail ไม่ตอบ — ฝั่ง client รอ response อยู่
+const smtpTimeout = 15 * time.Second
 
-// Mailer ถือ API key + ผู้ส่ง (from) ไว้ยิง request ไปหา Resend
-// สร้างครั้งเดียวตอน start (ดู controller.NewAuthController) แล้วใช้ซ้ำได้ทุก request
+// implicitTLSPort = พอร์ตที่ห่อ TLS ตั้งแต่ต้น (SMTPS) ไม่ได้เริ่มด้วย plaintext แล้ว STARTTLS
+// Gmail เปิดทั้ง 587 (STARTTLS) และ 465 (implicit) — เลือกได้จาก SMTP_PORT
+const implicitTLSPort = 465
+
+// Config = ค่าที่ Mailer ต้องใช้ต่อกับ SMTP server — map ตรงกับ env SMTP_* ใน config.Config
+type Config struct {
+	Host     string // เช่น smtp.gmail.com
+	Port     int    // 587 = STARTTLS (ค่าปกติ), 465 = TLS ตั้งแต่ต้น
+	Username string // อีเมลเต็มของบัญชี no-reply เช่น caesar.cluster.noreply@gmail.com
+	Password string // App Password 16 ตัวของบัญชีนั้น (ไม่ใช่รหัสผ่านที่ใช้ล็อกอิน Google)
+	FromName string // ชื่อที่แสดงหน้าอีเมลผู้ส่ง เช่น "Caesar Cluster"
+}
+
+// Mailer ถือค่า SMTP ไว้ใช้ซ้ำทุก request — สร้างครั้งเดียวตอน start (ดู controller.NewAuthController)
+// ไม่ได้ถือ connection ค้างไว้: เปิด-ปิดต่อการส่งหนึ่งฉบับ เพราะระบบนี้ส่งเมลนานๆ ครั้ง
+// การคาสัญญาณ connection ไว้เฉยๆ มีแต่จะโดน Gmail ตัดทิ้งแล้วต้องมา handle reconnect เอง
 type Mailer struct {
-	apiKey string
-	from   string
-	client *http.Client
+	cfg Config
 }
 
-// New ประกอบ Mailer — apiKey/from มาจาก config
-func New(apiKey, from string) *Mailer {
-	return &Mailer{
-		apiKey: apiKey,
-		from:   from,
-		client: &http.Client{Timeout: 10 * time.Second},
-	}
-}
-
-// resendPayload = body ของ POST /emails ตามสเปกของ Resend
-type resendPayload struct {
-	From    string   `json:"from"`
-	To      []string `json:"to"`
-	Subject string   `json:"subject"`
-	HTML    string   `json:"html"`
+// New ประกอบ Mailer — ค่าทั้งหมดมาจาก config.Config
+func New(cfg Config) *Mailer {
+	return &Mailer{cfg: cfg}
 }
 
 // SendPasswordResetEmail ส่งอีเมลพร้อมลิงก์รีเซ็ตรหัสผ่านให้ผู้ใช้
 //
-// data flow: ประกอบ HTML body (ใส่ลิงก์ + เวลาหมดอายุ) → marshal → POST ไป Resend
-// พร้อม header Authorization: Bearer <apiKey> → คืน error ถ้าสร้าง request/ยิงไม่สำเร็จ หรือ Resend ตอบ >= 300
+// data flow: ประกอบ HTML body (ใส่ลิงก์ + เวลาหมดอายุ) → ห่อเป็นข้อความ MIME พร้อม header
+// → เปิด SMTP session ไป Gmail (STARTTLS + PLAIN auth) → MAIL/RCPT/DATA → QUIT
 //
-// ถ้า apiKey ว่าง (ยังไม่ได้ตั้ง RESEND_API_KEY) จะคืน error ทันทีโดยไม่ยิง request
+// ถ้ายังไม่ได้ตั้ง SMTP_USERNAME/SMTP_PASSWORD จะคืน error ทันทีโดยไม่ต่อ connection
 // ให้ caller (ForgotPassword) log ไว้ แต่ยังตอบ client เป็น generic message ตามเดิม
 func (m *Mailer) SendPasswordResetEmail(ctx context.Context, toEmail, toName, resetLink string, ttlMinutes int) error {
-	if m.apiKey == "" {
-		return fmt.Errorf("mailer: RESEND_API_KEY ยังไม่ได้ตั้งค่า")
-	}
+	return m.send(
+		ctx,
+		toEmail,
+		"รีเซ็ตรหัสผ่าน Caesar Cluster",
+		buildResetHTML(toName, resetLink, ttlMinutes),
+	)
+}
 
-	payload := resendPayload{
-		From:    m.from,
-		To:      []string{toEmail},
-		Subject: "รีเซ็ตรหัสผ่าน Caesar Cluster",
-		HTML:    buildResetHTML(toName, resetLink, ttlMinutes),
+// send คุยกับ SMTP server หนึ่งรอบเพื่อส่งอีเมล HTML หนึ่งฉบับ
+//
+// ลำดับตามโปรโตคอล: dial → (STARTTLS ถ้าไม่ใช่พอร์ต 465) → AUTH PLAIN → MAIL FROM → RCPT TO
+// → DATA → QUIT ซึ่ง QUIT สำคัญ: ถ้าไม่เรียก Gmail อาจถือว่า session ถูกตัดกลางคันแล้วไม่ส่งจริง
+// เลยต้องคืน error ของ Quit ด้วย ไม่ใช่ปิด connection เฉยๆ
+func (m *Mailer) send(ctx context.Context, toEmail, subject, htmlBody string) error {
+	if m.cfg.Username == "" || m.cfg.Password == "" {
+		return errors.New("mailer: ยังไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD")
 	}
-	body, err := json.Marshal(payload)
+	// ที่อยู่ปลายทางถูกเอาไปวางใน header To: ตรงๆ — ถ้ามี CR/LF ปนมาจะกลายเป็นการแทรก header เพิ่มได้
+	// (email header injection) mail.ParseAddress ตรวจให้ครบทั้งรูปแบบและอักขระต้องห้ามในตัวเดียว
+	recipient, err := mail.ParseAddress(toEmail)
 	if err != nil {
-		return err
+		return fmt.Errorf("mailer: อีเมลปลายทางไม่ถูกต้อง: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resendEndpoint, bytes.NewReader(body))
+	msg := buildMessage(
+		mail.Address{Name: m.cfg.FromName, Address: m.cfg.Username},
+		*recipient, subject, htmlBody,
+	)
+
+	addr := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
+	dialer := &net.Dialer{Timeout: smtpTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("mailer: ต่อ %s ไม่ได้: %w", addr, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	// deadline เดียวครอบทุกขั้นที่เหลือ — net/smtp ไม่มี timeout ของตัวเอง
+	// ถ้าไม่ตั้ง แล้ว server ค้างกลาง DATA จะรอไปเรื่อยๆ ไม่มีวันคืน
+	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
 
-	resp, err := m.client.Do(req)
+	tlsCfg := &tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12}
+	if m.cfg.Port == implicitTLSPort {
+		conn = tls.Client(conn, tlsCfg)
+	}
+
+	client, err := smtp.NewClient(conn, m.cfg.Host)
 	if err != nil {
-		return err
+		conn.Close()
+		return fmt.Errorf("mailer: เริ่ม SMTP session ไม่สำเร็จ: %w", err)
 	}
-	defer resp.Body.Close()
+	defer client.Close() // ปิด connection ทิ้งเสมอ แม้ทางที่ error ก่อนถึง Quit
 
-	if resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("resend ตอบกลับ %d: %s", resp.StatusCode, string(respBody))
+	if m.cfg.Port != implicitTLSPort {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			// ไม่ยอมส่งต่อแบบ plaintext เพราะขั้นถัดไปคือส่ง App Password ข้ามเน็ต
+			return errors.New("mailer: server ไม่รองรับ STARTTLS — ไม่ส่งรหัสผ่านผ่านช่องที่ไม่เข้ารหัส")
+		}
+		if err := client.StartTLS(tlsCfg); err != nil {
+			return fmt.Errorf("mailer: STARTTLS ไม่สำเร็จ: %w", err)
+		}
+	}
+
+	auth := smtp.PlainAuth("", m.cfg.Username, m.cfg.Password, m.cfg.Host)
+	if err := client.Auth(auth); err != nil {
+		return fmt.Errorf("mailer: ล็อกอิน SMTP ด้วยบัญชี %s ไม่ผ่าน "+
+			"(Gmail ต้องใช้ App Password 16 ตัว ไม่ใช่รหัสผ่านบัญชีปกติ): %w", m.cfg.Username, err)
+	}
+	// MAIL FROM ต้องเป็นบัญชีที่เพิ่ง auth ไป ไม่ใช่ชื่อที่โชว์ใน header From:
+	// Gmail ปฏิเสธ (หรือเขียนทับ) ถ้าใส่ที่อยู่อื่นที่ไม่ได้ตั้งเป็น alias ไว้
+	if err := client.Mail(m.cfg.Username); err != nil {
+		return fmt.Errorf("mailer: MAIL FROM ไม่ผ่าน: %w", err)
+	}
+	if err := client.Rcpt(recipient.Address); err != nil {
+		return fmt.Errorf("mailer: RCPT TO ไม่ผ่าน: %w", err)
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("mailer: เริ่มส่ง DATA ไม่สำเร็จ: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("mailer: เขียนเนื้อเมลไม่สำเร็จ: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("mailer: ปิดท้าย DATA ไม่สำเร็จ: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("mailer: QUIT ไม่สำเร็จ (server อาจไม่ได้ส่งเมลจริง): %w", err)
 	}
 	return nil
+}
+
+// buildMessage ห่อ HTML ให้เป็นข้อความ MIME ที่ SMTP รับได้
+//
+// จุดที่พลาดง่ายและเป็นเหตุผลที่ไม่ประกอบสตริงเอาเองแบบมักง่าย:
+//   - หัวข้อ/ชื่อผู้ส่งเป็นภาษาไทย ต้อง encode ตาม RFC 2047 ไม่งั้นขึ้นเป็นตัวขยะบน mail client
+//     (mail.Address.String() จัดการชื่อผู้ส่งให้เอง ส่วน Subject ใช้ mime.QEncoding)
+//   - เนื้อ HTML เป็น UTF-8 และมีบรรทัดยาวเกิน 998 ตัวอักษรที่ RFC 5321 กำหนด
+//     เลยเข้ารหัส base64 แล้วตัดบรรทัดที่ 76 ตัว ปลอดภัยกว่าส่ง 8-bit ดิบๆ
+//   - ทุกบรรทัดต้องจบด้วย CRLF ไม่ใช่ LF เดี่ยว
+func buildMessage(from, to mail.Address, subject, htmlBody string) []byte {
+	var b strings.Builder
+	b.WriteString("From: " + from.String() + "\r\n")
+	b.WriteString("To: " + to.String() + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("UTF-8", subject) + "\r\n")
+	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+	b.WriteString("Content-Transfer-Encoding: base64\r\n")
+	b.WriteString("\r\n")
+	b.WriteString(wrapBase64(base64.StdEncoding.EncodeToString([]byte(htmlBody))))
+	return []byte(b.String())
+}
+
+// wrapBase64 ตัดสตริง base64 เป็นบรรทัดละ 76 ตัวคั่นด้วย CRLF ตามที่ RFC 2045 กำหนด
+func wrapBase64(s string) string {
+	const lineLen = 76
+	var b strings.Builder
+	for len(s) > lineLen {
+		b.WriteString(s[:lineLen] + "\r\n")
+		s = s[lineLen:]
+	}
+	b.WriteString(s + "\r\n")
+	return b.String()
 }
 
 // resetEmailTemplate = โครง HTML ของอีเมล วางแบบ table-based layout + inline style ล้วน

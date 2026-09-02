@@ -38,9 +38,13 @@ type Config struct {
 	JWTTTLHours        int // อายุ JWT ปกติ (ชม.) — ไม่ติ๊ก remember ตอน login
 	JWTRememberTTLDays int // อายุ JWT ตอนติ๊ก "Remember For 30 Days" (วัน)
 
-	// ค่าสำหรับส่งอีเมลรีเซ็ตรหัสผ่านผ่าน Resend (https://resend.com)
-	ResendAPIKey         string // API key ของ Resend — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
-	MailFrom             string // ผู้ส่ง เช่น "Caesar Cluster <no-reply@your-domain>"
+	// ค่าสำหรับส่งอีเมลรีเซ็ตรหัสผ่านผ่าน SMTP ของบัญชี Gmail แบบ no-reply ที่ทำไว้ให้ระบบนี้
+	// (เลิกใช้ Resend API key แล้ว — ไม่ต้องมี key ของบริการภายนอกให้ดูแล/หมดอายุ)
+	SMTPHost             string // เซิร์ฟเวอร์ SMTP — Gmail คือ smtp.gmail.com
+	SMTPPort             int    // 587 = STARTTLS (ค่าปกติ), 465 = TLS ตั้งแต่ต้น
+	SMTPUsername         string // อีเมลเต็มของบัญชี no-reply — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
+	SMTPPassword         string // App Password 16 ตัวของบัญชีนั้น (ไม่ใช่รหัสผ่านที่ใช้ล็อกอิน Google)
+	MailFromName         string // ชื่อที่แสดงหน้าอีเมลผู้ส่ง — ตัวที่อยู่จะเป็น SMTPUsername เสมอ
 	ResetTokenTTLMinutes int    // อายุของลิงก์รีเซ็ตรหัสผ่าน (นาที)
 
 	// AlertScan = ค่าของตัวสแกน log หา error แล้วส่งเข้าหน้า Alerts
@@ -85,8 +89,13 @@ func Load() *Config {
 		JWTTTLHours:        getEnvInt("JWT_TTL_HOURS", 24),
 		JWTRememberTTLDays: getEnvInt("JWT_REMEMBER_TTL_DAYS", 30),
 
-		ResendAPIKey:         getEnv("RESEND_API_KEY", ""),
-		MailFrom:             getEnv("MAIL_FROM", "Caesar Cluster <onboarding@resend.dev>"),
+		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:     getEnvInt("SMTP_PORT", 587),
+		SMTPUsername: strings.TrimSpace(getEnv("SMTP_USERNAME", "")),
+		// Google แสดง App Password เป็น 4 ก้อนคั่นเว้นวรรค ("abcd efgh ijkl mnop") และคนมักคัดลอกมาทั้งอย่างนั้น
+		// SMTP ไม่รับช่องว่าง เลยถอดออกให้ตรงนี้ จะได้ไม่ต้องมานั่งงงว่าทำไม auth ไม่ผ่านทั้งที่รหัสถูก
+		SMTPPassword:         strings.ReplaceAll(getEnv("SMTP_PASSWORD", ""), " ", ""),
+		MailFromName:         getEnv("MAIL_FROM_NAME", "Caesar Cluster"),
 		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
 
 		AlertScan: AlertScanConfig{
@@ -107,8 +116,8 @@ func Load() *Config {
 	}
 	// อีเมลไม่ใช่ค่าที่ทั้งระบบต้องมีถึงจะ start ได้ (ต่างจาก DB/JWT) — แค่เตือนถ้าลืมตั้ง
 	// เพราะจะกระทบเฉพาะฟีเจอร์รีเซ็ตรหัสผ่าน ไม่ควรบล็อกทั้ง server สำหรับคนที่ dev ส่วนอื่นอยู่
-	if cfg.ResendAPIKey == "" {
-		log.Println("คำเตือน: ไม่ได้ตั้ง RESEND_API_KEY — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
+	if cfg.SMTPUsername == "" || cfg.SMTPPassword == "" {
+		log.Println("คำเตือน: ไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
 	}
 	return cfg
 }
