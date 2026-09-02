@@ -15,8 +15,19 @@ const (
 	ProvisionerKubernetes = "kubernetes"
 )
 
+// โหมดการรัน (ตั้งผ่าน env APP_ENV) — แยกออกจาก PROVISIONER โดยตั้งใจ
+//
+// เดิมโค้ดใช้ PROVISIONER=mock เป็นตัวบอกว่า "อยู่ในโหมด dev" แล้วไปเปิด CORS ให้ localhost ทุกพอร์ต
+// ซึ่งมัดสองเรื่องที่ไม่เกี่ยวกันเข้าด้วยกัน: จะแตะคลัสเตอร์จริงหรือไม่ กับจะผ่อน CORS หรือไม่
+// พอเอาขึ้นเครื่องจริงแล้วอยากรัน mock ไว้ก่อน (เช่น คลัสเตอร์ยังไม่พร้อม) จะได้ CORS หลวมติดมาด้วย
+const (
+	EnvDevelopment = "development"
+	EnvProduction  = "production"
+)
+
 // Config = ค่า runtime ทั้งหมดที่ระบบต้องใช้ อ่านมาจาก env ครั้งเดียวตอน start
 type Config struct {
+	AppEnv         string // development | production — คุมความเข้มของ config check
 	Port           string
 	DBUrl          string
 	JWTSecret      string
@@ -63,6 +74,7 @@ func Load() *Config {
 	_ = godotenv.Load() // ไม่มีไฟล์ .env ก็ไม่ error — ใช้ env จริงของเครื่องแทน
 
 	cfg := &Config{
+		AppEnv:         normalizeAppEnv(getEnv("APP_ENV", EnvDevelopment)),
 		Port:           getEnv("PORT", "8080"),
 		DBUrl:          getEnv("DB_URL", ""),
 		JWTSecret:      getEnv("JWT_SECRET", ""),
@@ -87,12 +99,31 @@ func Load() *Config {
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
 	}
+	// กันพลาดแบบที่เสียหายที่สุด: เอาขึ้นเครื่องจริงโดยลืมเปลี่ยน secret ตัวอย่าง
+	// ใครก็ตามที่อ่าน repo นี้จะปลอม JWT เป็น admin ได้ทันที เลยไม่ยอมให้ start
+	if cfg.IsProduction() && (cfg.JWTSecret == "dev-secret" || len(cfg.JWTSecret) < 32) {
+		log.Fatal("APP_ENV=production ต้องตั้ง JWT_SECRET ใหม่ยาวอย่างน้อย 32 ตัวอักษร " +
+			"สร้างได้ด้วยคำสั่ง: openssl rand -base64 48")
+	}
 	// อีเมลไม่ใช่ค่าที่ทั้งระบบต้องมีถึงจะ start ได้ (ต่างจาก DB/JWT) — แค่เตือนถ้าลืมตั้ง
 	// เพราะจะกระทบเฉพาะฟีเจอร์รีเซ็ตรหัสผ่าน ไม่ควรบล็อกทั้ง server สำหรับคนที่ dev ส่วนอื่นอยู่
 	if cfg.ResendAPIKey == "" {
 		log.Println("คำเตือน: ไม่ได้ตั้ง RESEND_API_KEY — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
 	}
 	return cfg
+}
+
+// IsProduction บอกว่ากำลังรันในโหมดเครื่องจริงหรือไม่ — ใช้คุมความเข้มของ config check
+func (c *Config) IsProduction() bool { return c.AppEnv == EnvProduction }
+
+// normalizeAppEnv ยอมรับทั้ง prod/production และ dev/development ให้เขียนสั้นได้
+func normalizeAppEnv(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "prod", "production":
+		return EnvProduction
+	default:
+		return EnvDevelopment
+	}
 }
 
 // getEnv อ่าน env ตาม key — ถ้าไม่มีหรือค่าว่างให้คืน fallback แทน

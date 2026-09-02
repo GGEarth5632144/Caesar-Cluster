@@ -5,7 +5,8 @@
 // (responseType: 'stream' ใช้ได้เฉพาะบน Node.js เท่านั้น)
 
 import { useAuthStore } from '@/store/authStore';
-import { API_URL } from '@/config/env';
+
+const API_URL = import.meta.env.VITE_API_URL;
 
 export interface LogLine {
   // key เดิม (ก่อนตัด timestamp) ใช้เป็น React key กันบรรทัดที่เนื้อหาซ้ำกันเป๊ะ (เช่น mock
