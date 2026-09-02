@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
+import { writePendingOtp } from "@/lib/otpSession";
 import { PATHS } from "@/config/routes";
 import AuthHeroArt from "@/components/AuthHeroArt";
 
@@ -63,14 +64,29 @@ export default function Register() {
         password: values.password,
       });
 
-      // /api/register ไม่คืน token มาด้วย เลย login ต่อทันทีเพื่อพาเข้า dashboard เลยโดยไม่ต้องกลับไปหน้า login
+      // /api/register ไม่คืน token มาด้วย เลย login ต่อทันทีเพื่อไม่ต้องให้ผู้ใช้กรอกซ้ำที่หน้า login
       // remember: true ให้ตรงกับ setAuth ด้านล่าง (เก็บ token ใน localStorage + อายุยาวเท่ากัน)
-      const { token, user } = await authApi.login({
+      const result = await authApi.login({
         student_id: values.student_id,
         password: values.password,
         remember: true,
       });
-      setAuth(token, user, true);
+
+      // บัญชีที่เพิ่งสมัครยังไม่มีเครื่องไหนที่ระบบเชื่อใจ /api/login จึงตอบขอ OTP มาเสมอ
+      // ทางนี้คือทางปกติของการสมัคร — พาไปหน้ายืนยันอีเมลแทนที่จะเข้า dashboard เลย
+      if (result.otp_required) {
+        writePendingOtp({
+          challengeToken: result.challenge_token,
+          gmailMasked: result.gmail_masked,
+          remember: true,
+          expiresAt: Date.now() + result.expires_in_seconds * 1000,
+          fromRegister: true,
+        });
+        navigate(PATHS.verifyOtp, { replace: true });
+        return;
+      }
+
+      setAuth(result.token, result.user, true);
       navigate("/", { replace: true });
     } catch (err) {
       setError("root", {

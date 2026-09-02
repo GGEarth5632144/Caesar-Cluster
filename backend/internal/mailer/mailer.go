@@ -74,6 +74,20 @@ func (m *Mailer) SendPasswordResetEmail(ctx context.Context, toEmail, toName, re
 	)
 }
 
+// SendOTPEmail ส่งรหัสยืนยันตัวตน 6 หลักให้ผู้ใช้ตอนล็อกอินจากเครื่องที่ระบบยังไม่รู้จัก
+//
+// ตั้งใจไม่ใส่รหัสไว้ใน subject และ preheader ถึงแม้จะสะดวกกว่า เพราะสองที่นี้คือส่วนที่
+// โผล่บนหน้าจอล็อกของมือถือ — คนที่หยิบเครื่องขึ้นมาดูเฉยๆ ไม่ควรอ่านรหัสได้โดยไม่ต้องปลดล็อก
+func (m *Mailer) SendOTPEmail(ctx context.Context, toEmail, toName, code string, ttlMinutes int) error {
+	return m.send(
+		ctx,
+		toEmail,
+		"รหัสยืนยันตัวตน Caesar Cluster",
+		buildOTPText(toName, code, ttlMinutes),
+		buildOTPHTML(toName, code, ttlMinutes),
+	)
+}
+
 // send คุยกับ SMTP server หนึ่งรอบเพื่อส่งอีเมล HTML หนึ่งฉบับ
 //
 // ลำดับตามโปรโตคอล: dial → (STARTTLS ถ้าไม่ใช่พอร์ต 465) → AUTH PLAIN → MAIL FROM → RCPT TO
@@ -351,4 +365,102 @@ func buildResetText(toName, resetLink string, ttlMinutes int) string {
 		"__TTL__", strconv.Itoa(ttlMinutes),
 	)
 	return replacer.Replace(resetTextTemplate)
+}
+
+// otpEmailTemplate = โครง HTML ของอีเมลรหัสยืนยัน ใช้โทนสี/โครง table เดียวกับ resetEmailTemplate
+// ตัวรหัสวางเป็นบล็อกใหญ่ ตัวอักษร monospace + เว้นวรรคระหว่างหลัก ให้อ่านแล้วพิมพ์ตามได้ไม่ผิด
+// (เลข 6 หลักติดกันในฟอนต์ปกติ อ่านสลับหลักกันง่ายมากบนจอเล็ก)
+const otpEmailTemplate = `<!DOCTYPE html>
+<html lang="th">
+  <body style="margin:0;padding:0;background-color:#FFF8E8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <span style="display:none;max-height:0;max-width:0;overflow:hidden;">รหัสยืนยันตัวตนสำหรับเข้าสู่ระบบ หมดอายุใน __TTL__ นาที</span>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FFF8E8;">
+      <tr>
+        <td align="center" style="padding:40px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:24px;overflow:hidden;">
+            <tr>
+              <td style="background-color:#BB6653;padding:36px 32px;text-align:center;">
+                <div style="font-size:26px;font-weight:700;color:#FFF8E8;letter-spacing:.3px;">Caesar Cluster</div>
+                <div style="margin-top:6px;font-size:13px;color:rgba(255,248,232,.8);">Cloud for CPE Students</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:40px 36px 8px;">
+                <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#211a14;">__GREETING__,</p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#211a14;">ใช้รหัสด้านล่างเพื่อยืนยันตัวตนและเข้าสู่ระบบ</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:28px 36px 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td align="center" style="background-color:#FFF8E8;border-radius:16px;padding:24px 16px;">
+                      <div style="font-family:'Courier New',Courier,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#BB6653;">__CODE__</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 36px 32px;">
+                <p style="margin:0;font-size:13px;line-height:1.6;color:#8a7d72;">รหัสนี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 36px;">
+                <hr style="border:none;border-top:1px solid #f0e6d6;margin:0;" />
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 36px 36px;">
+                <p style="margin:0;font-size:12px;line-height:1.6;color:#8a7d72;">ถ้าคุณไม่ได้เป็นคนพยายามเข้าสู่ระบบ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และควรเปลี่ยนรหัสผ่านของคุณ เพราะการที่รหัสนี้ถูกส่งออกไปแปลว่ามีคนกรอกรหัสผ่านของคุณได้ถูกต้อง</p>
+              </td>
+            </tr>
+          </table>
+          <p style="max-width:520px;margin:20px 0 0;font-size:11px;color:#a89a8c;text-align:center;">อีเมลนี้ส่งจากระบบอัตโนมัติของ Caesar Cluster กรุณาอย่าตอบกลับ</p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`
+
+// otpTextTemplate = เวอร์ชัน text ล้วนของอีเมลรหัสยืนยัน (เหตุผลที่ต้องมีดูที่ buildMessage)
+const otpTextTemplate = `__GREETING__,
+
+ใช้รหัสด้านล่างเพื่อยืนยันตัวตนและเข้าสู่ระบบ Caesar Cluster:
+
+    __CODE__
+
+รหัสนี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว
+
+ถ้าคุณไม่ได้เป็นคนพยายามเข้าสู่ระบบ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และควรเปลี่ยนรหัสผ่านของคุณ
+เพราะการที่รหัสนี้ถูกส่งออกไปแปลว่ามีคนกรอกรหัสผ่านของคุณได้ถูกต้อง
+
+--
+Caesar Cluster - Cloud for CPE Students
+อีเมลนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ
+`
+
+// buildOTPHTML / buildOTPText ประกอบเนื้อความจาก template — escape ชื่อเฉพาะฝั่ง HTML
+// ตัว code เป็นเลข 6 หลักที่ระบบสุ่มเอง ไม่ใช่ค่าจากผู้ใช้ จึงไม่ต้อง escape
+func buildOTPHTML(toName, code string, ttlMinutes int) string {
+	return otpReplacer(html.EscapeString(toName), code, ttlMinutes).Replace(otpEmailTemplate)
+}
+
+func buildOTPText(toName, code string, ttlMinutes int) string {
+	return otpReplacer(toName, code, ttlMinutes).Replace(otpTextTemplate)
+}
+
+// otpReplacer รวมการแทนค่าที่ทั้งสองเวอร์ชันใช้เหมือนกันไว้ที่เดียว
+// รับชื่อที่ escape มาแล้ว (หรือยังไม่ได้ escape สำหรับ text) เพื่อไม่ให้ฝั่ง text ติด &amp; มาด้วย
+func otpReplacer(escapedName, code string, ttlMinutes int) *strings.Replacer {
+	greeting := "สวัสดี"
+	if escapedName != "" {
+		greeting = "สวัสดีคุณ " + escapedName
+	}
+	return strings.NewReplacer(
+		"__GREETING__", greeting,
+		"__CODE__", code,
+		"__TTL__", strconv.Itoa(ttlMinutes),
+	)
 }

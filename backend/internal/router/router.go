@@ -22,6 +22,7 @@ import (
 // โครง route:
 //
 //	public       : GET /health, POST /api/register, POST /api/login,
+//	               POST /api/verify-otp, POST /api/resend-otp,
 //	               POST /api/forgot-password (rate limited), POST /api/reset-password
 //	ต้อง login   : GET /api/me, GET /api/request-templates,
 //	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
@@ -37,7 +38,8 @@ import (
 //	               POST /api/admin/request-templates, GET /api/admin/namespaces,
 //	               PATCH /api/admin/namespaces/:id/quota, DELETE /api/admin/namespaces/:id
 //
-// ลำดับที่ผู้ใช้ต้องเดิน: register → login → สร้าง/เข้าร่วม namespace → deploy service
+// ลำดับที่ผู้ใช้ต้องเดิน: register → login → ยืนยัน OTP ทางอีเมล (เฉพาะ role user จากเครื่องใหม่)
+// → สร้าง/เข้าร่วม namespace → deploy service
 func Setup(
 	cfg *config.Config,
 	db *gorm.DB,
@@ -84,6 +86,13 @@ func Setup(
 	{
 		api.POST("/register", authCtl.Register)
 		api.POST("/login", authCtl.Login)
+
+		// ยืนยันตัวตนด้วย OTP ทางอีเมล (public — ยังไม่มี JWT ตอนเรียกสองเส้นนี้)
+		// ทั้งคู่ไม่ได้ใส่ rate limit ต่อ IP โดยตั้งใจ เพราะนักศึกษาทั้งแล็บออกเน็ตผ่าน IP เดียวกัน
+		// จะกลายเป็นบล็อกกันเอง — ตัวคุมจริงอยู่ที่ระดับ "ใบ" แทน: กรอกผิดได้จำกัดครั้ง,
+		// ขอรหัสใหม่มี cooldown + เพดาน, และออกใบใหม่ได้จำกัดครั้งต่อ user (ดู auth_otp.go)
+		api.POST("/verify-otp", authCtl.VerifyOTP)
+		api.POST("/resend-otp", authCtl.ResendOTP)
 
 		// รีเซ็ตรหัสผ่านผ่านอีเมล (public) — /forgot-password มี rate limit ต่อ IP กันสแปม/email-bombing
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)

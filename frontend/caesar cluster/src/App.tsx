@@ -14,6 +14,7 @@ import { useAuthStore } from "@/store/authStore";
 const Login = lazy(() => import("@/pages/Login"));
 const Register = lazy(() => import("@/pages/Register"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const VerifyOtp = lazy(() => import("@/pages/VerifyOtp"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
 const Terms = lazy(() => import("@/pages/Terms"));
 const Setting = lazy(() => import("@/pages/Setting"));
@@ -61,6 +62,9 @@ return (
           <Route path={PATHS.login} element={<Login />} />
           <Route path={PATHS.register} element={<Register />} />
           <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
+          {/* กรอก OTP — public เพราะยังไม่มี token จนกว่าจะกรอกรหัสผ่าน
+              หน้าเองกันคนที่เดินมาผิดทางด้วยการเช็คใบยืนยันที่ค้างอยู่ใน sessionStorage */}
+          <Route path={PATHS.verifyOtp} element={<VerifyOtp />} />
           <Route path={PATHS.resetPassword} element={<ResetPassword />} />
           <Route path="/reset-password" element={<ResetPasswordRedirect />} />
           <Route path={PATHS.terms} element={<Terms />} />

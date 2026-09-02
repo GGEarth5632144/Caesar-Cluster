@@ -20,6 +20,23 @@ type LoginRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	Password  string `json:"password" binding:"required"`
 	Remember  bool   `json:"remember"`
+	// DeviceToken = ใบผ่านของเครื่องที่เคยกรอก OTP สำเร็จมาแล้ว (client เก็บไว้เอง ส่งมาถ้ามี)
+	// ตรงกับแถวใน trusted_devices ที่ยังไม่หมดอายุ = ข้ามขั้นกรอก OTP รอบนี้ไปได้เลย
+	DeviceToken string `json:"device_token"`
+}
+
+// VerifyOTPRequest = body ของ POST /api/verify-otp
+// data flow: challenge_token ได้มาจาก response ของ /api/login ตอนที่ระบบขอ OTP
+// ส่วน code คือเลข 6 หลักที่ผู้ใช้เปิดจากอีเมล → AuthController.VerifyOTP เอาไปแลกเป็น JWT
+type VerifyOTPRequest struct {
+	ChallengeToken string `json:"challenge_token" binding:"required"`
+	Code           string `json:"code" binding:"required,len=6,numeric"`
+}
+
+// ResendOTPRequest = body ของ POST /api/resend-otp
+// ใช้ใบเดิม (challenge เดิม) แต่ออกรหัสใหม่แล้วส่งอีเมลอีกรอบ — ดู AuthController.ResendOTP
+type ResendOTPRequest struct {
+	ChallengeToken string `json:"challenge_token" binding:"required"`
 }
 
 type UpdateUserRequest struct {

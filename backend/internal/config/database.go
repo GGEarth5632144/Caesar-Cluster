@@ -46,6 +46,8 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.EligibleStudent{},
 		&entity.User{},
 		&entity.PasswordResetToken{}, // ต้องมาหลัง users (อ้าง user_id)
+		&entity.OTPChallenge{},       // ต้องมาหลัง users (อ้าง user_id)
+		&entity.TrustedDevice{},      // ต้องมาหลัง users (อ้าง user_id)
 		&entity.Namespace{},
 		&entity.NamespaceInvite{}, // ต้องมาหลัง namespaces/users/eligible_students (อ้างทั้งสาม)
 		&entity.RequestTemplate{},
@@ -187,6 +189,18 @@ func addForeignKeys(db *gorm.DB) error {
 			// ลบ user → token รีเซ็ตรหัสผ่านของคนนั้นหายตามไปด้วย
 			name: "fk_password_reset_tokens_user_id",
 			ddl: `ALTER TABLE password_reset_tokens ADD CONSTRAINT fk_password_reset_tokens_user_id
+			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		{
+			// ลบ user → ใบยืนยัน OTP ที่ค้างอยู่ของคนนั้นหายตามไปด้วย
+			name: "fk_otp_challenges_user_id",
+			ddl: `ALTER TABLE otp_challenges ADD CONSTRAINT fk_otp_challenges_user_id
+			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+		},
+		{
+			// ลบ user → เครื่องที่เคยเชื่อใจของคนนั้นหายตามไปด้วย
+			name: "fk_trusted_devices_user_id",
+			ddl: `ALTER TABLE trusted_devices ADD CONSTRAINT fk_trusted_devices_user_id
 			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
 		},
 		{

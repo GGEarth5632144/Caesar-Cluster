@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
+import { writePendingOtp } from "@/lib/otpSession";
 import { cn } from "@/lib/utils";
 
 const loginSchema = z.object({
@@ -42,12 +43,27 @@ export default function Login() {
 
   const onSubmit = async (values: LoginForm) => {
     try {
-      const { token, user } = await authApi.login({
+      const result = await authApi.login({
         student_id: values.student_id,
         password: values.password,
         remember: values.remember,
       });
-      setAuth(token, user, values.remember);
+
+      // รหัสผ่านถูกแล้ว แต่เป็นผู้ใช้ทั่วไปที่มาจากเครื่องที่ยังไม่เคยยืนยัน — backend ส่งรหัส
+      // ไปทางอีเมลแล้ว ยังไม่ให้ token มา ต้องไปกรอกรหัสที่หน้า verify ก่อน
+      if (result.otp_required) {
+        writePendingOtp({
+          challengeToken: result.challenge_token,
+          gmailMasked: result.gmail_masked,
+          remember: values.remember,
+          expiresAt: Date.now() + result.expires_in_seconds * 1000,
+          fromRegister: false,
+        });
+        navigate(PATHS.verifyOtp, { replace: true });
+        return;
+      }
+
+      setAuth(result.token, result.user, values.remember);
       navigate("/", { replace: true });
     } catch (err) {
       setError("root", {

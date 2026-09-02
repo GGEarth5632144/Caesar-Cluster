@@ -34,8 +34,8 @@ type AuthController struct {
 // สร้าง mailer จาก config ในตัว (ไม่ต้อง thread ผ่าน main/router เพิ่ม)
 func NewAuthController(db *gorm.DB, cfg *config.Config) *AuthController {
 	return &AuthController{
-		db:     db,
-		cfg:    cfg,
+		db:  db,
+		cfg: cfg,
 		mailer: mailer.New(mailer.Config{
 			Host:     cfg.SMTPHost,
 			Port:     cfg.SMTPPort,
@@ -142,12 +142,15 @@ func (h *AuthController) Register(c *gin.Context) {
 	})
 }
 
-// Login ตรวจรหัสผ่านแล้วออก JWT
+// Login ตรวจรหัสผ่านแล้วออก JWT — หรือขอ OTP ก่อนถ้าเป็นผู้ใช้ทั่วไปที่มาจากเครื่องแปลกหน้า
 //
 // data flow:
 //   - JSON body → หา user จาก student_id → เทียบ bcrypt
 //   - อ่านชื่อ role จากตาราง roles (ผ่าน role_id) เพื่อใส่ลง claim "role"
-//   - เซ็น JWT (sub=id, role=ชื่อ role, exp = JWTTTLHours ปกติ หรือ JWTRememberTTLDays ถ้าติ๊ก remember) → ตอบ token + ข้อมูล user
+//   - ถ้า role เป็น "user" และ device_token ที่แนบมาไม่ใช่เครื่องที่เคยผ่าน OTP ไว้
+//     → ยังไม่ออก JWT แต่ส่งรหัส 6 หลักไปทางอีเมลแล้วตอบ challenge_token กลับไปแทน
+//     (ดู startOTPChallenge ใน auth_otp.go — client เอาไปแลก JWT ต่อที่ /api/verify-otp)
+//   - นอกนั้น (admin หรือเครื่องที่เชื่อใจแล้ว) เซ็น JWT ตอบกลับทันทีเหมือนเดิม
 //
 // error ของ "หา user ไม่เจอ" กับ "รหัสผิด" ตอบเหมือนกัน เพื่อไม่ให้เดาได้ว่ามี student_id นี้ในระบบหรือไม่
 func (h *AuthController) Login(c *gin.Context) {
@@ -178,19 +181,43 @@ func (h *AuthController) Login(c *gin.Context) {
 		return
 	}
 
+	// OTP บังคับเฉพาะ role "user" ตามที่ตกลงกันไว้ — บัญชี admin ล็อกอินเหมือนเดิมทุกอย่าง
+	// เครื่องที่เคยผ่าน OTP มาแล้วภายใน trustedDeviceTTL ก็ข้ามไปได้ (ดู auth_otp.go)
+	if role.Name == entity.RoleUser && !deviceTrusted(db, user.ID, req.DeviceToken) {
+		h.startOTPChallenge(c, db, &user, req.Remember)
+		return
+	}
+
+	payload, err := h.buildSession(&user, role.Name, req.Remember)
+	if err != nil {
+		log.Printf("login: สร้าง token ให้ user %d ไม่สำเร็จ: %v", user.ID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง token ไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, payload)
+}
+
+// buildSession ประกอบ response ของการล็อกอินที่ผ่านครบทุกด่านแล้ว: JWT + ข้อมูล user
+//
+// แยกออกมาเป็นเมธอดเพราะมีสองทางเข้าที่ต้องได้ผลลัพธ์หน้าตาเดียวกันเป๊ะ — Login (เครื่องที่เชื่อใจ
+// หรือ admin) กับ VerifyOTP (เพิ่งกรอกรหัสถูก) ถ้าปล่อยให้ต่างคนต่างประกอบ วันหนึ่งจะมีฝั่งใดฝั่งหนึ่ง
+// ลืมใส่ field ใหม่แล้วหน้าเว็บพังเฉพาะทางเข้าที่คนไม่ค่อยเดิน
+//
+// otp_required: false ติดไปด้วยเสมอ ให้ฝั่งหน้าเว็บดู field เดียวก็แยกออกว่าได้ token มาแล้ว
+// หรือยังต้องไปกรอก OTP ต่อ ไม่ต้องเดาจากการมี/ไม่มีของ field อื่น
+func (h *AuthController) buildSession(user *entity.User, roleName string, remember bool) (gin.H, error) {
 	ttl := time.Duration(h.cfg.JWTTTLHours) * time.Hour
-	if req.Remember {
+	if remember {
 		ttl = time.Duration(h.cfg.JWTRememberTTLDays) * 24 * time.Hour
 	}
 	claims := jwt.MapClaims{
 		"sub":  user.ID,
-		"role": role.Name,
+		"role": roleName,
 		"exp":  time.Now().Add(ttl).Unix(),
 	}
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(h.cfg.JWTSecret))
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง token ไม่สำเร็จ")
-		return
+		return nil, err
 	}
 
 	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
@@ -198,8 +225,9 @@ func (h *AuthController) Login(c *gin.Context) {
 		log.Printf("login: คำนวณชั้นปีของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
 	}
 
-	utils.OK(c, http.StatusOK, gin.H{
-		"token": token,
+	return gin.H{
+		"otp_required": false,
+		"token":        token,
 		"user": gin.H{
 			"id":           user.ID,
 			"student_id":   user.StudentID,
@@ -207,10 +235,10 @@ func (h *AuthController) Login(c *gin.Context) {
 			"nick_name":    user.NickName,
 			"gmail":        user.Gmail,
 			"year_level":   yearLevel,
-			"role":         role.Name,
+			"role":         roleName,
 			"namespace_id": user.NamespaceID,
 		},
-	})
+	}, nil
 }
 
 // Me คืนข้อมูลของผู้ใช้ที่ล็อกอินอยู่ (ให้ frontend รู้ว่ามี namespace แล้วหรือยัง)
