@@ -193,11 +193,63 @@
   animation: cc-logo-bounce 1.2s ease-in-out infinite;
 }
 
+/* ภาพประกอบหน้า Login/Register: แผ่นคลัสเตอร์ลอยขึ้นลง + จุดข้อมูลวิ่งตามเส้นเชื่อม */
+@keyframes cc-hero-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes cc-hero-packet {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15%, 75% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-162px);
+    opacity: 0;
+  }
+}
+
+@keyframes cc-hero-node {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.cc-hero-float {
+  animation: cc-hero-float 5s ease-in-out infinite;
+}
+
+.cc-hero-packet {
+  animation: cc-hero-packet 2.8s linear infinite;
+}
+
+.cc-hero-node {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cc-hero-node 2.4s ease-in-out infinite;
+}
+
 /* ผู้ใช้ที่ตั้งค่าลดการเคลื่อนไหว — ปิด animation ทั้งหมด */
 @media (prefers-reduced-motion: reduce) {
   .cc-skeleton::after,
   .cc-logo-pulse,
-  .cc-logo-dot {
+  .cc-logo-dot,
+  .cc-hero-float,
+  .cc-hero-packet,
+  .cc-hero-node {
     animation: none;
   }
 }
