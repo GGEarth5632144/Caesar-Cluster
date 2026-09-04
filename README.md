@@ -124,10 +124,12 @@ npm run dev
 
 | Variable | Default | ความหมาย |
 |----------|---------|-----------|
+| `VITE_API_URL` | `http://localhost:8080/api` | URL ของ Caesar Cluster API |
 | `VITE_AI_API_URL` | `http://localhost:8090` | URL ของ Cluster AI Go server |
 | `VITE_MOCK_AI` | `false` | `true` = จำลอง AI pipeline ทั้งหมด ไม่ต้องรัน backend |
 
-คัดลอก `.env.local.example` → `.env.local` แล้วแก้ค่าตามต้องการ
+ค่าทั้งหมดอยู่ในไฟล์ `.env` **ไฟล์เดียวที่ root ของ repo** (คัดลอกจาก `.env.example`)
+ไม่ต้องสร้าง `.env` แยกในโฟลเดอร์ frontend — `vite.config.ts` ตั้ง `envDir` ให้ไปอ่านที่ root แล้ว
 
 ### รันทั้ง stack ด้วย Docker (frontend + backend + db)
 
@@ -141,6 +143,9 @@ Go/Node/Postgres บนเครื่องเอง — ต้องมีแ�
 cp .env.example .env      # ค่า default ใช้ได้เลย ไม่ต้องแก้อะไร
 docker compose up --build
 ```
+
+> `.env` ที่ root เป็นไฟล์เดียวของทั้งโปรเจค — postgres, backend และ frontend อ่านจากไฟล์นี้ทั้งหมด
+> (ไม่มี `.env` แยกใน `backend/` หรือ `frontend/` แล้ว)
 
 รอจน `seed` service รันจบ (สร้าง roles + admin + ข้อมูลทดสอบให้อัตโนมัติ) แล้วเข้าใช้งานได้ที่:
 
