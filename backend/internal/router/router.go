@@ -84,6 +84,7 @@ func Setup(
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)
 		api.POST("/reset-password", authCtl.ResetPassword)
 		api.GET("/telemetry", telemetryCtrl.GetTelemetry)
+		api.GET("/telemetry/history", telemetryCtrl.GetTelemetryHistory)
 
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret))
 		{
