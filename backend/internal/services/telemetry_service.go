@@ -1,15 +1,16 @@
 package services
 
 import (
+	"backend/internal/dto"
+	"backend/internal/entity"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"sort"
 	"strconv"
 	"time"
-	"os"
-	"backend/internal/dto"
-	"backend/internal/entity"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -145,4 +146,124 @@ func (s *TelemetryService) GetAllTelemetry() ([]entity.NodeTelemetry, error) {
 	// ใช้คำสั่ง Find เพื่อดึงข้อมูลทั้งหมดออกมา
 	err := s.DB.Find(&records).Error
 	return records, err
+}
+
+// --- ส่วนที่ต้องเพิ่มสำหรับ History (กราฟ) ---
+
+// ClusterHistoryData เป็นโครงสร้างสำหรับส่งให้ React (Recharts)
+type ClusterHistoryData struct {
+	Time        string  `json:"time"`        // เวลาแกน X (เช่น "10:30")
+	AvgTemp     float64 `json:"avgTemp"`     // อุณหภูมิเฉลี่ยคลัสเตอร์
+	TotalRam    float64 `json:"totalRam"`    // แรมรวมที่ใช้งาน (MB)
+	OnlineNodes int     `json:"onlineNodes"` // จำนวนโหนดที่ออนไลน์
+}
+
+// queryPrometheusRange เป็น Helper สำหรับยิง HTTP GET ไปที่ API query_range ของ Prometheus
+func (s *TelemetryService) queryPrometheusRange(promQuery string, start, end int64, step string) (*dto.PrometheusResponse, error) {
+	// แนะนำให้กำหนด ENV สำหรับเส้นนี้แยกต่างหาก เพื่อความคลีน (ดูคำอธิบายด้านล่าง)
+	promRangeURL := os.Getenv("PATH_PROMETHEUS_QUERY_RANGE") 
+	
+	apiURL := fmt.Sprintf(promRangeURL, url.QueryEscape(promQuery), start, end, step)
+	
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result dto.PrometheusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetHistoryFromPrometheus ดึงข้อมูลกราฟย้อนหลังและจับคู่ข้อมูล (Merge) ตามแกนเวลา
+func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]ClusterHistoryData, error) {
+	now := time.Now()
+	end := now.Unix()
+	var start int64
+	var step string
+
+	// กำหนดช่วงเวลา (Time Window) และความถี่ (Step) ตามที่ UI ส่งมา
+	switch timeRange {
+	case "1h":
+		start = now.Add(-1 * time.Hour).Unix()
+		step = "1m" // จุดกราฟทุกๆ 1 นาที
+	case "6h":
+		start = now.Add(-6 * time.Hour).Unix()
+		step = "5m"
+	case "24h":
+		start = now.Add(-24 * time.Hour).Unix()
+		step = "15m"
+	case "7d":
+		start = now.Add(-7 * 24 * time.Hour).Unix()
+		step = "1h"
+	case "30d":
+		start = now.Add(-30 * 24 * time.Hour).Unix()
+		step = "6h"
+	default: // Default 1 ชั่วโมง
+		start = now.Add(-1 * time.Hour).Unix()
+		step = "1m"
+	}
+
+	// ใช้ Map เพื่อจับคู่ค่า Temp, RAM, OnlineNode ที่มี Timestamp (แกน X) ตรงกัน
+	historyMap := make(map[int64]*ClusterHistoryData)
+
+	parseFloat := func(val interface{}) float64 {
+		strVal, ok := val.(string)
+		if !ok {
+			return 0
+		}
+		f, _ := strconv.ParseFloat(strVal, 64)
+		return f
+	}
+
+	// 1. ดึง Avg Temp (ใช้ PromQL คำนวณค่าเฉลี่ยของทั้งคลัสเตอร์มาให้เลย)
+	tempRes, _ := s.queryPrometheusRange(`avg(node_hwmon_temp_celsius)`, start, end, step)
+	if tempRes != nil && tempRes.Status == "success" && len(tempRes.Data.Result) > 0 {
+		for _, val := range tempRes.Data.Result[0].Values {
+			ts := int64(val[0].(float64)) // Prometheus คืน Timestamp เป็น float64
+			historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format("15:04")} // แปลงเป็น HH:mm
+			historyMap[ts].AvgTemp = parseFloat(val[1])
+		}
+	}
+
+	// 2. ดึง Total RAM Used (MB) ของทั้งคลัสเตอร์
+	ramRes, _ := s.queryPrometheusRange(`sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)`, start, end, step)
+	if ramRes != nil && ramRes.Status == "success" && len(ramRes.Data.Result) > 0 {
+		for _, val := range ramRes.Data.Result[0].Values {
+			ts := int64(val[0].(float64))
+			if _, exists := historyMap[ts]; !exists {
+				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format("15:04")}
+			}
+			historyMap[ts].TotalRam = parseFloat(val[1]) / (1024 * 1024)
+		}
+	}
+
+	// 3. ดึง Online Nodes รวม
+	upRes, _ := s.queryPrometheusRange(`sum(up)`, start, end, step)
+	if upRes != nil && upRes.Status == "success" && len(upRes.Data.Result) > 0 {
+		for _, val := range upRes.Data.Result[0].Values {
+			ts := int64(val[0].(float64))
+			if _, exists := historyMap[ts]; !exists {
+				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format("15:04")}
+			}
+			historyMap[ts].OnlineNodes = int(parseFloat(val[1]))
+		}
+	}
+
+	// เตรียมแปลงข้อมูล Map เป็น Slice และเรียงลำดับเวลา (Sort) จากเก่าไปใหม่
+	var results []ClusterHistoryData
+	var keys []int64
+	for k := range historyMap {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	for _, k := range keys {
+		results = append(results, *historyMap[k])
+	}
+
+	return results, nil
 }
