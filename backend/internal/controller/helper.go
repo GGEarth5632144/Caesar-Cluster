@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -92,3 +93,10 @@ func currentNamespaceID(c *gin.Context, db *gorm.DB) (int, bool) {
 	}
 	return *user.NamespaceID, true
 }
+
+// dbNow คืนเวลาปัจจุบันเป็น UTC — ใช้ทุกครั้งที่เขียนเวลาลง DB หรือส่งเวลาไปเทียบใน SQL
+//
+// คอลัมน์เวลาเป็น timestamp without time zone คือเก็บแต่ตัวเลขหน้าปัด ไม่เก็บ offset เขียนด้วย
+// time.Now() ตรงๆ บนเครื่อง UTC+7 จะได้ "11:44" ซึ่งพออ่านกลับถูกตีความเป็น UTC = อนาคตอีก 7 ชม.
+// (เคยทำให้ลิงก์อายุ 24 ชม. มีอายุจริง 31 ชม. ส่วน created_at ที่ GORM จัดการเองเป็น UTC อยู่แล้ว)
+func dbNow() time.Time { return time.Now().UTC() }

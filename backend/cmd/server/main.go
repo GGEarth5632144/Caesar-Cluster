@@ -12,19 +12,26 @@ import (
 	"time"
 
 	"backend/internal/config"
+	"backend/internal/controller"
 	"backend/internal/router"
 	"backend/internal/services"
 )
 
-// main = จุดเริ่มของ API server — ประกอบทุก dependency เข้าด้วยกันแล้วเปิดรับ HTTP
-//
-// data flow:
-//   - อ่าน config จาก env (config.Load) → ต่อ DB + AutoMigrate (config.ConnectDB)
-//   - เลือก provisioner (mock/kubernetes) ตาม env แล้วฉีดเข้า service layer
-//   - ประกอบ service layer แล้วส่งให้ router.Setup → r.Run เปิด port รอ request
+// main = จุดเริ่มของ API server: อ่าน config → ต่อ DB + AutoMigrate → เลือก provisioner
+// → ประกอบ service layer → router.Setup → เปิด port รอ request
 func main() {
 	cfg := config.Load()
 	db := config.ConnectDB(cfg.DBUrl) // connect + AutoMigrate ในตัว
+
+	// ทดสอบค่า SMTP ตั้งแต่ start แทนที่จะไปรู้ตอนคนแรกกดสมัครแล้วไม่ผ่าน (ส่งไม่ออก = สมัครไม่ได้เลย)
+	// ไม่ log.Fatal เพราะ SMTP ล่มชั่วคราวไม่ควรทำให้ทั้งระบบขึ้นไม่ได้ ส่วน "ลืมตั้งค่า" config.Load กันไว้แล้ว
+	smtpCtx, smtpCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := controller.CheckMailer(smtpCtx, cfg); err != nil {
+		log.Printf("คำเตือน: ต่อ SMTP ไม่สำเร็จ — สมัครสมาชิกและรีเซ็ตรหัสผ่านจะใช้งานไม่ได้จนกว่าจะแก้: %v", err)
+	} else {
+		log.Println("smtp connection verified ✓")
+	}
+	smtpCancel()
 
 	// เลือกตัวสร้างของจริงบน cluster: kubernetes ของจริง หรือ mock ตอน dev
 	var prov services.Provisioner
@@ -36,11 +43,8 @@ func main() {
 		log.Println("provisioner: MOCK")
 	}
 
-	// ประกอบ service layer:
-	//   quota     = คุมโควตาของ namespace (มาแทน AllocationService ที่เคยไล่หา node)
-	//   nsMgr     = สร้าง/เข้าร่วม space + ปรับโควตา
-	//   svcMgr    = deploy/ลบ workload โดยผ่านการเช็คโควตาจาก quota เสมอ
-	//   inviteMgr = เชิญ/ตอบรับ/ปฏิเสธคำเชิญเข้ากลุ่ม (ไม่แตะ cluster เลย ไม่ต้องรับ prov)
+	// service layer: quota คุมโควตาของ namespace, nsMgr สร้าง/เข้าร่วม space,
+	// svcMgr deploy/ลบ workload (ผ่านการเช็คโควตาเสมอ), inviteMgr คำเชิญเข้ากลุ่ม (ไม่แตะ cluster)
 	quota := services.NewQuotaService(db)
 	nsMgr := services.NewNamespaceManager(db, quota, prov)
 	svcMgr := services.NewServiceManager(db, quota, prov)
@@ -50,9 +54,8 @@ func main() {
 
 	alertMgr := services.NewAlertManager(db)
 
-	// ผูก context ไว้กับสัญญาณปิดโปรแกรม (SIGINT/SIGTERM) ให้ HTTP server และ background worker
-	// ปิดตัวจากสัญญาณเดียวกัน — เดิม r.Run() บล็อกอยู่โดยไม่ผูกกับ context นี้ กด Ctrl+C แล้ว
-	// ตัวสแกน log หยุด แต่โปรแกรมค้างต่อเพราะไม่มีอะไรไปสั่ง Shutdown ให้ HTTP server
+	// ผูก context กับสัญญาณปิดโปรแกรม ให้ HTTP server และ background worker ปิดจากสัญญาณเดียวกัน
+	// เดิม r.Run() ไม่ผูกกับ context นี้ กด Ctrl+C แล้วตัวสแกนหยุดแต่โปรแกรมค้างต่อ
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -71,10 +74,8 @@ func main() {
 	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, alertMgr)
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 
-	// ListenAndServe ล้มเหลว (พอร์ตไม่ว่าง, bind ไม่ได้) ต้องไม่ log.Fatal ตรงนี้: os.Exit
-	// ข้ามทั้ง Shutdown และ wg.Wait() ทิ้ง ตัวสแกน log จะถูกฆ่ากลางรอบ เรียก stop() ให้เดิน
-	// ทางปิดปกติแทน แล้วค่อยจบด้วย exit code ที่ถูกหลังทุกอย่างเก็บของเสร็จ
-	// (อ่าน serveErr ได้หลัง wg.Wait() เท่านั้น ซึ่งเป็นจุดที่ happens-before การเขียนแล้ว)
+	// ListenAndServe ล้มเหลวแล้วห้าม log.Fatal ตรงนี้ — os.Exit จะข้าม Shutdown และ wg.Wait()
+	// ทำให้ตัวสแกน log ถูกฆ่ากลางรอบ เรียก stop() ให้เดินทางปิดปกติแล้วค่อยจบด้วย exit code ที่ถูก
 	var serveErr error
 	wg.Add(1)
 	go func() {

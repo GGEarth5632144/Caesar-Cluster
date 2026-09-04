@@ -253,8 +253,12 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/health` | ping DB |
-| POST | `/api/register` | ต้องอยู่ใน `eligible_students` และเป็นสาขา CPE ไม่งั้น 403 |
-| POST | `/api/login` | คืน JWT (อายุ 24 ชม.) |
+| POST | `/api/register` | ต้องอยู่ใน `eligible_students` และเป็นสาขา CPE ไม่งั้น 403 — **ไม่คืน JWT** แต่ส่งลิงก์ยืนยันไปทางอีเมล (ส่งเมลไม่ออก = ยกเลิกการสมัครทั้งรายการ ไม่มีบัญชีค้าง) |
+| POST | `/api/login` | คืน JWT (อายุ 24 ชม.) — บัญชีที่ยังไม่กดลิงก์ยืนยันได้ `403 EMAIL_NOT_VERIFIED` |
+| POST | `/api/verify-email` | เปิดใช้งานบัญชี **แล้วคืน JWT เลย** (เข้า dashboard ได้ทันที) กดซ้ำได้ `{"already": true}` ไม่มี token |
+| POST | `/api/resend-verification` | ขอลิงก์ยืนยันใบใหม่ — ตอบข้อความเดียวกันเสมอ กันเดาว่ามีบัญชีไหม (rate limit ต่อ IP + cooldown 60 วิ ต่อบัญชี) |
+| POST | `/api/forgot-password` | ขอลิงก์รีเซ็ตรหัสผ่าน (rate limit ต่อ IP) |
+| POST | `/api/reset-password` | ตั้งรหัสผ่านใหม่จาก token ในลิงก์ — ถือว่ายืนยันอีเมลไปในตัว (กดลิงก์ได้ = เปิดกล่องนั้นได้จริง) |
 
 ### ต้อง login (`Authorization: Bearer <token>`)
 
@@ -292,6 +296,7 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | PATCH | `/api/admin/namespaces/:id/quota` | ปรับโควตา (group ≤ 8 core) |
 | DELETE | `/api/admin/namespaces/:id` | ลบ namespace ทิ้ง (ลบได้แม้มีสมาชิกอยู่ ตามดุลยพินิจแอดมิน) |
 | DELETE | `/api/admin/users/:id` | ลบผู้ใช้ — ถอน namespace ที่เขาเป็นเจ้าของ + service ที่ไปสร้างค้างไว้ใน space คนอื่น ออกจากคลัสเตอร์ให้ก่อน |
+| GET | `/api/admin/email-deliveries` | ประวัติการส่งอีเมลทุกฉบับ (สำเร็จ/ล้มเหลว + error + Message-ID) กรองด้วย `?gmail=`, `?status=`, `?purpose=`, `?limit=` |
 
 ### ลำดับที่ผู้ใช้ต้องเดิน
 

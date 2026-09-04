@@ -1,10 +1,8 @@
-// Package mailer ส่งอีเมลผ่าน SMTP ตรงๆ ด้วย net/smtp ใน stdlib
-// ตั้งใจใช้กับบัญชี Gmail แบบ no-reply ที่สร้างไว้ให้ระบบนี้โดยเฉพาะ (smtp.gmail.com)
-// จึงไม่ต้องพึ่งบริการส่งเมลภายนอกและไม่ต้องมี API key ให้ดูแล/หมดอายุ
+// Package mailer ส่งอีเมลผ่าน SMTP ตรงๆ ด้วย net/smtp ใน stdlib กับบัญชี Gmail แบบ no-reply
+// จึงไม่ต้องพึ่งบริการส่งเมลภายนอกและไม่มี API key ให้ดูแล
 //
-// ข้อควรรู้เรื่อง Gmail: ตั้งแต่ปี 2022 Google ปิดการล็อกอิน SMTP ด้วยรหัสผ่านบัญชีปกติแล้ว
-// ต้องเปิด 2-Step Verification ของบัญชี no-reply นั้นก่อน แล้วสร้าง "App Password" (16 ตัวอักษร)
-// มาใส่ใน SMTP_PASSWORD แทน — ดูขั้นตอนใน .env.example
+// Gmail ปิดการล็อกอิน SMTP ด้วยรหัสผ่านบัญชีปกติตั้งแต่ปี 2022 — ต้องเปิด 2-Step Verification
+// แล้วสร้าง "App Password" 16 ตัวมาใส่ SMTP_PASSWORD แทน (ขั้นตอนอยู่ใน .env.example)
 package mailer
 
 import (
@@ -29,97 +27,226 @@ import (
 )
 
 // smtpTimeout = เพดานเวลาของการคุยกับ SMTP server หนึ่งครั้ง (ตั้งแต่ dial ยัน QUIT)
-// กัน handler ForgotPassword ค้างยาวถ้า Gmail ไม่ตอบ — ฝั่ง client รอ response อยู่
+// กัน handler ที่ส่งเมลค้างยาวถ้า Gmail ไม่ตอบ — ฝั่ง client รอ response อยู่
 const smtpTimeout = 15 * time.Second
 
 // implicitTLSPort = พอร์ตที่ห่อ TLS ตั้งแต่ต้น (SMTPS) ไม่ได้เริ่มด้วย plaintext แล้ว STARTTLS
 // Gmail เปิดทั้ง 587 (STARTTLS) และ 465 (implicit) — เลือกได้จาก SMTP_PORT
 const implicitTLSPort = 465
 
-// Config = ค่าที่ Mailer ต้องใช้ต่อกับ SMTP server — map ตรงกับ env SMTP_* ใน config.Config
+// ค่า purpose ที่ Mailer ติดไปกับ Delivery — ตรงกับค่าคงที่ฝั่ง entity.EmailDelivery
+// ประกาศซ้ำไว้ที่นี่เพราะ package mailer ไม่ import entity (เหตุผลเดียวกับที่ Recorder เป็น interface)
+const (
+	PurposeVerification  = "verification"
+	PurposePasswordReset = "password_reset"
+)
+
+// Config = ค่าที่ Mailer ต้องใช้ต่อกับ SMTP server — map ตรงกับ env SMTP_*/MAIL_* ใน config.Config
 type Config struct {
 	Host     string // เช่น smtp.gmail.com
 	Port     int    // 587 = STARTTLS (ค่าปกติ), 465 = TLS ตั้งแต่ต้น
 	Username string // อีเมลเต็มของบัญชี no-reply เช่น caesar.cluster.noreply@gmail.com
 	Password string // App Password 16 ตัวของบัญชีนั้น (ไม่ใช่รหัสผ่านที่ใช้ล็อกอิน Google)
 	FromName string // ชื่อที่แสดงหน้าอีเมลผู้ส่ง เช่น "Caesar Cluster"
+	// ReplyTo = อีเมลจริงที่ผู้ใช้ตอบกลับได้ (ว่าง = ไม่ใส่ header Reply-To)
+	//
+	// ไม่ใช่แค่ความสะดวก: กล่อง no-reply ที่ไม่มีทางติดต่อกลับเลยเป็นลักษณะที่ตัวกรองสแปม
+	// หักคะแนน และเป็นสิ่งที่คู่มือผู้ส่งของ Gmail แนะนำให้มี
+	ReplyTo string
 }
 
-// Mailer ถือค่า SMTP ไว้ใช้ซ้ำทุก request — สร้างครั้งเดียวตอน start (ดู controller.NewAuthController)
-// ไม่ถือ connection ค้าง: เปิด-ปิดต่อการส่งหนึ่งฉบับ เพราะระบบนี้ส่งเมลนานๆ ครั้ง
-// การคา connection ไว้เฉยๆ มีแต่จะโดน Gmail ตัดทิ้งแล้วต้องมา handle reconnect เอง
+// Delivery = ผลการส่งอีเมลหนึ่งฉบับ ส่งต่อให้ Recorder บันทึกไว้
+// Err = nil แปลว่า SMTP server ตอบรับ (250) แล้ว — ดูข้อจำกัดของคำว่า "ส่งสำเร็จ" ที่ entity.EmailDelivery
+type Delivery struct {
+	UserID    *int
+	ToEmail   string
+	Purpose   string
+	MessageID string
+	Err       error
+	Duration  time.Duration
+}
+
+// Recorder = ปลายทางที่ Mailer เขียนผลการส่งทุกฉบับลงไป (ปกติคือ services.MailJournal)
+// เป็น interface เพื่อไม่ให้ package นี้รู้จัก gorm/entity และตั้งใจไม่คืน error — บันทึกล้มเหลว
+// ต้องไม่ทำให้อีเมลที่ส่งออกไปแล้วกลายเป็นล้มเหลวตาม
+type Recorder interface {
+	RecordEmail(ctx context.Context, d Delivery)
+}
+
+// Mailer ถือค่า SMTP ไว้ใช้ซ้ำ สร้างครั้งเดียวตอน start (ดู controller.NewAuthController)
+// ไม่ถือ connection ค้างเพราะระบบนี้ส่งเมลนานๆ ครั้ง คาไว้มีแต่จะโดน Gmail ตัดแล้วต้อง reconnect เอง
 type Mailer struct {
-	cfg Config
+	cfg      Config
+	recorder Recorder
 }
 
-// New ประกอบ Mailer — ค่าทั้งหมดมาจาก config.Config
-func New(cfg Config) *Mailer {
-	return &Mailer{cfg: cfg}
+// New ประกอบ Mailer — ค่าทั้งหมดมาจาก config.Config, recorder เป็น nil ได้ (แปลว่าไม่บันทึกผลลง DB)
+func New(cfg Config, recorder Recorder) *Mailer {
+	return &Mailer{cfg: cfg, recorder: recorder}
+}
+
+// Configured บอกว่าตั้งค่า SMTP ครบพอที่จะส่งเมลได้หรือยัง
+// ให้ที่เรียกใช้ตัดสินใจล่วงหน้าได้ (เช่น Register ไม่ต้องเปิด transaction ถ้ารู้อยู่แล้วว่าส่งไม่ออก)
+func (m *Mailer) Configured() bool {
+	return m.cfg.Username != "" && m.cfg.Password != ""
+}
+
+// VerifyConnection ลองต่อ SMTP + ล็อกอินจริงหนึ่งรอบแล้ววางสาย ไม่ส่งเมลถึงใคร
+// เรียกตอน server start จะได้รู้ตั้งแต่นาทีแรกว่าค่า SMTP ใช้ได้จริง ไม่ใช่ไปรู้ตอนคนแรกกดสมัคร
+func (m *Mailer) VerifyConnection(ctx context.Context) error {
+	client, err := m.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if err := m.authenticate(client); err != nil {
+		return err
+	}
+	return client.Quit()
 }
 
 // SendPasswordResetEmail ส่งอีเมลพร้อมลิงก์รีเซ็ตรหัสผ่านให้ผู้ใช้
 //
-// data flow: ประกอบ HTML body (ใส่ลิงก์ + เวลาหมดอายุ) → ห่อเป็นข้อความ MIME พร้อม header
-// → เปิด SMTP session ไป Gmail (STARTTLS + PLAIN auth) → MAIL/RCPT/DATA → QUIT
-//
-// ถ้ายังไม่ได้ตั้ง SMTP_USERNAME/SMTP_PASSWORD จะคืน error ทันทีโดยไม่ต่อ connection
-// ให้ caller (ForgotPassword) log ไว้ แต่ยังตอบ client เป็น generic message ตามเดิม
-func (m *Mailer) SendPasswordResetEmail(ctx context.Context, toEmail, toName, resetLink string, ttlMinutes int) error {
-	return m.send(
-		ctx,
-		toEmail,
-		"รีเซ็ตรหัสผ่าน Caesar Cluster",
-		buildResetText(toName, resetLink, ttlMinutes),
-		buildResetHTML(toName, resetLink, ttlMinutes),
-	)
+// data flow: ประกอบ HTML + text จาก actionEmail → ห่อเป็นข้อความ MIME พร้อม header
+// → เปิด SMTP session ไป Gmail (STARTTLS + PLAIN auth) → MAIL/RCPT/DATA → QUIT → บันทึกผลลง Recorder
+func (m *Mailer) SendPasswordResetEmail(ctx context.Context, userID int, toEmail, toName, resetLink string, ttlMinutes int) error {
+	content := actionEmail{
+		preheader: fmt.Sprintf("ลิงก์สำหรับตั้งรหัสผ่านใหม่ของคุณ หมดอายุใน %d นาที", ttlMinutes),
+		intro:     "เราได้รับคำขอรีเซ็ตรหัสผ่านสำหรับบัญชีของคุณ กดปุ่มด้านล่างเพื่อตั้งรหัสผ่านใหม่",
+		button:    "ตั้งรหัสผ่านใหม่",
+		link:      resetLink,
+		footnote: fmt.Sprintf("ลิงก์นี้จะหมดอายุใน %d นาที และใช้ได้เพียงครั้งเดียว "+
+			"ถ้าคุณไม่ได้ร้องขอการรีเซ็ตรหัสผ่าน กรุณาเพิกเฉยต่ออีเมลฉบับนี้ — บัญชีของคุณยังปลอดภัยดี", ttlMinutes),
+	}
+	return m.send(ctx, outgoing{
+		purpose: PurposePasswordReset,
+		userID:  &userID,
+		to:      toEmail,
+		subject: "รีเซ็ตรหัสผ่าน Caesar Cluster",
+		text:    content.text(toName),
+		html:    content.html(toName),
+	})
 }
 
-// SendOTPEmail ส่งรหัสยืนยันตัวตน 6 หลักให้ผู้ใช้ตอนล็อกอินจากเครื่องที่ระบบยังไม่รู้จัก
+// SendVerificationEmail ส่งลิงก์ยืนยันอีเมลให้ผู้ที่เพิ่งสมัคร (มาแทนรหัส OTP 6 หลักแบบเดิม)
 //
-// ตั้งใจไม่ใส่รหัสไว้ใน subject และ preheader ถึงแม้จะสะดวกกว่า เพราะสองที่นี้คือส่วนที่
-// โผล่บนหน้าจอล็อกของมือถือ — คนที่หยิบเครื่องขึ้นมาดูเฉยๆ ไม่ควรอ่านรหัสได้โดยไม่ต้องปลดล็อก
-func (m *Mailer) SendOTPEmail(ctx context.Context, toEmail, toName, code string, ttlMinutes int) error {
-	return m.send(
-		ctx,
-		toEmail,
-		"รหัสยืนยันตัวตน Caesar Cluster",
-		buildOTPText(toName, code, ttlMinutes),
-		buildOTPHTML(toName, code, ttlMinutes),
-	)
+// ตั้งใจไม่ใส่ลิงก์ไว้ใน subject/preheader — สองที่นี้คือส่วนที่โผล่บนหน้าจอล็อกของมือถือ
+// คนที่หยิบเครื่องขึ้นมาดูเฉยๆ ไม่ควรกดยืนยันแทนเจ้าตัวได้โดยไม่ต้องปลดล็อกเครื่องก่อน
+func (m *Mailer) SendVerificationEmail(ctx context.Context, userID int, toEmail, toName, verifyLink string, ttlHours int) error {
+	content := actionEmail{
+		preheader: fmt.Sprintf("ยืนยันอีเมลเพื่อเปิดใช้งานบัญชีของคุณ ลิงก์หมดอายุใน %d ชั่วโมง", ttlHours),
+		intro: "ขอบคุณที่สมัครใช้งาน Caesar Cluster — เหลืออีกขั้นเดียวเท่านั้น " +
+			"กดปุ่มด้านล่างเพื่อยืนยันว่าอีเมลนี้เป็นของคุณจริง แล้วจะเข้าสู่ระบบได้ทันที",
+		button: "ยืนยันอีเมลของฉัน",
+		link:   verifyLink,
+		footnote: fmt.Sprintf("ลิงก์นี้จะหมดอายุใน %d ชั่วโมง และใช้ได้เพียงครั้งเดียว "+
+			"ถ้าคุณไม่ได้เป็นคนสมัคร กรุณาเพิกเฉยต่ออีเมลฉบับนี้ — บัญชีจะไม่ถูกเปิดใช้งานถ้าไม่มีใครกดยืนยัน", ttlHours),
+	}
+	return m.send(ctx, outgoing{
+		purpose: PurposeVerification,
+		userID:  &userID,
+		to:      toEmail,
+		subject: "ยืนยันอีเมลของคุณ — Caesar Cluster",
+		text:    content.text(toName),
+		html:    content.html(toName),
+	})
 }
 
-// send คุยกับ SMTP server หนึ่งรอบเพื่อส่งอีเมล HTML หนึ่งฉบับ
+// outgoing = อีเมลหนึ่งฉบับที่พร้อมส่งแล้ว รวมพารามิเตอร์ไว้เป็นก้อนเดียวแทนการรับเป็น 6 อาร์กิวเมนต์เรียงกัน
+type outgoing struct {
+	purpose string
+	userID  *int
+	to      string
+	subject string
+	text    string
+	html    string
+}
+
+// send คุยกับ SMTP หนึ่งรอบเพื่อส่งอีเมลหนึ่งฉบับ แล้วบันทึกผลลง Recorder เสมอ
+// "สำเร็จ" = ได้รหัสตอบรับ 2xx ครบ แปลว่า Gmail รับช่วงต่อ ไม่ได้แปลว่าเข้ากล่องขาเข้าผู้รับ
+func (m *Mailer) send(ctx context.Context, out outgoing) error {
+	started := time.Now()
+	messageID := newMessageID(m.cfg.Username)
+	err := m.deliver(ctx, out, messageID)
+
+	if m.recorder != nil {
+		m.recorder.RecordEmail(ctx, Delivery{
+			UserID:    out.userID,
+			ToEmail:   out.to,
+			Purpose:   out.purpose,
+			MessageID: messageID,
+			Err:       err,
+			Duration:  time.Since(started),
+		})
+	}
+	return err
+}
+
+// deliver = ขั้นตอน SMTP จริงๆ แยกจาก send เพื่อให้ทุก error ผ่านจุดบันทึกผลจุดเดียวกันหมด
 //
-// ลำดับตามโปรโตคอล: dial → (STARTTLS ถ้าไม่ใช่พอร์ต 465) → AUTH PLAIN → MAIL FROM → RCPT TO
-// → DATA → QUIT ซึ่ง QUIT สำคัญ: ถ้าไม่เรียก Gmail อาจถือว่า session ถูกตัดกลางคันแล้วไม่ส่งจริง
-// เลยต้องคืน error ของ Quit ด้วย ไม่ใช่ปิด connection เฉยๆ
-func (m *Mailer) send(ctx context.Context, toEmail, subject, textBody, htmlBody string) error {
-	if m.cfg.Username == "" || m.cfg.Password == "" {
+// ลำดับ: dial → (STARTTLS ถ้าไม่ใช่ 465) → AUTH → MAIL FROM → RCPT TO → DATA → QUIT
+// QUIT สำคัญ: ไม่เรียกแล้ว Gmail อาจถือว่า session ถูกตัดกลางคันแล้วไม่ส่งจริง จึงต้องคืน error ของมันด้วย
+func (m *Mailer) deliver(ctx context.Context, out outgoing, messageID string) error {
+	if !m.Configured() {
 		return errors.New("mailer: ยังไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD")
 	}
 	// ที่อยู่ปลายทางถูกเอาไปวางใน header To: ตรงๆ — ถ้ามี CR/LF ปนมาจะกลายเป็นการแทรก header เพิ่มได้
 	// (email header injection) mail.ParseAddress ตรวจให้ครบทั้งรูปแบบและอักขระต้องห้ามในตัวเดียว
-	recipient, err := mail.ParseAddress(toEmail)
+	recipient, err := mail.ParseAddress(out.to)
 	if err != nil {
 		return fmt.Errorf("mailer: อีเมลปลายทางไม่ถูกต้อง: %w", err)
 	}
 
-	msg, err := buildMessage(
-		mail.Address{Name: m.cfg.FromName, Address: m.cfg.Username},
-		*recipient, subject, textBody, htmlBody,
-	)
+	msg, err := m.buildMessage(*recipient, out, messageID)
 	if err != nil {
 		return fmt.Errorf("mailer: ประกอบเนื้อเมลไม่สำเร็จ: %w", err)
 	}
 
+	client, err := m.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close() // ปิด connection ทิ้งเสมอ แม้ทางที่ error ก่อนถึง Quit
+
+	if err := m.authenticate(client); err != nil {
+		return err
+	}
+	// MAIL FROM ต้องเป็นบัญชีที่เพิ่ง auth ไป ไม่ใช่ชื่อที่โชว์ใน header From:
+	// Gmail ปฏิเสธ (หรือเขียนทับ) ถ้าใส่ที่อยู่อื่นที่ไม่ได้ตั้งเป็น alias ไว้
+	if err := client.Mail(m.cfg.Username); err != nil {
+		return fmt.Errorf("mailer: MAIL FROM ไม่ผ่าน: %w", err)
+	}
+	if err := client.Rcpt(recipient.Address); err != nil {
+		return fmt.Errorf("mailer: RCPT TO ไม่ผ่าน (ปลายทางปฏิเสธที่อยู่ %s): %w", recipient.Address, err)
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("mailer: เริ่มส่ง DATA ไม่สำเร็จ: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("mailer: เขียนเนื้อเมลไม่สำเร็จ: %w", err)
+	}
+	// Close คือจุดที่อ่านรหัสตอบรับของทั้งฉบับ (250 = server รับเข้าคิวแล้ว) ไม่ใช่แค่ปิด writer เฉยๆ
+	// error ตรงนี้จึงแปลว่า "ปลายทางไม่รับเมลฉบับนี้" ซึ่งเป็นจุดที่ต้องไม่กลืนทิ้งเด็ดขาด
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("mailer: ปลายทางไม่รับเนื้อเมล: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("mailer: QUIT ไม่สำเร็จ (server อาจไม่ได้ส่งเมลจริง): %w", err)
+	}
+	return nil
+}
+
+// dial เปิด TCP + TLS ไปยัง SMTP server แล้วคืน client ที่พร้อมทำ AUTH
+// ตั้ง deadline เดียวครอบทุกขั้นเพราะ net/smtp ไม่มี timeout เอง ถ้า server ค้างกลาง DATA จะรอไม่จบ
+func (m *Mailer) dial(ctx context.Context) (*smtp.Client, error) {
 	addr := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
 	dialer := &net.Dialer{Timeout: smtpTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("mailer: ต่อ %s ไม่ได้: %w", addr, err)
+		return nil, fmt.Errorf("mailer: ต่อ %s ไม่ได้: %w", addr, err)
 	}
-	// deadline เดียวครอบทุกขั้นที่เหลือ — net/smtp ไม่มี timeout ของตัวเอง
-	// ถ้าไม่ตั้ง แล้ว server ค้างกลาง DATA จะรอไปเรื่อยๆ ไม่มีวันคืน
 	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
 
 	tlsCfg := &tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12}
@@ -130,69 +257,75 @@ func (m *Mailer) send(ctx context.Context, toEmail, subject, textBody, htmlBody 
 	client, err := smtp.NewClient(conn, m.cfg.Host)
 	if err != nil {
 		conn.Close()
-		return fmt.Errorf("mailer: เริ่ม SMTP session ไม่สำเร็จ: %w", err)
+		return nil, fmt.Errorf("mailer: เริ่ม SMTP session ไม่สำเร็จ: %w", err)
 	}
-	defer client.Close() // ปิด connection ทิ้งเสมอ แม้ทางที่ error ก่อนถึง Quit
 
 	if m.cfg.Port != implicitTLSPort {
 		if ok, _ := client.Extension("STARTTLS"); !ok {
 			// ไม่ยอมส่งต่อแบบ plaintext เพราะขั้นถัดไปคือส่ง App Password ข้ามเน็ต
-			return errors.New("mailer: server ไม่รองรับ STARTTLS — ไม่ส่งรหัสผ่านผ่านช่องที่ไม่เข้ารหัส")
+			client.Close()
+			return nil, errors.New("mailer: server ไม่รองรับ STARTTLS — ไม่ส่งรหัสผ่านผ่านช่องที่ไม่เข้ารหัส")
 		}
 		if err := client.StartTLS(tlsCfg); err != nil {
-			return fmt.Errorf("mailer: STARTTLS ไม่สำเร็จ: %w", err)
+			client.Close()
+			return nil, fmt.Errorf("mailer: STARTTLS ไม่สำเร็จ: %w", err)
 		}
 	}
+	return client, nil
+}
 
+// authenticate ล็อกอิน SMTP ด้วย App Password — แยกออกมาเพราะทั้งการส่งจริงและ VerifyConnection ใช้ร่วมกัน
+func (m *Mailer) authenticate(client *smtp.Client) error {
 	auth := smtp.PlainAuth("", m.cfg.Username, m.cfg.Password, m.cfg.Host)
 	if err := client.Auth(auth); err != nil {
 		return fmt.Errorf("mailer: ล็อกอิน SMTP ด้วยบัญชี %s ไม่ผ่าน "+
 			"(Gmail ต้องใช้ App Password 16 ตัว ไม่ใช่รหัสผ่านบัญชีปกติ): %w", m.cfg.Username, err)
 	}
-	// MAIL FROM ต้องเป็นบัญชีที่เพิ่ง auth ไป ไม่ใช่ชื่อที่โชว์ใน header From:
-	// Gmail ปฏิเสธ (หรือเขียนทับ) ถ้าใส่ที่อยู่อื่นที่ไม่ได้ตั้งเป็น alias ไว้
-	if err := client.Mail(m.cfg.Username); err != nil {
-		return fmt.Errorf("mailer: MAIL FROM ไม่ผ่าน: %w", err)
-	}
-	if err := client.Rcpt(recipient.Address); err != nil {
-		return fmt.Errorf("mailer: RCPT TO ไม่ผ่าน: %w", err)
-	}
-
-	w, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("mailer: เริ่มส่ง DATA ไม่สำเร็จ: %w", err)
-	}
-	if _, err := w.Write(msg); err != nil {
-		return fmt.Errorf("mailer: เขียนเนื้อเมลไม่สำเร็จ: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("mailer: ปิดท้าย DATA ไม่สำเร็จ: %w", err)
-	}
-	if err := client.Quit(); err != nil {
-		return fmt.Errorf("mailer: QUIT ไม่สำเร็จ (server อาจไม่ได้ส่งเมลจริง): %w", err)
-	}
 	return nil
 }
 
-// buildMessage ห่อเนื้อหาให้เป็นข้อความ MIME ที่ SMTP รับได้
+// buildMessage ห่อเนื้อหาเป็นข้อความ MIME ที่ SMTP รับได้
 //
-// multipart/alternative = ใส่ทั้ง text ล้วนและ HTML ไว้ในฉบับเดียว mail client เลือกส่วนท้ายสุด
-// (HTML) ถ้าแสดงได้ ไม่งั้นตกมาที่ text — ที่ต้องมี text ด้วยเป็นเรื่องเข้า inbox ไม่ใช่ความสวยงาม
-// อีเมลที่มีแต่ HTML ก้อนเดียวเป็นลายเซ็นคลาสสิกของสแปม (SpamAssassin มีกฎ MIME_HTML_ONLY ตรงๆ)
+// multipart/alternative ใส่ทั้ง text ล้วนและ HTML ในฉบับเดียว — ที่ต้องมี text ด้วยเป็นเรื่อง
+// เข้า inbox ไม่ใช่ความสวยงาม เมลที่มีแต่ HTML คือลายเซ็นสแปม (SpamAssassin: MIME_HTML_ONLY)
 //
-// จุดที่พลาดง่าย:
-//   - หัวข้อ/ชื่อผู้ส่งภาษาไทยต้อง encode ตาม RFC 2047 ไม่งั้นขึ้นเป็นตัวขยะ
-//     (mail.Address.String() จัดการชื่อผู้ส่งให้เอง ส่วน Subject ใช้ mime.QEncoding)
-//   - บรรทัด UTF-8 ยาวเกิน 998 ตัวอักษรตาม RFC 5321 ต้องเข้ารหัส เลือก quoted-printable
-//     ไม่ใช่ base64 เพราะตัวกรองหักคะแนนเมลที่หมก text ไว้ใน base64 (เป็นวิธีที่สแปมใช้ซ่อนเนื้อหา)
-//   - ทุกบรรทัดต้องจบด้วย CRLF — multipart.Writer และ quotedprintable.Writer จัดการให้แล้ว
-func buildMessage(from, to mail.Address, subject, textBody, htmlBody string) ([]byte, error) {
-	var body bytes.Buffer
-	mp := multipart.NewWriter(&body)
-	// เรียง text ก่อน HTML ตาม RFC 2046: ส่วนที่อยู่ท้ายสุดคือส่วนที่ "อยากให้แสดงมากที่สุด"
+// จุดที่พลาดง่าย: หัวข้อภาษาไทยต้อง encode ตาม RFC 2047, บรรทัดยาวเกิน 998 ตัวต้องเข้ารหัสด้วย
+// quoted-printable (ไม่ใช่ base64 ซึ่งตัวกรองหักคะแนน), ทุกบรรทัดต้องจบด้วย CRLF
+func (m *Mailer) buildMessage(to mail.Address, out outgoing, messageID string) ([]byte, error) {
+	from := mail.Address{Name: m.cfg.FromName, Address: m.cfg.Username}
+
+	var msg bytes.Buffer
+	mp := multipart.NewWriter(&msg) // สร้างก่อนเพื่อรู้ boundary ตอนเขียน header
+
+	headers := []string{
+		"From: " + from.String(),
+		"To: " + to.String(),
+	}
+	// Reply-To ชี้ไปกล่องที่มีคนอ่านจริง — กล่อง no-reply ที่ติดต่อกลับไม่ได้เลยถูกตัวกรองหักคะแนน
+	if replyTo := m.replyToHeader(); replyTo != "" {
+		headers = append(headers, "Reply-To: "+replyTo)
+	}
+	headers = append(headers,
+		"Subject: "+mime.QEncoding.Encode("UTF-8", out.subject),
+		"Date: "+time.Now().Format(time.RFC1123Z),
+		"Message-ID: "+messageID,
+		// บอกว่าเป็นเมลที่ระบบสร้างเอง กันตัวตอบกลับอัตโนมัติยิงกลับเป็นลูป (RFC 3834)
+		// ใส่คู่กับ X-Auto-Response-Suppress เพราะ Microsoft 365 ไม่ดู Auto-Submitted
+		"Auto-Submitted: auto-generated",
+		"X-Auto-Response-Suppress: All",
+		"Content-Language: th",
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/alternative; boundary="`+mp.Boundary()+`"`,
+	)
+	for _, h := range headers {
+		msg.WriteString(h + "\r\n")
+	}
+	msg.WriteString("\r\n")
+
+	// เรียง text ก่อน HTML ตาม RFC 2046: ส่วนท้ายสุดคือส่วนที่ "อยากให้แสดงมากที่สุด"
 	for _, part := range []struct{ contentType, content string }{
-		{`text/plain; charset="UTF-8"`, textBody},
-		{`text/html; charset="UTF-8"`, htmlBody},
+		{`text/plain; charset="UTF-8"`, out.text},
+		{`text/html; charset="UTF-8"`, out.html},
 	} {
 		w, err := mp.CreatePart(textproto.MIMEHeader{
 			"Content-Type":              {part.contentType},
@@ -212,29 +345,25 @@ func buildMessage(from, to mail.Address, subject, textBody, htmlBody string) ([]
 	if err := mp.Close(); err != nil {
 		return nil, err
 	}
-
-	var b strings.Builder
-	b.WriteString("From: " + from.String() + "\r\n")
-	b.WriteString("To: " + to.String() + "\r\n")
-	b.WriteString("Subject: " + mime.QEncoding.Encode("UTF-8", subject) + "\r\n")
-	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
-	b.WriteString("Message-ID: " + messageID(from.Address) + "\r\n")
-	// บอกว่าเป็นเมลที่ระบบสร้างเอง ไม่ใช่คนพิมพ์ — กันตัวตอบกลับอัตโนมัติ (out-of-office)
-	// ยิงกลับเข้ากล่อง no-reply เป็นลูป ตาม RFC 3834
-	b.WriteString("Auto-Submitted: auto-generated\r\n")
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + mp.Boundary() + "\"\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(body.String())
-	return []byte(b.String()), nil
+	return msg.Bytes(), nil
 }
 
-// messageID สร้างค่า header Message-ID ให้เมลแต่ละฉบับ
-//
-// เมลที่ไม่มี Message-ID ถูกหักคะแนนโดยตัวกรองแทบทุกตัว (SpamAssassin: MISSING_MID)
-// เพราะโปรแกรมเมลของจริงใส่มาให้เสมอ มีแต่สคริปต์ลวกๆ ที่ลืม
-// ฝั่งขวาของ @ ใช้โดเมนผู้ส่งให้สอดคล้องกับ From (โดเมนมั่วเป็นสัญญาณต้องสงสัยอีกแบบ)
-func messageID(fromAddress string) string {
+// replyToHeader คืนค่า header Reply-To ที่ encode แล้ว (ว่าง = ไม่ต้องใส่ header นี้)
+// ค่าที่ตั้งมาผิดรูปแบบให้ถือว่าไม่ได้ตั้ง — header ที่พังทำให้ทั้งฉบับดูน่าสงสัยกว่าการไม่มี header
+func (m *Mailer) replyToHeader() string {
+	if m.cfg.ReplyTo == "" {
+		return ""
+	}
+	addr, err := mail.ParseAddress(m.cfg.ReplyTo)
+	if err != nil {
+		return ""
+	}
+	return addr.String()
+}
+
+// newMessageID สร้าง header Message-ID ให้เมลแต่ละฉบับ — เมลที่ไม่มีถูกตัวกรองหักคะแนน
+// (SpamAssassin: MISSING_MID) และค่านี้ถูกเก็บลง email_deliveries ไว้ตามหาเมลฉบับนั้นย้อนหลัง
+func newMessageID(fromAddress string) string {
 	domain := "localhost"
 	if at := strings.LastIndex(fromAddress, "@"); at >= 0 && at+1 < len(fromAddress) {
 		domain = fromAddress[at+1:]
@@ -247,14 +376,28 @@ func messageID(fromAddress string) string {
 	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), hex.EncodeToString(randomPart[:]), domain)
 }
 
-// resetEmailTemplate = โครง HTML ของอีเมล วางแบบ table-based layout + inline style ล้วน
+// actionEmail = เนื้อหาของอีเมลแบบ "มีปุ่มให้กดหนึ่งปุ่ม" ใช้ร่วมกันทั้งลิงก์ยืนยันและลิงก์รีเซ็ตรหัสผ่าน
+// รวมเป็น template เดียวเพราะสองฉบับนี้ต้องหน้าตาเหมือนกันตลอด ไม่งั้นวันหนึ่งจะมีฝั่งเดียวที่ถูกแก้
+type actionEmail struct {
+	preheader string // ข้อความตัวอย่างที่โผล่ข้างหัวข้อในรายการ inbox
+	intro     string // ย่อหน้าอธิบายว่าทำไมถึงได้เมลฉบับนี้
+	button    string // ข้อความบนปุ่ม
+	link      string // URL ปลายทางของปุ่ม (ระบบสร้างเอง: origin + token hex จึงไม่ต้อง escape)
+	footnote  string // บรรทัดท้ายเรื่องอายุลิงก์ + จะทำอย่างไรถ้าไม่ได้เป็นคนขอ
+}
+
+// actionEmailTemplate = โครง HTML วางแบบ table-based layout + inline style ล้วน
 // (จำเป็นสำหรับอีเมล — client อย่าง Outlook ไม่รองรับ flexbox/grid/external CSS) ใช้โทนสีเดียวกับ
 // หน้า Login/Register จริงของแอป (#BB6653 การ์ด, #FFF8E8 พื้นหลังครีม, #211a14 ตัวอักษรเข้ม)
-// ใส่ preheader (span ที่ซ่อนไว้) ให้ตัวอย่างข้อความบน inbox list ดูดีขึ้นด้วย
-const resetEmailTemplate = `<!DOCTYPE html>
+const actionEmailTemplate = `<!DOCTYPE html>
 <html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Caesar Cluster</title>
+  </head>
   <body style="margin:0;padding:0;background-color:#FFF8E8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <span style="display:none;max-height:0;max-width:0;overflow:hidden;">ลิงก์สำหรับตั้งรหัสผ่านใหม่ของคุณ หมดอายุใน __TTL__ นาที</span>
+    <span style="display:none;max-height:0;max-width:0;overflow:hidden;">__PREHEADER__</span>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FFF8E8;">
       <tr>
         <td align="center" style="padding:40px 16px;">
@@ -268,7 +411,7 @@ const resetEmailTemplate = `<!DOCTYPE html>
             <tr>
               <td style="padding:40px 36px 8px;">
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#211a14;">__GREETING__,</p>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#211a14;">เราได้รับคำขอรีเซ็ตรหัสผ่านสำหรับบัญชีของคุณ กดปุ่มด้านล่างเพื่อตั้งรหัสผ่านใหม่</p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#211a14;">__INTRO__</p>
               </td>
             </tr>
             <tr>
@@ -276,7 +419,7 @@ const resetEmailTemplate = `<!DOCTYPE html>
                 <table role="presentation" cellpadding="0" cellspacing="0">
                   <tr>
                     <td align="center" style="border-radius:9999px;background-color:#BB6653;">
-                      <a href="__LINK__" style="display:inline-block;padding:14px 40px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:9999px;">ตั้งรหัสผ่านใหม่</a>
+                      <a href="__LINK__" style="display:inline-block;padding:14px 40px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:9999px;">__BUTTON__</a>
                     </td>
                   </tr>
                 </table>
@@ -297,165 +440,56 @@ const resetEmailTemplate = `<!DOCTYPE html>
             </tr>
             <tr>
               <td style="padding:24px 36px 36px;">
-                <p style="margin:0;font-size:12px;line-height:1.6;color:#8a7d72;">ลิงก์นี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว ถ้าคุณไม่ได้ร้องขอการรีเซ็ตรหัสผ่าน กรุณาเพิกเฉยต่ออีเมลฉบับนี้ — บัญชีของคุณยังปลอดภัยดี</p>
+                <p style="margin:0;font-size:12px;line-height:1.6;color:#8a7d72;">__FOOTNOTE__</p>
               </td>
             </tr>
           </table>
-          <p style="max-width:520px;margin:20px 0 0;font-size:11px;color:#a89a8c;text-align:center;">อีเมลนี้ส่งจากระบบอัตโนมัติของ Caesar Cluster กรุณาอย่าตอบกลับ</p>
+          <p style="max-width:520px;margin:20px 0 0;font-size:11px;color:#a89a8c;text-align:center;">อีเมลนี้ส่งจากระบบอัตโนมัติของ Caesar Cluster</p>
         </td>
       </tr>
     </table>
   </body>
 </html>`
 
-// buildResetHTML ประกอบ HTML ของอีเมลจาก resetEmailTemplate
-// escape ค่าที่มาจากผู้ใช้ (ชื่อ) กัน HTML injection — resetLink เป็น URL ที่เราสร้างเอง
-// (origin + token hex) จึงปลอดภัยพอที่จะใส่ตรงๆ โดยไม่ต้อง escape
-//
-// ใช้ strings.NewReplacer แทน fmt.Sprintf เพราะ template มี "%" อยู่เยอะ (width:100% ฯลฯ)
-// ซึ่งจะชนกับ verb ของ Sprintf ถ้าใช้ %s ตรงๆ
-func buildResetHTML(toName, resetLink string, ttlMinutes int) string {
-	greeting := "สวัสดี"
-	if toName != "" {
-		greeting = "สวัสดีคุณ " + html.EscapeString(toName)
-	}
-	replacer := strings.NewReplacer(
-		"__GREETING__", greeting,
-		"__LINK__", resetLink,
-		"__TTL__", strconv.Itoa(ttlMinutes),
-	)
-	return replacer.Replace(resetEmailTemplate)
-}
+// actionEmailTextTemplate = เวอร์ชัน text ล้วนของอีเมลฉบับเดียวกัน ต้องสื่อความครบเท่า HTML
+// เพราะตัวกรองเทียบสองส่วนนี้ (ต่างกันมาก = สัญญาณของการซ่อนเนื้อหาจากตัวสแกน)
+const actionEmailTextTemplate = `__GREETING__,
 
-// resetTextTemplate = เวอร์ชัน text ล้วนของอีเมลฉบับเดียวกัน
-//
-// ต้องสื่อความครบเท่า HTML ไม่ใช่ใส่ "กรุณาเปิดด้วยโปรแกรมที่รองรับ HTML" พอเป็นพิธี:
-// ตัวกรองเทียบว่าสองส่วนต่างกันมากไหม (ต่างมาก = สัญญาณของการซ่อนเนื้อหาจากตัวสแกน)
-// และคนที่อ่านเมลแบบ text ล้วนก็ต้องรีเซ็ตรหัสผ่านได้จริง
-const resetTextTemplate = `__GREETING__,
-
-เราได้รับคำขอรีเซ็ตรหัสผ่านสำหรับบัญชี Caesar Cluster ของคุณ
-เปิดลิงก์ด้านล่างเพื่อตั้งรหัสผ่านใหม่:
+__INTRO__
 
 __LINK__
 
-ลิงก์นี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว
-ถ้าคุณไม่ได้ร้องขอการรีเซ็ตรหัสผ่าน กรุณาเพิกเฉยต่ออีเมลฉบับนี้ บัญชีของคุณยังปลอดภัยดี
+__FOOTNOTE__
 
 --
 Caesar Cluster - Cloud for CPE Students
-อีเมลนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ
+อีเมลนี้ส่งจากระบบอัตโนมัติ
 `
 
-// buildResetText ประกอบเนื้อความ text ล้วนจาก resetTextTemplate
-// ไม่ต้อง escape ชื่อผู้ใช้เหมือนฝั่ง HTML เพราะ text ล้วนไม่มี markup ให้แทรก
-func buildResetText(toName, resetLink string, ttlMinutes int) string {
+// html/text ประกอบเนื้อความจาก template — escape เฉพาะชื่อผู้ใช้ซึ่งเป็นค่าเดียวที่มาจากผู้ใช้
+// ใช้ NewReplacer ไม่ใช่ Sprintf เพราะ template มี "%" เยอะ (width:100% ฯลฯ) ซึ่งชนกับ verb
+func (a actionEmail) html(toName string) string {
+	return a.replacer(html.EscapeString(toName)).Replace(actionEmailTemplate)
+}
+
+// text ประกอบเนื้อความ text ล้วน — ไม่ต้อง escape ชื่อเพราะ text ล้วนไม่มี markup ให้แทรก
+// (และถ้า escape จะได้ &amp; ติดมาให้คนอ่านเห็นด้วยตาเปล่า)
+func (a actionEmail) text(toName string) string {
+	return a.replacer(toName).Replace(actionEmailTextTemplate)
+}
+
+// replacer รวมการแทนค่าที่ทั้งสองเวอร์ชันใช้เหมือนกันไว้ที่เดียว
+func (a actionEmail) replacer(name string) *strings.Replacer {
 	greeting := "สวัสดี"
-	if toName != "" {
-		greeting = "สวัสดีคุณ " + toName
-	}
-	replacer := strings.NewReplacer(
-		"__GREETING__", greeting,
-		"__LINK__", resetLink,
-		"__TTL__", strconv.Itoa(ttlMinutes),
-	)
-	return replacer.Replace(resetTextTemplate)
-}
-
-// otpEmailTemplate = โครง HTML ของอีเมลรหัสยืนยัน ใช้โทนสี/โครง table เดียวกับ resetEmailTemplate
-// ตัวรหัสวางเป็นบล็อกใหญ่ ตัวอักษร monospace + เว้นวรรคระหว่างหลัก ให้อ่านแล้วพิมพ์ตามได้ไม่ผิด
-// (เลข 6 หลักติดกันในฟอนต์ปกติ อ่านสลับหลักกันง่ายมากบนจอเล็ก)
-const otpEmailTemplate = `<!DOCTYPE html>
-<html lang="th">
-  <body style="margin:0;padding:0;background-color:#FFF8E8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <span style="display:none;max-height:0;max-width:0;overflow:hidden;">รหัสยืนยันตัวตนสำหรับเข้าสู่ระบบ หมดอายุใน __TTL__ นาที</span>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FFF8E8;">
-      <tr>
-        <td align="center" style="padding:40px 16px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:24px;overflow:hidden;">
-            <tr>
-              <td style="background-color:#BB6653;padding:36px 32px;text-align:center;">
-                <div style="font-size:26px;font-weight:700;color:#FFF8E8;letter-spacing:.3px;">Caesar Cluster</div>
-                <div style="margin-top:6px;font-size:13px;color:rgba(255,248,232,.8);">Cloud for CPE Students</div>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:40px 36px 8px;">
-                <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#211a14;">__GREETING__,</p>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#211a14;">ใช้รหัสด้านล่างเพื่อยืนยันตัวตนและเข้าสู่ระบบ</p>
-              </td>
-            </tr>
-            <tr>
-              <td align="center" style="padding:28px 36px 8px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                  <tr>
-                    <td align="center" style="background-color:#FFF8E8;border-radius:16px;padding:24px 16px;">
-                      <div style="font-family:'Courier New',Courier,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#BB6653;">__CODE__</div>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:16px 36px 32px;">
-                <p style="margin:0;font-size:13px;line-height:1.6;color:#8a7d72;">รหัสนี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:0 36px;">
-                <hr style="border:none;border-top:1px solid #f0e6d6;margin:0;" />
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:24px 36px 36px;">
-                <p style="margin:0;font-size:12px;line-height:1.6;color:#8a7d72;">ถ้าคุณไม่ได้เป็นคนพยายามเข้าสู่ระบบ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และควรเปลี่ยนรหัสผ่านของคุณ เพราะการที่รหัสนี้ถูกส่งออกไปแปลว่ามีคนกรอกรหัสผ่านของคุณได้ถูกต้อง</p>
-              </td>
-            </tr>
-          </table>
-          <p style="max-width:520px;margin:20px 0 0;font-size:11px;color:#a89a8c;text-align:center;">อีเมลนี้ส่งจากระบบอัตโนมัติของ Caesar Cluster กรุณาอย่าตอบกลับ</p>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`
-
-// otpTextTemplate = เวอร์ชัน text ล้วนของอีเมลรหัสยืนยัน (เหตุผลที่ต้องมีดูที่ buildMessage)
-const otpTextTemplate = `__GREETING__,
-
-ใช้รหัสด้านล่างเพื่อยืนยันตัวตนและเข้าสู่ระบบ Caesar Cluster:
-
-    __CODE__
-
-รหัสนี้จะหมดอายุใน __TTL__ นาที และใช้ได้เพียงครั้งเดียว
-
-ถ้าคุณไม่ได้เป็นคนพยายามเข้าสู่ระบบ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และควรเปลี่ยนรหัสผ่านของคุณ
-เพราะการที่รหัสนี้ถูกส่งออกไปแปลว่ามีคนกรอกรหัสผ่านของคุณได้ถูกต้อง
-
---
-Caesar Cluster - Cloud for CPE Students
-อีเมลนี้ส่งจากระบบอัตโนมัติ กรุณาอย่าตอบกลับ
-`
-
-// buildOTPHTML / buildOTPText ประกอบเนื้อความจาก template — escape ชื่อเฉพาะฝั่ง HTML
-// ตัว code เป็นเลข 6 หลักที่ระบบสุ่มเอง ไม่ใช่ค่าจากผู้ใช้ จึงไม่ต้อง escape
-func buildOTPHTML(toName, code string, ttlMinutes int) string {
-	return otpReplacer(html.EscapeString(toName), code, ttlMinutes).Replace(otpEmailTemplate)
-}
-
-func buildOTPText(toName, code string, ttlMinutes int) string {
-	return otpReplacer(toName, code, ttlMinutes).Replace(otpTextTemplate)
-}
-
-// otpReplacer รวมการแทนค่าที่ทั้งสองเวอร์ชันใช้เหมือนกันไว้ที่เดียว
-// รับชื่อที่ escape มาแล้ว (หรือยังไม่ได้ escape สำหรับ text) เพื่อไม่ให้ฝั่ง text ติด &amp; มาด้วย
-func otpReplacer(escapedName, code string, ttlMinutes int) *strings.Replacer {
-	greeting := "สวัสดี"
-	if escapedName != "" {
-		greeting = "สวัสดีคุณ " + escapedName
+	if name != "" {
+		greeting = "สวัสดีคุณ " + name
 	}
 	return strings.NewReplacer(
 		"__GREETING__", greeting,
-		"__CODE__", code,
-		"__TTL__", strconv.Itoa(ttlMinutes),
+		"__PREHEADER__", a.preheader,
+		"__INTRO__", a.intro,
+		"__BUTTON__", a.button,
+		"__LINK__", a.link,
+		"__FOOTNOTE__", a.footnote,
 	)
 }

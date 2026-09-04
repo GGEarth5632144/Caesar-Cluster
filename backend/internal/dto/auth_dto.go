@@ -8,7 +8,7 @@ import "backend/internal/entity"
 type RegisterRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	RealName  string `json:"real_name" binding:"required"`
-	Gmail	  string `json:"gmail" binding:"required,email"`
+	Gmail     string `json:"gmail" binding:"required,email"`
 	NickName  string `json:"nick_name"`
 	Password  string `json:"password" binding:"required,min=8"`
 }
@@ -20,23 +20,20 @@ type LoginRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	Password  string `json:"password" binding:"required"`
 	Remember  bool   `json:"remember"`
-	// DeviceToken = ใบผ่านของเครื่องที่เคยกรอก OTP สำเร็จมาแล้ว (client เก็บไว้เอง ส่งมาถ้ามี)
-	// ตรงกับแถวใน trusted_devices ที่ยังไม่หมดอายุ = ข้ามขั้นกรอก OTP รอบนี้ไปได้เลย
-	DeviceToken string `json:"device_token"`
 }
 
-// VerifyOTPRequest = body ของ POST /api/verify-otp
-// data flow: challenge_token ได้มาจาก response ของ /api/login ตอนที่ระบบขอ OTP
-// ส่วน code คือเลข 6 หลักที่ผู้ใช้เปิดจากอีเมล → AuthController.VerifyOTP เอาไปแลกเป็น JWT
-type VerifyOTPRequest struct {
-	ChallengeToken string `json:"challenge_token" binding:"required"`
-	Code           string `json:"code" binding:"required,len=6,numeric"`
+// VerifyEmailRequest = body ของ POST /api/verify-email (token มาจาก query ของลิงก์ในอีเมล)
+//
+// ให้หน้าเว็บยิง POST แทนที่จะให้ลิงก์ชี้มาที่ backend ตรงๆ ด้วย GET เพราะตัวสแกนลิงก์ของ
+// Gmail/Outlook กดลิงก์ให้ก่อนผู้ใช้เสมอ ถ้าลิงก์นั้นเผาโทเคนทิ้ง ผู้ใช้จะเจอ "ลิงก์ถูกใช้แล้ว" ทุกครั้ง
+type VerifyEmailRequest struct {
+	Token string `json:"token" binding:"required"`
 }
 
-// ResendOTPRequest = body ของ POST /api/resend-otp
-// ใช้ใบเดิม (challenge เดิม) แต่ออกรหัสใหม่แล้วส่งอีเมลอีกรอบ — ดู AuthController.ResendOTP
-type ResendOTPRequest struct {
-	ChallengeToken string `json:"challenge_token" binding:"required"`
+// ResendVerificationRequest = body ของ POST /api/resend-verification
+// หา user ที่ยังไม่ยืนยันจาก gmail → ออกลิงก์ใบใหม่ (ตอบข้อความ generic เสมอ เหมือน /forgot-password)
+type ResendVerificationRequest struct {
+	Gmail string `json:"gmail" binding:"required,email"`
 }
 
 type UpdateUserRequest struct {

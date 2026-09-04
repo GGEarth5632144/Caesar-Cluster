@@ -2,6 +2,8 @@ package config
 
 import (
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -46,6 +48,12 @@ type Config struct {
 	SMTPPassword         string // App Password 16 ตัวของบัญชีนั้น (ไม่ใช่รหัสผ่านที่ใช้ล็อกอิน Google)
 	MailFromName         string // ชื่อที่แสดงหน้าอีเมลผู้ส่ง — ตัวที่อยู่จะเป็น SMTPUsername เสมอ
 	ResetTokenTTLMinutes int    // อายุของลิงก์รีเซ็ตรหัสผ่าน (นาที)
+	// อายุลิงก์ยืนยันอีเมล (ชั่วโมง) — ยาวกว่าลิงก์รีเซ็ตมากโดยตั้งใจ เพราะคนเพิ่งสมัครอาจไปเปิดเมล
+	// เช้าวันรุ่งขึ้น ต่างจากคนกดรีเซ็ตที่นั่งรออยู่หน้าจอ
+	VerifyTokenTTLHours int
+	// อีเมลที่ผู้ใช้ตอบกลับได้จริง (ว่าง = ไม่ใส่ header Reply-To)
+	// กล่อง no-reply ที่ตอบกลับไม่ได้เลยถูกตัวกรองสแปมหักคะแนน — ดู mailer.Config.ReplyTo
+	MailReplyTo string
 
 	// AlertScan = ค่าของตัวสแกน log หา error แล้วส่งเข้าหน้า Alerts
 	AlertScan AlertScanConfig
@@ -94,6 +102,8 @@ func Load() *Config {
 		SMTPPassword:         strings.ReplaceAll(getEnv("SMTP_PASSWORD", ""), " ", ""),
 		MailFromName:         getEnv("MAIL_FROM_NAME", "Caesar Cluster"),
 		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
+		VerifyTokenTTLHours:  getEnvInt("VERIFY_TOKEN_TTL_HOURS", 24),
+		MailReplyTo:          strings.TrimSpace(getEnv("MAIL_REPLY_TO", "")),
 
 		AlertScan: AlertScanConfig{
 			Enabled:         getEnvBool("ALERT_SCAN_ENABLED", true),
@@ -112,10 +122,21 @@ func Load() *Config {
 		log.Fatal("APP_ENV=production ต้องตั้ง JWT_SECRET ใหม่ยาวอย่างน้อย 32 ตัวอักษร " +
 			"สร้างได้ด้วยคำสั่ง: openssl rand -base64 48")
 	}
-	// อีเมลไม่ใช่ค่าที่ทั้งระบบต้องมีถึงจะ start ได้ (ต่างจาก DB/JWT) — แค่เตือนถ้าลืมตั้ง
-	// เพราะจะกระทบเฉพาะฟีเจอร์รีเซ็ตรหัสผ่าน ไม่ควรบล็อกทั้ง server สำหรับคนที่ dev ส่วนอื่นอยู่
+	// อีเมลกลายเป็นค่าที่ขาดไม่ได้ตั้งแต่ย้ายมาใช้ลิงก์ยืนยัน: ส่งไม่ออก = สมัครไม่ได้เลย
+	// บนเครื่องจริงจึงไม่ยอม start ส่วนตอน dev เตือนเฉยๆ (คนทำฟีเจอร์อื่นไม่ควรต้องมี App Password ก่อน)
 	if cfg.SMTPUsername == "" || cfg.SMTPPassword == "" {
-		log.Println("คำเตือน: ไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
+		if cfg.IsProduction() {
+			log.Fatal("APP_ENV=production ต้องตั้ง SMTP_USERNAME และ SMTP_PASSWORD " +
+				"ไม่งั้นระบบสมัครสมาชิก (ลิงก์ยืนยันอีเมล) และรีเซ็ตรหัสผ่านใช้งานไม่ได้ทั้งคู่")
+		}
+		log.Println("คำเตือน: ไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD — " +
+			"สมัครสมาชิกและรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้ (ส่งอีเมลไม่ออก)")
+	}
+	// ลิงก์ในอีเมลชี้ไปที่ FRONTEND_ORIGIN — เป็น localhost/IP บนเครื่องจริงแปลว่าผู้รับกดไม่ได้
+	// และเป็นสัญญาณสแปมที่หนักที่สุดอย่างหนึ่ง
+	if cfg.IsProduction() && !hasPublicHost(cfg.FrontendOrigin) {
+		log.Printf("คำเตือน: FRONTEND_ORIGIN=%q ไม่ได้ชี้ไปที่โดเมนสาธารณะ — "+
+			"ลิงก์ยืนยันอีเมล/รีเซ็ตรหัสผ่านที่ส่งออกไปจะกดไม่ได้ และเสี่ยงถูกจัดเป็นสแปม", cfg.FrontendOrigin)
 	}
 	return cfg
 }
@@ -178,4 +199,21 @@ func getEnvBool(key string, fallback bool) bool {
 		log.Printf("ค่า env %s=%q ไม่ใช่ค่าเปิด/ปิด ใช้ค่า default %v แทน", key, v, fallback)
 		return fallback
 	}
+}
+
+// hasPublicHost บอกว่า origin ชี้ไปโดเมนจริงที่คนนอกเปิดได้ไหม — ใช้ตัดสินแค่ว่าจะเตือนหรือไม่
+// เกณฑ์จึงหยาบได้: อะไรที่ไม่ใช่ loopback และไม่ใช่ IP ล้วน ถือว่าเป็นโดเมน
+func hasPublicHost(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	switch host {
+	case "", "localhost", "127.0.0.1", "::1":
+		return false
+	}
+	// IP ล้วน (ไม่ว่าจะ public หรือไม่) ใช้เป็นปลายทางของลิงก์ในอีเมลไม่ได้อยู่ดี —
+	// ไม่มี TLS cert ที่เบราว์เซอร์เชื่อ และตัวกรองสแปมมองว่าเป็นลิงก์น่าสงสัยเสมอ
+	return net.ParseIP(host) == nil
 }

@@ -16,29 +16,9 @@ import (
 )
 
 // Setup ประกอบ gin.Engine ทั้งหมด: สร้าง controller, ตั้ง CORS, ผูก route → handler
+// แบ่งเป็น 3 กลุ่ม — public, ต้อง login (middlewares.Auth), admin only (+ AdminOnly)
 //
-// data flow: รับ cfg/db/service layer จาก main → แจกจ่ายให้ controller แต่ละตัว → คืน engine ที่พร้อม r.Run
-//
-// โครง route:
-//
-//	public       : GET /health, POST /api/register, POST /api/login,
-//	               POST /api/verify-otp, POST /api/resend-otp,
-//	               POST /api/forgot-password (rate limited), POST /api/reset-password
-//	ต้อง login   : GET /api/me, GET /api/request-templates,
-//	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
-//	               DELETE /api/namespaces (leave — เป็นเจ้าของคนสุดท้าย = ลบทั้งก้อน),
-//	               POST /api/namespaces/invites (contributor เชิญ), GET /api/namespaces/invites/mine,
-//	               GET /api/namespaces/invites/sent, PATCH /api/namespaces/invites/:id/accept,
-//	               PATCH /api/namespaces/invites/:id/decline, DELETE /api/namespaces/invites/:id (ยกเลิก),
-//	               GET|POST /api/services, DELETE /api/services/:id, GET /api/services/:id/logs,
-//	               GET /api/alerts, GET /api/alerts/unread-count, PATCH /api/alerts/read,
-//	               DELETE /api/alerts/read, DELETE /api/alerts/:id,
-//	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
-//	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
-//	               POST /api/admin/request-templates, GET /api/admin/namespaces,
-//	               PATCH /api/admin/namespaces/:id/quota, DELETE /api/admin/namespaces/:id
-//
-// ลำดับที่ผู้ใช้ต้องเดิน: register → login → ยืนยัน OTP ทางอีเมล (เฉพาะ role user จากเครื่องใหม่)
+// ลำดับที่ผู้ใช้ต้องเดิน: register → กดลิงก์ยืนยันในอีเมล (ได้ JWT ตรงนั้นเลย ไม่ต้องผ่าน login)
 // → สร้าง/เข้าร่วม namespace → deploy service
 func Setup(
 	cfg *config.Config,
@@ -92,12 +72,13 @@ func Setup(
 		api.POST("/register", authCtl.Register)
 		api.POST("/login", authCtl.Login)
 
-		// ยืนยันตัวตนด้วย OTP ทางอีเมล (public — ยังไม่มี JWT ตอนเรียกสองเส้นนี้)
-		// ไม่ใส่ rate limit ต่อ IP โดยตั้งใจ เพราะนักศึกษาทั้งแล็บออกเน็ตผ่าน IP เดียวกัน
-		// จะกลายเป็นบล็อกกันเอง — คุมที่ระดับ "ใบ" แทน (กรอกผิดจำกัดครั้ง, resend มี cooldown
-		// + เพดาน, ออกใบใหม่จำกัดครั้งต่อ user) ดู auth_otp.go
-		api.POST("/verify-otp", authCtl.VerifyOTP)
-		api.POST("/resend-otp", authCtl.ResendOTP)
+		// ยืนยันอีเมลด้วยลิงก์ที่ส่งตอนสมัคร (public — ยังไม่มี JWT ตอนเรียกสองเส้นนี้)
+		//
+		// /verify-email ไม่ใส่ rate limit เพราะ token 32 ไบต์เดาไม่ได้อยู่แล้ว มีแต่จะบล็อกนักศึกษา
+		// ทั้งแล็บที่ใช้ IP เดียวกัน ส่วน /resend-verification ใส่เพราะสั่งให้ระบบยิงเมลไปหาที่อยู่ที่
+		// ผู้เรียกกรอกเอง (คุมต่อบัญชีด้วย cooldown 60 วิ ใน sendVerificationLink อีกชั้น)
+		api.POST("/verify-email", authCtl.VerifyEmail)
+		api.POST("/resend-verification", middlewares.RateLimit(5, 15*time.Minute), authCtl.ResendVerification)
 
 		// รีเซ็ตรหัสผ่านผ่านอีเมล (public) — /forgot-password มี rate limit ต่อ IP กันสแปม/email-bombing
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)
@@ -129,11 +110,8 @@ func Setup(
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
 
-			// แจ้งเตือนรายคน — /unread-count ถูกหน้าเว็บ poll ถี่ที่สุดในกลุ่มนี้ (ทุกหน้า ทุกนาที)
-			// เลยแยกเป็น endpoint เบาๆ ที่ตอบแค่ตัวเลข ไม่ต้องดึงทั้งรายการมานับ
-			//
-			// DELETE /alerts/read ต้องประกาศก่อน DELETE /alerts/:id — gin จับคู่ static segment
-			// ก่อน wildcard อยู่แล้ว แต่เรียงแบบนี้ไว้ให้คนอ่านเห็นชัดว่าตั้งใจ ไม่ใช่บังเอิญ
+			// /unread-count แยกเป็น endpoint เบาๆ ที่ตอบแค่ตัวเลข เพราะหน้าเว็บ poll ถี่ที่สุดในกลุ่มนี้
+			// DELETE /alerts/read ประกาศก่อน /alerts/:id ให้เห็นชัดว่าตั้งใจ (gin จับ static ก่อน wildcard อยู่แล้ว)
 			protected.GET("/alerts", alertCtl.List)
 			protected.GET("/alerts/unread-count", alertCtl.UnreadCount)
 			protected.PATCH("/alerts/read", alertCtl.MarkRead)
@@ -165,6 +143,8 @@ func Setup(
 			admin.PATCH("/requests/:id/approve", adminCtl.Approve)
 			admin.PATCH("/requests/:id/deny", adminCtl.Deny)
 
+			admin.GET("/email-deliveries", adminCtl.ListEmailDeliveries)
+
 			admin.GET("/users", adminCtl.ListUsers)
 			admin.PATCH("/users/:id", adminCtl.UpdateUser)
 			admin.DELETE("/users/:id", adminCtl.DeleteUser)
@@ -174,13 +154,10 @@ func Setup(
 	return r
 }
 
-// allowOriginFor สร้างฟังก์ชันเช็ค CORS origin ให้ cors.Config
+// allowOriginFor สร้างฟังก์ชันเช็ค CORS origin — FRONTEND_ORIGIN ผ่านเสมอ ส่วน localhost/127.0.0.1
+// ทุกพอร์ตผ่านเพิ่มเฉพาะตอน dev (Vite สลับพอร์ตเองได้ และ browser มอง 127.0.0.1 เป็นคนละ origin)
 //
-// FRONTEND_ORIGIN ผ่านเสมอ ส่วน localhost/127.0.0.1/::1 ทุกพอร์ตผ่านเพิ่มเฉพาะตอน dev
-// (Vite สลับพอร์ตเองได้ 5173→5174 และ 127.0.0.1 ถือเป็นคนละ origin กับ localhost ในสายตา browser)
-//
-// ตัดสินจาก APP_ENV ไม่ใช่ PROVISIONER: การรัน mock provisioner บนเครื่องจริงเพราะคลัสเตอร์
-// ยังไม่พร้อม ไม่ใช่เหตุผลที่จะเปิด CORS ให้ localhost ตามไปด้วย
+// ตัดสินจาก APP_ENV ไม่ใช่ PROVISIONER — รัน mock บนเครื่องจริงไม่ใช่เหตุผลให้เปิด CORS ให้ localhost
 func allowOriginFor(cfg *config.Config) func(string) bool {
 	devMode := !cfg.IsProduction()
 	return func(origin string) bool {
