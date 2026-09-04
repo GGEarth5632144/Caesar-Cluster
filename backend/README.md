@@ -31,8 +31,10 @@
 ## เริ่มใช้งาน
 
 ```bash
+cp .env.example .env      # .env มีไฟล์เดียวอยู่ที่ root ของ repo (ไม่มีใน backend/ แล้ว)
+# แก้ DB_URL ใน .env จาก @db:5432 เป็น @localhost:5433 เพราะรัน server เองไม่ได้อยู่ใน docker network
+
 cd backend
-cp .env.example .env
 docker compose up -d      # postgres (port 5433)
 
 go run ./cmd/seed         # ** จำเป็น ** สร้าง roles + admin + request_templates ตั้งต้น
@@ -49,7 +51,7 @@ seed รันซ้ำได้ ไม่พัง ไม่เกิดข้�
 ### เชื่อมต่อฐานข้อมูลด้วย pgAdmin 4
 
 ต้องรัน `docker compose up -d` ให้ container postgres ทำงานอยู่ก่อน ถึงจะเชื่อมต่อได้
-(ค่าทั้งหมดด้านล่างมาจาก `docker-compose.yml` / `.env.example` — ถ้าแก้ค่าพวกนี้เองต้องใช้ค่าที่แก้แทน)
+(ค่าทั้งหมดด้านล่างมาจาก `docker-compose.yml` / `.env.example` ที่ root — ถ้าแก้ค่าพวกนี้เองต้องใช้ค่าที่แก้แทน)
 
 1. เปิด pgAdmin 4 → ในแถบ **Object Explorer** ด้านซ้าย คลิกขวาที่ **Servers** → **Register** → **Server...**
 2. แท็บ **General** → ช่อง **Name** ใส่ชื่ออะไรก็ได้ เช่น `Caesar Cluster (local)`

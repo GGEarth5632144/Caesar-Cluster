@@ -1,11 +1,14 @@
+# postgres อย่างเดียว สำหรับตอนรัน backend เองด้วย `go run` (ไม่ได้รันทั้ง stack ด้วย docker)
+# ทั้ง stack ใช้ docker-compose.yml ที่ root แทน
+#
+#   cp ../.env.example ../.env   # ถ้ายังไม่มี แล้วแก้ DB_URL เป็น @localhost:5433
+#   docker compose up -d
 services:
   postgres:
     image: postgres:16
     container_name: pg
     restart: unless-stopped
-    environment:
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: cloud_cluster
+    env_file: ../.env # POSTGRES_DB / POSTGRES_PASSWORD มาจาก .env ที่ root
     ports:
       - "5433:5432"
     volumes:

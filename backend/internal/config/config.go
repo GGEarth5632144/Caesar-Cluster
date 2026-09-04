@@ -80,7 +80,11 @@ type AlertScanConfig struct {
 // data flow: ไฟล์ .env / env ของเครื่อง → getEnv ทีละ key → คืน *Config ให้ main ใช้ต่อ
 // ถ้าค่าจำเป็น (DB_URL, JWT_SECRET) ขาด จะ log.Fatal หยุดตั้งแต่ต้น (fail fast)
 func Load() *Config {
-	_ = godotenv.Load() // ไม่มีไฟล์ .env ก็ไม่ error — ใช้ env จริงของเครื่องแทน
+	// .env มีไฟล์เดียวอยู่ที่ root ของ repo — รันด้วย docker จะถูกส่งมาทาง env ของ container อยู่แล้ว
+	// ส่วนตอนรัน `go run ./cmd/server` จาก backend/ ต้องเดินขึ้นไปหยิบที่ ../.env ให้เอง
+	// (godotenv ไม่เขียนทับค่าที่มีอยู่แล้ว ลำดับนี้จึงให้ env ของเครื่องจริงชนะเสมอ)
+	_ = godotenv.Load()         // ไม่มีไฟล์ .env ก็ไม่ error — ใช้ env จริงของเครื่องแทน
+	_ = godotenv.Load("../.env")
 
 	cfg := &Config{
 		AppEnv:         normalizeAppEnv(getEnv("APP_ENV", EnvDevelopment)),
