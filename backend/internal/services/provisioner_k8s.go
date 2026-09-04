@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"backend/internal/entity"
 )
@@ -60,4 +61,9 @@ func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string
 // data flow (แผน): รับ namespace + ชื่อ service จาก ServiceManager.Delete → เรียก AppsV1().Deployments().Delete()
 func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName, svcName string) error {
 	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeleteService)")
+}
+
+// Logs (ยังไม่ทำ) — จะเปิด stream ของ log จาก container ที่รัน service นี้อยู่
+func (k *KubernetesProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (Logs)")
 }

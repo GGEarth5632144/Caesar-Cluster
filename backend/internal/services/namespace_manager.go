@@ -20,6 +20,13 @@ var (
 	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
 	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
 	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
+
+	// ErrNamespaceTerminating = namespace ชื่อนี้เพิ่งถูกสั่งลบและยังตายไม่สนิท
+	//
+	// ต่างจาก ErrNameTaken ตรงที่ "รอแล้วลองใหม่ได้" ไม่ใช่ต้องเปลี่ยนชื่อ — การลบ namespace
+	// ของ k8s เป็นแบบ async ค้างสถานะ Terminating อยู่พักหนึ่ง เจอบ่อยตอนลบ space
+	// แล้วสร้างใหม่ชื่อเดิมทันที ผู้ใช้ต้องได้คำแนะนำที่ถูกว่าให้รอ ไม่ใช่ให้ไปตั้งชื่ออื่น
+	ErrNamespaceTerminating = errors.New("namespace ชื่อนี้กำลังถูกลบอยู่ รอสักครู่แล้วลองใหม่")
 )
 
 // NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + รายชื่อสมาชิก)
@@ -87,8 +94,23 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) 
 			return err // สาเหตุอื่น (NOT NULL, check constraint, ฯลฯ) ให้ขึ้น error จริงแทนที่จะเดาว่าชื่อซ้ำ
 		}
 		// ผูกเจ้าของเข้ากับ space ที่เพิ่งสร้าง
-		return tx.Model(&entity.User{}).Where("id = ?", userID).
-			Update("namespace_id", ns.ID).Error
+		//
+		// เงื่อนไข "AND namespace_id IS NULL" คือตัวกันการยิงซ้อน: การเช็ค user.NamespaceID
+		// ข้างบนอยู่นอก transaction ถ้าผู้ใช้กดปุ่มสองครั้งเร็วๆ (หรือหน้าเว็บ retry) ทั้งสอง request
+		// จะผ่านด่านนั้นมาพร้อมกันแล้วสร้าง namespace คนละอัน — อันที่แพ้จะกลายเป็น space ผี
+		// ที่ไม่มีใครเป็นสมาชิกแต่ยังจองชื่อไว้ และถูกสร้างขึ้นจริงบนคลัสเตอร์ด้วย
+		//
+		// ให้ฐานข้อมูลเป็นคนตัดสินผู้ชนะแทน: คนที่มาทีหลังจะได้ RowsAffected = 0 แล้ว transaction
+		// ทั้งก้อน (รวม INSERT namespace) ถูก rollback ไปเอง ไม่มีอะไรค้าง
+		res := tx.Model(&entity.User{}).Where("id = ? AND namespace_id IS NULL", userID).
+			Update("namespace_id", ns.ID)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrAlreadyInNamespace
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -96,7 +118,22 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) 
 
 	// สร้างของจริงบน cluster — ถ้าพลาดให้ถอย row ที่เพิ่งสร้างออก (กัน DB กับ cluster ไม่ตรงกัน)
 	if err := m.prov.EnsureNamespace(ctx, ns); err != nil {
-		m.db.WithContext(ctx).Delete(&entity.Namespace{}, ns.ID) // FK ตั้ง users.namespace_id กลับเป็น NULL ให้เอง
+		// context.WithoutCancel: ถ้า EnsureNamespace ล้มเพราะผู้ใช้ปิดหน้าเว็บ (ctx ถูก cancel)
+		// การลบด้วย ctx ตัวเดิมจะล้มตามทันที แล้ว namespace ผีค้างใน DB ถาวร ซึ่งร้ายเป็นพิเศษ
+		// เพราะ users.namespace_id ชี้ไปที่มันแล้ว เจ้าตัวจะสร้าง space ใหม่ไม่ได้อีกเลย
+		// (ติด ErrAlreadyInNamespace) ทั้งที่บนคลัสเตอร์ไม่มีอะไรอยู่จริง
+		if delErr := m.db.WithContext(context.WithoutCancel(ctx)).
+			Delete(&entity.Namespace{}, ns.ID).Error; delErr != nil { // FK ตั้ง users.namespace_id กลับเป็น NULL ให้เอง
+			log.Printf("!! สร้าง namespace '%s' (id=%d) บนคลัสเตอร์ไม่สำเร็จ (%v) และถอนแถวใน DB ไม่สำเร็จด้วย: %v "+
+				"— ผู้ใช้ id=%d จะติดอยู่กับ space ที่ไม่มีอยู่จริง ต้องลบมือ", ns.Name, ns.ID, err, delErr, userID)
+		}
+
+		// error ที่ผู้ใช้แก้เองได้ (ชื่อซ้ำ / รอ namespace เดิมตายก่อน) ส่งต่อดิบๆ ไม่ห่อทับ
+		// เพราะ controller ต้องแปลงเป็น 409 พร้อมข้อความที่บอกวิธีแก้ ไม่ใช่ 500 ที่บอกอะไรไม่ได้
+		// ส่วนสาเหตุอื่น (คลัสเตอร์ล่ม สิทธิ์ไม่พอ) ห่อไว้ให้รู้ว่าพังตอนคุยกับคลัสเตอร์
+		if errors.Is(err, ErrNameTaken) || errors.Is(err, ErrNamespaceTerminating) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("สร้าง namespace บน cluster ไม่สำเร็จ: %w", err)
 	}
 	return ns, nil
@@ -127,9 +164,15 @@ func (m *NamespaceManager) Join(ctx context.Context, userID, namespaceID int) (*
 		return nil, err
 	}
 
-	if err := m.db.WithContext(ctx).Model(&entity.User{}).Where("id = ?", userID).
-		Update("namespace_id", ns.ID).Error; err != nil {
-		return nil, err
+	// เงื่อนไข IS NULL ด้วยเหตุผลเดียวกับ Create — กันกด join ซ้อนกับ create/accept ของตัวเอง
+	// แล้วได้ผลลัพธ์ที่ขึ้นกับว่าใครเขียนทับใครทีหลัง
+	res := m.db.WithContext(ctx).Model(&entity.User{}).
+		Where("id = ? AND namespace_id IS NULL", userID).Update("namespace_id", ns.ID)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, ErrAlreadyInNamespace
 	}
 	return &ns, nil
 }
@@ -209,6 +252,7 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 			ErrQuotaOutOfRange, entity.MaxCPULimitMilli, entity.MaxRAMLimitMB)
 	}
 
+	prevCPU, prevRAM := ns.CPULimitMilli, ns.RAMLimitMB
 	ns.CPULimitMilli = cpuMilli
 	ns.RAMLimitMB = ramMB
 	if err := m.db.WithContext(ctx).Model(&entity.Namespace{}).Where("id = ?", ns.ID).
@@ -219,8 +263,22 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, err
 	}
 
-	// ดัน ResourceQuota ใหม่ขึ้น cluster ให้ตรงกับ DB
+	// ดัน ResourceQuota ใหม่ขึ้น cluster ให้ตรงกับ DB — ดันไม่ขึ้นต้องถอยค่าใน DB กลับด้วย
+	// ไม่ใช่แค่คืน error: DB เป็นตัวที่ QuotaService ใช้ตัดสินว่า "ขอ deploy เพิ่มได้ไหม"
+	// ส่วนคลัสเตอร์เป็นตัวบังคับจริง ถ้าสองฝั่งไม่ตรงกัน ผู้ใช้จะถูก DB บอกว่าโควตาพอ
+	// แล้วไปเจอ ResourceQuota ปฏิเสธตอน deploy ด้วย error ที่ไม่มีใครเดาสาเหตุได้
 	if err := m.prov.EnsureNamespace(ctx, &ns); err != nil {
+		if rbErr := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Namespace{}).
+			Where("id = ?", ns.ID).
+			Updates(map[string]any{
+				"cpu_limit_milli": prevCPU,
+				"ram_limit_mb":    prevRAM,
+			}).Error; rbErr != nil {
+			log.Printf("!! ตั้งโควตา namespace '%s' (id=%d) บนคลัสเตอร์ไม่สำเร็จ (%v) "+
+				"และถอยค่าใน DB กลับเป็น %dm/%dMB ไม่สำเร็จด้วย: %v "+
+				"— DB บอกโควตา %dm/%dMB แต่คลัสเตอร์ยังบังคับค่าเดิม ต้องแก้มือ",
+				ns.Name, ns.ID, err, prevCPU, prevRAM, rbErr, cpuMilli, ramMB)
+		}
 		return nil, fmt.Errorf("อัปเดตโควตาบน cluster ไม่สำเร็จ: %w", err)
 	}
 	return m.Detail(ctx, ns.ID)

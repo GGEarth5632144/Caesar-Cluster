@@ -18,6 +18,8 @@
 | **การบังคับโควตา** (transaction + row lock) | ✅ ของจริง กัน overcommit ได้จริง |
 | กติกาทั้งหมด (eligible gate, 1 คน 1 space, limits) | ✅ ของจริง |
 | **สร้าง namespace / deploy container จริง** | ❌ **MOCK — แค่ log ออกมา ไม่มีอะไรเกิดขึ้นจริง** |
+| ดู log ของ service แบบสด | ✅ ของจริงกับ mock provisioner — `GET /api/services/:id/logs` (ฝั่ง `KubernetesProvisioner` ยังเป็น stub) |
+| แจ้งเตือนเมื่อ log มี error | ✅ ของจริง — `LogAlertScanner` สแกนเป็นรอบแล้วส่งเข้าหน้า Alerts |
 
 พูดอีกแบบ: ตอนนี้มี **control plane ที่ทำงานจริง** (จองโควตา จดบัญชี ตรวจสิทธิ์)
 แต่ยัง **ไม่มีมือที่ไปสร้างของจริง** — `KubernetesProvisioner` ยังเป็น stub ทุก method
@@ -106,6 +108,19 @@ go run ./cmd/seed
 ตอนสมัคร เช็ค 2 ชั้น: (1) มี student_id นี้ในตารางไหม (2) major ตรงกับ CPE ไหม — ไม่ผ่านชั้นไหนก็สมัครไม่ได้
 นอกจากนี้ยังมี FK `users.student_id → eligible_students.student_id` กันอีกชั้นที่ระดับ DB
 
+**5. สิทธิ์อ่านจาก DB สดทุก request — ไม่เชื่อ token**
+
+`middlewares.Auth` ตรวจลายเซ็น JWT แล้วเอา `sub` ไปอ่าน role + namespace ปัจจุบันจากฐานข้อมูลใหม่ทุกครั้ง
+claim `role` ที่อยู่ใน token **ไม่ถูกใช้ตัดสินสิทธิ์**
+
+เหตุผล: JWT เซ็นแล้วเรียกคืนไม่ได้ ข้อมูลข้างในคือภาพ ณ วินาทีที่ล็อกอิน ถ้าเชื่อ claim ตรงๆ
+การถอนสิทธิ์แอดมินหรือลบบัญชีจะไม่มีผลจนกว่า token จะหมดอายุ — ซึ่งนานถึง 30 วันถ้าติ๊ก Remember
+ตอนนี้ทั้งการเลื่อนขั้น ถอนสิทธิ์ และลบบัญชี **มีผลทันทีในคำขอถัดไป**
+
+ราคาที่จ่ายคือ SELECT ด้วย primary key หนึ่งครั้งต่อ request ซึ่งถูกกว่าที่ handler ส่วนใหญ่ทำอยู่เดิม
+(หลาย handler เคยยิง `First(&user, userID)` ของตัวเองซ้ำอยู่แล้ว ตอนนี้อ่านรอบเดียวแล้วแชร์ผ่าน
+`gin.Context` — ดู `currentNamespaceID` ใน `controller/helper.go`)
+
 ### เพดานทรัพยากร
 
 ค่าคงที่ทั้งหมดอยู่ใน [`internal/entity/namespace.go`](internal/entity/namespace.go)
@@ -174,6 +189,31 @@ internal/
 | `provisioner.go` | **interface** — จุดเดียวที่ผูกกับ k8s ที่เหลือไม่รู้จัก k8s เลย |
 | `provisioner_mock.go` | ตัวที่ใช้อยู่ตอนนี้ (แค่ log) |
 | `provisioner_k8s.go` | **ยังเป็น stub** — ของจริงต้องเขียนที่นี่ |
+| `alert_manager.go` | สร้าง/อ่าน/ลบแจ้งเตือนรายคน + ยุบ error เรื่องเดียวกันให้เหลือแถวเดียว |
+| `log_alert_scanner.go` | งานเบื้องหลัง — อ่าน log ของทุก service ที่ running เป็นรอบๆ เจอ error แล้วสร้างแจ้งเตือน |
+
+### แจ้งเตือนจาก log ทำงานยังไง
+
+```
+LogAlertScanner (ทุก 60 วิ)
+  └─ SELECT services ที่ status=running
+      └─ Provisioner.Logs(since=120s, follow=false)   ← ตัวเดียวกับที่หน้า Logs ใช้
+          └─ classifyLogLine() ทีละบรรทัด             ← 4 ชั้น: level=error → [error] → วลีที่แปลว่าพัง → คำลอยๆ
+              └─ ยุบบรรทัดที่ fingerprint ตรงกัน       ← แทนตัวเลขด้วย # ก่อนแฮช retry ครั้งที่ 17/18 จึงเป็นเรื่องเดียวกัน
+                  └─ AlertManager.Raise() ให้สมาชิกทุกคนใน namespace
+```
+
+จุดที่ตั้งใจออกแบบไว้แบบนี้:
+
+- **poll เป็นรอบ ไม่ follow ค้าง** — follow ต้องเปิด connection ค้างกับ Kubernetes API หนึ่งเส้น
+  ต่อหนึ่ง service ตลอดเวลา ซึ่งโตตามจำนวน service ไม่มีเพดาน ส่วน poll ต้นทุนคงที่
+  แลกกับ "ช้าไปหนึ่งรอบ" ซึ่งรับได้สำหรับระบบแจ้งเตือน
+- **ยุบด้วย fingerprint** — container ที่พังจริงพ่น error บรรทัดเดิมวินาทีละหลายรอบ
+  ถ้า INSERT ทุกบรรทัด หน้า Alerts จะกลายเป็นกำแพงข้อความเดียวกันจนหาเรื่องอื่นไม่เจอ
+- **ยุบแล้วไม่รีเซ็ต `is_read`** — ถ้ารีเซ็ต ตัวเลขแดงบน Sidebar จะกดให้หายไม่ได้เลยตราบใดที่
+  service ยังพังอยู่ กลายเป็นตัวเลขที่ผู้ใช้ทำอะไรกับมันไม่ได้จนเลิกสนใจ
+  ปล่อยให้ `count` เดินเงียบๆ แล้วไปเด้งใหม่เมื่อพ้นหน้าต่าง 6 ชม. แทน
+- **ส่งเฉพาะ error** — `warning` ถูกกรองทิ้งตาม default เปิดได้ด้วย `ALERT_SCAN_INCLUDE_WARNINGS=true`
 
 ### Export RBAC manifest
 
@@ -213,8 +253,12 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/health` | ping DB |
-| POST | `/api/register` | ต้องอยู่ใน `eligible_students` และเป็นสาขา CPE ไม่งั้น 403 |
-| POST | `/api/login` | คืน JWT (อายุ 24 ชม.) |
+| POST | `/api/register` | ต้องอยู่ใน `eligible_students` และเป็นสาขา CPE ไม่งั้น 403 — **ไม่คืน JWT** แต่ส่งลิงก์ยืนยันไปทางอีเมล (ส่งเมลไม่ออก = ยกเลิกการสมัครทั้งรายการ ไม่มีบัญชีค้าง) |
+| POST | `/api/login` | คืน JWT (อายุ 24 ชม.) — บัญชีที่ยังไม่กดลิงก์ยืนยันได้ `403 EMAIL_NOT_VERIFIED` |
+| POST | `/api/verify-email` | เปิดใช้งานบัญชี **แล้วคืน JWT เลย** (เข้า dashboard ได้ทันที) กดซ้ำได้ `{"already": true}` ไม่มี token |
+| POST | `/api/resend-verification` | ขอลิงก์ยืนยันใบใหม่ — ตอบข้อความเดียวกันเสมอ กันเดาว่ามีบัญชีไหม (rate limit ต่อ IP + cooldown 60 วิ ต่อบัญชี) |
+| POST | `/api/forgot-password` | ขอลิงก์รีเซ็ตรหัสผ่าน (rate limit ต่อ IP) |
+| POST | `/api/reset-password` | ตั้งรหัสผ่านใหม่จาก token ในลิงก์ — ถือว่ายืนยันอีเมลไปในตัว (กดลิงก์ได้ = เปิดกล่องนั้นได้จริง) |
 
 ### ต้อง login (`Authorization: Bearer <token>`)
 
@@ -235,6 +279,12 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | GET | `/api/services` | service ทั้งหมดใน space |
 | POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
 | DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
+| GET | `/api/services/:id/logs` | สตรีม log สด — `tail`, `since`, `follow=true` (ตอบเป็น `text/plain` ไม่ใช่ JSON) |
+| GET | `/api/alerts` | แจ้งเตือนของฉัน — `unread=true`, `limit=<n>` |
+| GET | `/api/alerts/unread-count` | จำนวนที่ยังไม่อ่าน (ตัวเลขวงกลมแดงบน Sidebar) |
+| PATCH | `/api/alerts/read` | `{"ids":[...]}` หรือ `{"all":true}` |
+| DELETE | `/api/alerts/read` | ล้างเฉพาะที่อ่านแล้ว (ไม่แตะที่ยังไม่อ่าน) |
+| DELETE | `/api/alerts/:id` | ลบทีละอัน |
 
 ### Admin เท่านั้น
 
@@ -246,6 +296,7 @@ service ของกลุ่มร่วมกันเท่ากันอย
 | PATCH | `/api/admin/namespaces/:id/quota` | ปรับโควตา (group ≤ 8 core) |
 | DELETE | `/api/admin/namespaces/:id` | ลบ namespace ทิ้ง (ลบได้แม้มีสมาชิกอยู่ ตามดุลยพินิจแอดมิน) |
 | DELETE | `/api/admin/users/:id` | ลบผู้ใช้ — ถอน namespace ที่เขาเป็นเจ้าของ + service ที่ไปสร้างค้างไว้ใน space คนอื่น ออกจากคลัสเตอร์ให้ก่อน |
+| GET | `/api/admin/email-deliveries` | ประวัติการส่งอีเมลทุกฉบับ (สำเร็จ/ล้มเหลว + error + Message-ID) กรองด้วย `?gmail=`, `?status=`, `?purpose=`, `?limit=` |
 
 ### ลำดับที่ผู้ใช้ต้องเดิน
 
@@ -271,6 +322,8 @@ admin import รายชื่อ → user register → login
 | `INVITE_SELF` | เชิญ student_id ของตัวเอง |
 | `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |
 | `INVITE_NOT_PENDING` | คำเชิญถูก accept/decline/cancel ไปแล้ว ตอบซ้ำไม่ได้ |
+| `ACCOUNT_GONE` | token ยังไม่หมดอายุ แต่บัญชีถูกลบออกจากระบบไปแล้ว — หน้าเว็บควรเคลียร์ session แล้วพากลับไปหน้า login |
+| `ADMIN_ONLY` | เรียก endpoint ของแอดมินด้วยบัญชีที่ไม่ใช่แอดมิน (เช็คจาก role ใน DB สดๆ ไม่ใช่จาก token) |
 
 ---
 
@@ -284,6 +337,12 @@ admin import รายชื่อ → user register → login
 3. 🔴 **เขียน `KubernetesProvisioner` จริง** — Namespace + ResourceQuota + LimitRange + NetworkPolicy (default-deny กัน traffic ข้าม namespace) + Deployment
 4. 🟠 **ผู้ใช้เข้าถึง service ตัวเองยังไง** — schema มี `services.node_port` แล้ว (เลือกทาง NodePort)
    แต่ `KubernetesProvisioner.DeployService` ยังไม่ implement จริง เลยยังไม่มีใครเซ็ตค่านี้ (ดูข้อ 3)
-5. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running` ต้องมี reconcile loop
-6. 🟠 **persistent storage** (volume) — ยังไม่มี
-7. 🟡 production hardening — `JWT_SECRET` ยังเป็น `dev-secret`, ยังไม่มี TLS / rate limit
+5. 🟠 **หน้าเว็บฝั่งแอดมินยังเป็นกล่องเปล่าอยู่หลายหน้า** — `AdminDashboard` (ซึ่งเป็นหน้าแรกที่
+   แอดมินเห็นทันทีหลังล็อกอิน), `Alertadmin`, `Auditlog`, `IPCmanagement`, `Service`
+   ยัง render กล่องสีเทาว่างๆ ทั้งที่เมนูใน sidebar ชี้ไปหาแล้ว
+   ตาราง `system_alerts` ก็ยังไม่มีโค้ดตรงไหนเขียนลงไปเลย (สถานะเดียวกับ `user_alerts`
+   ก่อนที่จะทำ LogAlertScanner) — API ยังไม่มี ต้องทำทั้ง backend และ frontend
+6. 🟠 **status ไม่ sync กับของจริง** — DB เขียน `running` ตอน deploy สำเร็จครั้งเดียว ถ้า pod พังทีหลัง DB ยังบอก `running`
+   ต้องมี reconcile loop — ตอนนี้ผู้ใช้พอรู้ตัวได้ล่วงหน้าจากหน้า Alerts (ตัวสแกน log เจอ error ก่อน) แต่ป้ายสถานะบนการ์ด service ยังโกหกอยู่
+7. 🟠 **persistent storage** (volume) — ยังไม่มี
+8. 🟡 production hardening — TLS / rate limit ที่เก็บใน memory ใช้ได้กับ backend ตัวเดียว ถ้าขยายเป็นหลาย replica ต้องย้ายไป store ที่แชร์กัน

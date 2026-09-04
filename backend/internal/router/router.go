@@ -16,26 +16,10 @@ import (
 )
 
 // Setup ประกอบ gin.Engine ทั้งหมด: สร้าง controller, ตั้ง CORS, ผูก route → handler
+// แบ่งเป็น 3 กลุ่ม — public, ต้อง login (middlewares.Auth), admin only (+ AdminOnly)
 //
-// data flow: รับ cfg/db/service layer จาก main → แจกจ่ายให้ controller แต่ละตัว → คืน engine ที่พร้อม r.Run
-//
-// โครง route:
-//
-//	public       : GET /health, POST /api/register, POST /api/login,
-//	               POST /api/forgot-password (rate limited), POST /api/reset-password
-//	ต้อง login   : GET /api/me, GET /api/request-templates,
-//	               POST /api/namespaces, POST /api/namespaces/join, GET /api/namespaces/me,
-//	               DELETE /api/namespaces (leave — เป็นเจ้าของคนสุดท้าย = ลบทั้งก้อน),
-//	               POST /api/namespaces/invites (contributor เชิญ), GET /api/namespaces/invites/mine,
-//	               GET /api/namespaces/invites/sent, PATCH /api/namespaces/invites/:id/accept,
-//	               PATCH /api/namespaces/invites/:id/decline, DELETE /api/namespaces/invites/:id (ยกเลิก),
-//	               GET|POST /api/services, DELETE /api/services/:id,
-//	               POST /api/ai-review-requests, GET /api/ai-review-requests/:request_id
-//	admin only   : GET|POST /api/admin/eligible-students, POST /api/admin/eligible-students/preview,
-//	               POST /api/admin/request-templates, GET /api/admin/namespaces,
-//	               PATCH /api/admin/namespaces/:id/quota, DELETE /api/admin/namespaces/:id
-//
-// ลำดับที่ผู้ใช้ต้องเดิน: register → login → สร้าง/เข้าร่วม namespace → deploy service
+// ลำดับที่ผู้ใช้ต้องเดิน: register → กดลิงก์ยืนยันในอีเมล (ได้ JWT ตรงนั้นเลย ไม่ต้องผ่าน login)
+// → สร้าง/เข้าร่วม namespace → deploy service
 func Setup(
 	cfg *config.Config,
 	db *gorm.DB,
@@ -43,7 +27,13 @@ func Setup(
 	svcMgr *services.ServiceManager,
 	inviteMgr *services.InviteManager,
 	telemetrySvc *services.TelemetryService,
+	alertMgr *services.AlertManager,
 ) *gin.Engine {
+	// โหมด release ตอน production: ปิด route dump ตอน start และ debug log ราย request
+	// ที่ไม่ควรอยู่บนเครื่องจริง (ตรงกับที่ backend/.env.example บอกไว้เรื่อง APP_ENV)
+	if cfg.IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	}
 
 	authCtl := controller.NewAuthController(db, cfg)
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
@@ -54,8 +44,10 @@ func Setup(
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 	inviteCtl := controller.NewInviteController(inviteMgr)
 	telemetryCtrl := controller.NewTelemetryController(telemetrySvc)
+	alertCtl := controller.NewAlertController(alertMgr)
+
 	r := gin.Default()
-	
+
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: allowOriginFor(cfg),
 		AllowMethods:    []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
@@ -80,12 +72,20 @@ func Setup(
 		api.POST("/register", authCtl.Register)
 		api.POST("/login", authCtl.Login)
 
+		// ยืนยันอีเมลด้วยลิงก์ที่ส่งตอนสมัคร (public — ยังไม่มี JWT ตอนเรียกสองเส้นนี้)
+		//
+		// /verify-email ไม่ใส่ rate limit เพราะ token 32 ไบต์เดาไม่ได้อยู่แล้ว มีแต่จะบล็อกนักศึกษา
+		// ทั้งแล็บที่ใช้ IP เดียวกัน ส่วน /resend-verification ใส่เพราะสั่งให้ระบบยิงเมลไปหาที่อยู่ที่
+		// ผู้เรียกกรอกเอง (คุมต่อบัญชีด้วย cooldown 60 วิ ใน sendVerificationLink อีกชั้น)
+		api.POST("/verify-email", authCtl.VerifyEmail)
+		api.POST("/resend-verification", middlewares.RateLimit(5, 15*time.Minute), authCtl.ResendVerification)
+
 		// รีเซ็ตรหัสผ่านผ่านอีเมล (public) — /forgot-password มี rate limit ต่อ IP กันสแปม/email-bombing
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)
 		api.POST("/reset-password", authCtl.ResetPassword)
 		api.GET("/telemetry", telemetryCtrl.GetTelemetry)
 
-		protected := api.Group("", middlewares.Auth(cfg.JWTSecret))
+		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db))
 		{
 			protected.GET("/me", authCtl.Me)
 			protected.GET("/request-templates", tmplCtl.List)
@@ -108,6 +108,15 @@ func Setup(
 			protected.GET("/services", svcCtl.List)
 			protected.POST("/services", svcCtl.Create)
 			protected.DELETE("/services/:id", svcCtl.Delete)
+			protected.GET("/services/:id/logs", svcCtl.Logs)
+
+			// /unread-count แยกเป็น endpoint เบาๆ ที่ตอบแค่ตัวเลข เพราะหน้าเว็บ poll ถี่ที่สุดในกลุ่มนี้
+			// DELETE /alerts/read ประกาศก่อน /alerts/:id ให้เห็นชัดว่าตั้งใจ (gin จับ static ก่อน wildcard อยู่แล้ว)
+			protected.GET("/alerts", alertCtl.List)
+			protected.GET("/alerts/unread-count", alertCtl.UnreadCount)
+			protected.PATCH("/alerts/read", alertCtl.MarkRead)
+			protected.DELETE("/alerts/read", alertCtl.DeleteRead)
+			protected.DELETE("/alerts/:id", alertCtl.Delete)
 
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
@@ -115,7 +124,7 @@ func Setup(
 			protected.GET("/ai-review-requests/:request_id", aiReviewReqCtl.Get)
 		}
 
-		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret), middlewares.AdminOnly())
+		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret, db), middlewares.AdminOnly())
 		{
 			admin.GET("/eligible-students", adminCtl.ListEligibleStudents)
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
@@ -134,6 +143,8 @@ func Setup(
 			admin.PATCH("/requests/:id/approve", adminCtl.Approve)
 			admin.PATCH("/requests/:id/deny", adminCtl.Deny)
 
+			admin.GET("/email-deliveries", adminCtl.ListEmailDeliveries)
+
 			admin.GET("/users", adminCtl.ListUsers)
 			admin.PATCH("/users/:id", adminCtl.UpdateUser)
 			admin.DELETE("/users/:id", adminCtl.DeleteUser)
@@ -143,14 +154,12 @@ func Setup(
 	return r
 }
 
-// allowOriginFor สร้างฟังก์ชันเช็ค CORS origin ให้ cors.Config:
-//   - อนุญาต origin ที่ตั้งค่าไว้ใน FRONTEND_ORIGIN เสมอ (ใช้ตอน deploy จริง)
-//   - ตอน dev (PROVISIONER=mock) อนุญาต localhost / 127.0.0.1 / ::1 ทุกพอร์ตเพิ่มด้วย
-//     เพราะ Vite อาจสลับพอร์ตเอง (5173→5174 ถ้าพอร์ตถูกใช้อยู่) หรือเปิดผ่าน 127.0.0.1
-//     ซึ่ง browser ถือเป็นคนละ origin กับ localhost ทำให้ preflight เด้ง 403 ทั้งที่เป็นเครื่องเดียวกัน
-//   - ตอน prod (PROVISIONER=kubernetes) จะล็อกไว้ที่ FRONTEND_ORIGIN อย่างเดียว ไม่เปิดกว้าง
+// allowOriginFor สร้างฟังก์ชันเช็ค CORS origin — FRONTEND_ORIGIN ผ่านเสมอ ส่วน localhost/127.0.0.1
+// ทุกพอร์ตผ่านเพิ่มเฉพาะตอน dev (Vite สลับพอร์ตเองได้ และ browser มอง 127.0.0.1 เป็นคนละ origin)
+//
+// ตัดสินจาก APP_ENV ไม่ใช่ PROVISIONER — รัน mock บนเครื่องจริงไม่ใช่เหตุผลให้เปิด CORS ให้ localhost
 func allowOriginFor(cfg *config.Config) func(string) bool {
-	devMode := cfg.Provisioner == config.ProvisionerMock
+	devMode := !cfg.IsProduction()
 	return func(origin string) bool {
 		if origin == cfg.FrontendOrigin {
 			return true

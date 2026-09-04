@@ -24,7 +24,7 @@
 ## สิ่งที่ทำได้จริงแล้ว
 
 ### Authentication & Access Control
-- Login / Register / Forgot Password / Reset Password
+- Login / Register (ยืนยันตัวตนด้วยลิงก์ที่ส่งไปทางอีเมล) / Forgot Password / Reset Password
 - Role-based routing: User (role=user) กับ Admin (role=admin) เห็น route ต่างกัน
 - Hashed routes ทุก path ด้วย SHA-256 + salt เพื่อป้องกัน enumeration
 

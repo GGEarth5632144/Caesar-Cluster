@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"time"
 
@@ -50,4 +52,80 @@ func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc 
 func (m *MockProvisioner) DeleteService(ctx context.Context, nsName, svcName string) error {
 	log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svcName, nsName)
 	return nil
+}
+
+// Logs จำลอง log ของ container ด้วยข้อความปลอมที่รูปแบบเหมือนจริง (มี timestamp นำหน้าแบบเดียวกับ
+// ที่ KubernetesProvisioner ส่งตอน Timestamps=true) เพื่อให้พัฒนา/ทดสอบหน้า log viewer ได้
+// โดยไม่ต้องมีคลัสเตอร์จริง
+//
+// ใช้ io.Pipe เขียนจาก goroutine แยก: ส่งบรรทัดเริ่มต้นก่อน แล้วถ้า opts.Follow=true จะไม่ปิด
+// stream แต่ส่งบรรทัดใหม่ทุก 1.5 วินาทีจนกว่า ctx จะถูก cancel — เลียนพฤติกรรม "ไหลสด" ของจริง
+func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
+	pr, pw := io.Pipe()
+
+	tail := opts.TailLines
+	if tail <= 0 {
+		tail = 20
+	}
+
+	go func() {
+		defer pw.Close()
+
+		// เขียนบรรทัดหนึ่ง คืน false ถ้าฝั่งอ่านปิดไปแล้ว (ผู้เรียก Close() ตัว io.ReadCloser
+		// ที่คืนไป) — ต้องเช็คทุกครั้งไม่งั้น goroutine นี้จะเขียนเข้า pipe ที่ตายแล้วค้างไปตลอดกาล
+		writeLine := func(msg string) bool {
+			line := fmt.Sprintf("%s %s\n", time.Now().Format(time.RFC3339Nano), msg)
+			_, err := pw.Write([]byte(line))
+			return err == nil
+		}
+
+		if !writeLine(fmt.Sprintf("[mock] starting container for service %q in namespace %q", svcName, nsName)) {
+			return
+		}
+		if !writeLine("[mock] listening on 0.0.0.0:8080") {
+			return
+		}
+		for i := int64(0); i < tail; i++ {
+			if !writeLine(mockLogLine(i)) {
+				return
+			}
+		}
+		if !opts.Follow {
+			return
+		}
+
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+		for n := tail; ; n++ {
+			select {
+			case <-ctx.Done(): // ผู้ใช้ปิดหน้าเว็บ/เปลี่ยนหน้า — HTTP request context ถูก cancel
+				return
+			case <-ticker.C:
+				if !writeLine(mockLogLine(n)) {
+					return
+				}
+			}
+		}
+	}()
+
+	return pr, nil
+}
+
+// mockLogLine สร้างเนื้อ log ปลอมของบรรทัดที่ n — ส่วนใหญ่เป็น access log ปกติ
+// แทรก error/warning เป็นระยะ เพราะ LogAlertScanner อ่าน log จาก provisioner ตัวเดียวกันนี้
+// ถ้า mock พ่นแต่ "GET / 200" ล้วน ฟีเจอร์แจ้งเตือนจะทดสอบบนเครื่อง dev ไม่ได้เลย
+//
+// ใช้ n % k แทนการสุ่ม เพื่อให้ผลลัพธ์นิ่งพอที่เทสต์จะยืนยันจำนวนได้
+func mockLogLine(n int64) string {
+	switch {
+	case n%17 == 16:
+		return "[mock] level=error msg=\"upstream connection refused\" upstream=127.0.0.1:5432 attempt=" +
+			fmt.Sprint(n)
+	case n%11 == 10:
+		return fmt.Sprintf("[mock] 10.244.0.1 - - \"GET /api/items HTTP/1.1\" 503 0 %dms", 800+n%200)
+	case n%7 == 6:
+		return fmt.Sprintf("[mock] level=warn msg=\"request took longer than expected\" duration=%dms", 900+n%100)
+	default:
+		return fmt.Sprintf("[mock] GET / 200 %dms", 5+n%30)
+	}
 }

@@ -14,6 +14,7 @@ import { useAuthStore } from "@/store/authStore";
 const Login = lazy(() => import("@/pages/Login"));
 const Register = lazy(() => import("@/pages/Register"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const VerifyEmail = lazy(() => import("@/pages/VerifyEmail"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
 const Terms = lazy(() => import("@/pages/Terms"));
 const Setting = lazy(() => import("@/pages/Setting"));
@@ -34,6 +35,7 @@ const Createservice = lazy(() => import("@/pages/user/Createservice"));
 const Alertuser = lazy(() => import("@/pages/user/Alertuser"));
 const Myservice = lazy(() => import("@/pages/user/Myservice"));
 const AIReviewPage = lazy(() => import("@/pages/user/AIReviewPage"));
+const ServiceLogs = lazy(() => import("@/pages/user/ServiceLogs"));
 const GeneralDashboard = lazy(() => import("@/pages/user/GeneralDashboard"));
 const WorkspaceOnboarding = lazy(() => import("@/pages/user/WorkspaceOnboarding"));
 
@@ -60,6 +62,9 @@ return (
           <Route path={PATHS.login} element={<Login />} />
           <Route path={PATHS.register} element={<Register />} />
           <Route path={PATHS.forgotPassword} element={<ForgotPassword />} />
+          {/* ยืนยันอีเมล — public เพราะยังไม่มี token จนกว่าจะยืนยันแล้วไปล็อกอิน
+              token อยู่ใน query ของลิงก์ที่ส่งไปทางอีเมล (?token=...) */}
+          <Route path={PATHS.verifyEmail} element={<VerifyEmail />} />
           <Route path={PATHS.resetPassword} element={<ResetPassword />} />
           <Route path="/reset-password" element={<ResetPasswordRedirect />} />
           <Route path={PATHS.terms} element={<Terms />} />
@@ -78,6 +83,7 @@ return (
                   <Route path={PATHS.myService} element={<Myservice />} />
                   <Route path={PATHS.createService} element={<Createservice />} />
                   <Route path={`${PATHS.aiReview}/:requestId`} element={<AIReviewPage />} />
+                  <Route path={`${PATHS.serviceLogs}/:serviceId`} element={<ServiceLogs />} />
                   <Route path={PATHS.generalDashboard} element={<GeneralDashboard user={user} />} />
                   <Route path={PATHS.workspaceOnboarding} element={<WorkspaceOnboarding />} />
                 </>

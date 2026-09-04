@@ -2,8 +2,11 @@ package config
 
 import (
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -14,8 +17,19 @@ const (
 	ProvisionerKubernetes = "kubernetes"
 )
 
+// โหมดการรัน (env APP_ENV) — แยกจาก PROVISIONER โดยตั้งใจ
+//
+// เดิมใช้ PROVISIONER=mock เป็นตัวบอกว่า "โหมด dev" แล้วผ่อน CORS ตาม ซึ่งมัดสองเรื่องที่ไม่เกี่ยวกัน
+// เข้าด้วยกัน: จะแตะคลัสเตอร์จริงไหม กับจะผ่อน CORS ไหม การรัน mock บนเครื่องจริงเพราะคลัสเตอร์
+// ยังไม่พร้อม จึงไม่ควรลากเอา CORS หลวมติดไปด้วย (ใช้ที่ router.allowOriginFor และ cmd/seed)
+const (
+	EnvDevelopment = "development"
+	EnvProduction  = "production"
+)
+
 // Config = ค่า runtime ทั้งหมดที่ระบบต้องใช้ อ่านมาจาก env ครั้งเดียวตอน start
 type Config struct {
+	AppEnv         string // development | production — คุมความเข้มของ config check
 	Port           string
 	DBUrl          string
 	JWTSecret      string
@@ -26,10 +40,40 @@ type Config struct {
 	JWTTTLHours        int // อายุ JWT ปกติ (ชม.) — ไม่ติ๊ก remember ตอน login
 	JWTRememberTTLDays int // อายุ JWT ตอนติ๊ก "Remember For 30 Days" (วัน)
 
-	// ค่าสำหรับส่งอีเมลรีเซ็ตรหัสผ่านผ่าน Resend (https://resend.com)
-	ResendAPIKey         string // API key ของ Resend — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
-	MailFrom             string // ผู้ส่ง เช่น "Caesar Cluster <no-reply@your-domain>"
+	// ค่าสำหรับส่งอีเมลรีเซ็ตรหัสผ่านผ่าน SMTP ของบัญชี Gmail แบบ no-reply ที่ทำไว้ให้ระบบนี้
+	// (เลิกใช้ Resend API key แล้ว — ไม่ต้องมี key ของบริการภายนอกให้ดูแล/หมดอายุ)
+	SMTPHost             string // เซิร์ฟเวอร์ SMTP — Gmail คือ smtp.gmail.com
+	SMTPPort             int    // 587 = STARTTLS (ค่าปกติ), 465 = TLS ตั้งแต่ต้น
+	SMTPUsername         string // อีเมลเต็มของบัญชี no-reply — ว่าง = ส่งอีเมลไม่ได้ (แค่ warn ไม่ fatal)
+	SMTPPassword         string // App Password 16 ตัวของบัญชีนั้น (ไม่ใช่รหัสผ่านที่ใช้ล็อกอิน Google)
+	MailFromName         string // ชื่อที่แสดงหน้าอีเมลผู้ส่ง — ตัวที่อยู่จะเป็น SMTPUsername เสมอ
 	ResetTokenTTLMinutes int    // อายุของลิงก์รีเซ็ตรหัสผ่าน (นาที)
+	// อายุลิงก์ยืนยันอีเมล (ชั่วโมง) — ยาวกว่าลิงก์รีเซ็ตมากโดยตั้งใจ เพราะคนเพิ่งสมัครอาจไปเปิดเมล
+	// เช้าวันรุ่งขึ้น ต่างจากคนกดรีเซ็ตที่นั่งรออยู่หน้าจอ
+	VerifyTokenTTLHours int
+	// อีเมลที่ผู้ใช้ตอบกลับได้จริง (ว่าง = ไม่ใส่ header Reply-To)
+	// กล่อง no-reply ที่ตอบกลับไม่ได้เลยถูกตัวกรองสแปมหักคะแนน — ดู mailer.Config.ReplyTo
+	MailReplyTo string
+
+	// AlertScan = ค่าของตัวสแกน log หา error แล้วส่งเข้าหน้า Alerts
+	AlertScan AlertScanConfig
+}
+
+// AlertScanConfig = ค่าที่คุม LogAlertScanner (ตัวที่เดินอ่าน log ของทุก service เป็นรอบๆ)
+type AlertScanConfig struct {
+	// เปิด/ปิดตัวสแกนทั้งก้อน — ปิดแล้วหน้า Alerts ยังใช้ได้ปกติ แค่ไม่มีแจ้งเตือนใหม่จาก log
+	Enabled bool
+
+	// ทุกกี่วินาทีจะเดินสแกนหนึ่งรอบ — default 60 วิ: ถี่พอให้รู้ตัวว่า service พังภายในหนึ่งนาที
+	// แต่ไม่ถี่จนยิง Kubernetes API รัวๆ บน control-plane ตัวเดียว
+	IntervalSeconds int
+
+	// ดึง log ย้อนหลังสูงสุดกี่บรรทัดต่อ service ต่อรอบ
+	// กัน container ที่พ่น log เป็นหมื่นบรรทัดต่อนาทีดูดแรม/แบนด์วิดท์ของ backend ไปหมด
+	MaxLinesPerScan int
+
+	// ส่ง warning เข้าหน้า Alerts ด้วยหรือไม่ — default false ("ส่งเฉพาะที่มัน error")
+	IncludeWarnings bool
 }
 
 // Load อ่านค่า config จาก environment (โหลด .env ให้ก่อนถ้ามี)
@@ -39,6 +83,7 @@ func Load() *Config {
 	_ = godotenv.Load() // ไม่มีไฟล์ .env ก็ไม่ error — ใช้ env จริงของเครื่องแทน
 
 	cfg := &Config{
+		AppEnv:         normalizeAppEnv(getEnv("APP_ENV", EnvDevelopment)),
 		Port:           getEnv("PORT", "8080"),
 		DBUrl:          getEnv("DB_URL", ""),
 		JWTSecret:      getEnv("JWT_SECRET", ""),
@@ -49,19 +94,71 @@ func Load() *Config {
 		JWTTTLHours:        getEnvInt("JWT_TTL_HOURS", 24),
 		JWTRememberTTLDays: getEnvInt("JWT_REMEMBER_TTL_DAYS", 30),
 
-		ResendAPIKey:         getEnv("RESEND_API_KEY", ""),
-		MailFrom:             getEnv("MAIL_FROM", "Caesar Cluster <onboarding@resend.dev>"),
+		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:     getEnvInt("SMTP_PORT", 587),
+		SMTPUsername: strings.TrimSpace(getEnv("SMTP_USERNAME", "")),
+		// Google แสดง App Password เป็น 4 ก้อนคั่นเว้นวรรค ("abcd efgh ijkl mnop") และคนมักคัดลอกมาทั้งอย่างนั้น
+		// SMTP ไม่รับช่องว่าง เลยถอดออกให้ตรงนี้ จะได้ไม่ต้องมานั่งงงว่าทำไม auth ไม่ผ่านทั้งที่รหัสถูก
+		SMTPPassword:         strings.ReplaceAll(getEnv("SMTP_PASSWORD", ""), " ", ""),
+		MailFromName:         getEnv("MAIL_FROM_NAME", "Caesar Cluster"),
 		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
+		VerifyTokenTTLHours:  getEnvInt("VERIFY_TOKEN_TTL_HOURS", 24),
+		MailReplyTo:          strings.TrimSpace(getEnv("MAIL_REPLY_TO", "")),
+
+		AlertScan: AlertScanConfig{
+			Enabled:         getEnvBool("ALERT_SCAN_ENABLED", true),
+			IntervalSeconds: getEnvInt("ALERT_SCAN_INTERVAL_SECONDS", 60),
+			MaxLinesPerScan: getEnvInt("ALERT_SCAN_MAX_LINES", 500),
+			IncludeWarnings: getEnvBool("ALERT_SCAN_INCLUDE_WARNINGS", false),
+		},
 	}
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
 	}
-	// อีเมลไม่ใช่ค่าที่ทั้งระบบต้องมีถึงจะ start ได้ (ต่างจาก DB/JWT) — แค่เตือนถ้าลืมตั้ง
-	// เพราะจะกระทบเฉพาะฟีเจอร์รีเซ็ตรหัสผ่าน ไม่ควรบล็อกทั้ง server สำหรับคนที่ dev ส่วนอื่นอยู่
-	if cfg.ResendAPIKey == "" {
-		log.Println("คำเตือน: ไม่ได้ตั้ง RESEND_API_KEY — ระบบส่งอีเมลรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้")
+	// กันพลาดที่เสียหายที่สุด: ขึ้นเครื่องจริงโดยลืมเปลี่ยน secret ตัวอย่าง
+	// ใครที่อ่าน repo นี้จะปลอม JWT เป็น admin ได้ทันที เลยไม่ยอมให้ start
+	// (ค่าตัวอย่าง "dev-secret" ตกด่านความยาวอยู่แล้ว ไม่ต้องเช็คแยก)
+	if cfg.IsProduction() && len(cfg.JWTSecret) < 32 {
+		log.Fatal("APP_ENV=production ต้องตั้ง JWT_SECRET ใหม่ยาวอย่างน้อย 32 ตัวอักษร " +
+			"สร้างได้ด้วยคำสั่ง: openssl rand -base64 48")
+	}
+	// อีเมลกลายเป็นค่าที่ขาดไม่ได้ตั้งแต่ย้ายมาใช้ลิงก์ยืนยัน: ส่งไม่ออก = สมัครไม่ได้เลย
+	// บนเครื่องจริงจึงไม่ยอม start ส่วนตอน dev เตือนเฉยๆ (คนทำฟีเจอร์อื่นไม่ควรต้องมี App Password ก่อน)
+	if cfg.SMTPUsername == "" || cfg.SMTPPassword == "" {
+		if cfg.IsProduction() {
+			log.Fatal("APP_ENV=production ต้องตั้ง SMTP_USERNAME และ SMTP_PASSWORD " +
+				"ไม่งั้นระบบสมัครสมาชิก (ลิงก์ยืนยันอีเมล) และรีเซ็ตรหัสผ่านใช้งานไม่ได้ทั้งคู่")
+		}
+		log.Println("คำเตือน: ไม่ได้ตั้ง SMTP_USERNAME / SMTP_PASSWORD — " +
+			"สมัครสมาชิกและรีเซ็ตรหัสผ่านจะยังใช้งานไม่ได้ (ส่งอีเมลไม่ออก)")
+	}
+	// ลิงก์ในอีเมลชี้ไปที่ FRONTEND_ORIGIN — เป็น localhost/IP บนเครื่องจริงแปลว่าผู้รับกดไม่ได้
+	// และเป็นสัญญาณสแปมที่หนักที่สุดอย่างหนึ่ง
+	if cfg.IsProduction() && !hasPublicHost(cfg.FrontendOrigin) {
+		log.Printf("คำเตือน: FRONTEND_ORIGIN=%q ไม่ได้ชี้ไปที่โดเมนสาธารณะ — "+
+			"ลิงก์ยืนยันอีเมล/รีเซ็ตรหัสผ่านที่ส่งออกไปจะกดไม่ได้ และเสี่ยงถูกจัดเป็นสแปม", cfg.FrontendOrigin)
 	}
 	return cfg
+}
+
+// IsProduction บอกว่ากำลังรันในโหมดเครื่องจริงหรือไม่ — ใช้คุมความเข้มของ config check
+func (c *Config) IsProduction() bool { return c.AppEnv == EnvProduction }
+
+// normalizeAppEnv ยอมรับทั้ง prod/production และ dev/development ให้เขียนสั้นได้
+//
+// ค่าที่สะกดผิดต้องเตือนเสียงดัง ไม่ตกลง development เงียบๆ: APP_ENV=prodution หนึ่งตัวอักษร
+// แปลว่าด่านกัน JWT_SECRET อ่อนและด่านกัน seed ข้อมูลสาธิตถูกปิดทั้งคู่บนเครื่องจริง
+func normalizeAppEnv(v string) string {
+	switch normalized := strings.ToLower(strings.TrimSpace(v)); normalized {
+	case "prod", "production":
+		return EnvProduction
+	case "", "dev", "development":
+		return EnvDevelopment
+	default:
+		log.Printf("คำเตือน: ค่า APP_ENV=%q ไม่รู้จัก ใช้โหมด %s แทน "+
+			"(ถ้าตั้งใจจะรันเครื่องจริงต้องเป็น APP_ENV=production เท่านั้น)", v, EnvDevelopment)
+		return EnvDevelopment
+	}
 }
 
 // getEnv อ่าน env ตาม key — ถ้าไม่มีหรือค่าว่างให้คืน fallback แทน
@@ -85,4 +182,38 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// getEnvBool อ่าน env ที่เป็นค่าเปิด/ปิด — รับได้ทั้ง true/false, 1/0, yes/no, on/off
+// ค่าที่แปลไม่ออกจะคืน fallback พร้อม log เตือน (แบบเดียวกับ getEnvInt) ไม่เงียบหายไปเฉยๆ
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		log.Printf("ค่า env %s=%q ไม่ใช่ค่าเปิด/ปิด ใช้ค่า default %v แทน", key, v, fallback)
+		return fallback
+	}
+}
+
+// hasPublicHost บอกว่า origin ชี้ไปโดเมนจริงที่คนนอกเปิดได้ไหม — ใช้ตัดสินแค่ว่าจะเตือนหรือไม่
+// เกณฑ์จึงหยาบได้: อะไรที่ไม่ใช่ loopback และไม่ใช่ IP ล้วน ถือว่าเป็นโดเมน
+func hasPublicHost(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	switch host {
+	case "", "localhost", "127.0.0.1", "::1":
+		return false
+	}
+	// IP ล้วน (ไม่ว่าจะ public หรือไม่) ใช้เป็นปลายทางของลิงก์ในอีเมลไม่ได้อยู่ดี —
+	// ไม่มี TLS cert ที่เบราว์เซอร์เชื่อ และตัวกรองสแปมมองว่าเป็นลิงก์น่าสงสัยเสมอ
+	return net.ParseIP(host) == nil
 }

@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -14,34 +17,70 @@ import (
 
 // รหัสผ่านตั้งต้นของ admin — ต้องเปลี่ยนทันทีหลัง login ครั้งแรก
 const adminStudentID = "admin"
-const adminPassword = "changeme123"
+const devAdminPassword = "changeme123"
 
 const StudentID = "B6618452"
 const userPassword = "Banana1234"
 
-// seed ยัดข้อมูลตั้งต้นที่ระบบต้องมีถึงจะทำงานได้ แยกจาก AutoMigrate โดยตั้งใจ
-// (schema เกิดตอน server start เสมอ ส่วน seed data รันเองเมื่อต้องการ)
+// seed ยัดข้อมูลตั้งต้นที่ระบบต้องมีถึงจะทำงานได้ (รัน: go run ./cmd/seed) ทุกขั้น idempotent
+// แยกจาก AutoMigrate โดยตั้งใจ — schema เกิดตอน server start เสมอ ส่วน seed data รันเองเมื่อต้องการ
 //
-// ทุกขั้น idempotent — รันซ้ำได้ไม่พัง ไม่เกิดข้อมูลซ้ำ
-//
-// data flow: config.Load → ConnectDB (สร้าง schema ให้ก่อน) → เขียน 4 อย่างลง DB:
-//  1. roles (user, admin)                — Register ต้องใช้ role "user" ไม่งั้นสมัครไม่ได้
-//  2. admin คนแรก                        — ต้องมีแถวใน eligible_students ก่อน เพราะติด FK
-//  3. request_templates ตั้งต้น (choices) — ให้ผู้ใช้มีตัวเลือกใช้ตั้งแต่แรก admin เพิ่มทีหลังได้
-//  4. eligible_students ทดสอบ (B6600001-B6600010) — ไว้ทดสอบ flow สมัครสมาชิกโดยไม่ต้องยิง
-//     POST /api/admin/eligible-students เองก่อนทุกครั้ง
-//
-// รัน: go run ./cmd/seed
+// roles / admin คนแรก / request_templates ระบบขาดไม่ได้ จึงรันทุกครั้ง
+// ส่วนบัญชี + รายชื่อทดสอบมีรหัสผ่านเขียนตายไว้ในซอร์ส จึงกั้นด้วย SEED_DEMO_DATA
+// ที่ปิดเองเมื่อ APP_ENV=production — กั้นแทนลบทิ้งเพราะยังใช้ทดสอบ flow สมัครบนเครื่อง dev อยู่จริง
 func main() {
 	cfg := config.Load()
 	db := config.ConnectDB(cfg.DBUrl)
+
 	seedRoles(db)
-	seedAdmin(db)
-	seeduser(db)
+	seedAdmin(db, cfg)
 	seedRequestTemplates(db)
+
+	if !seedDemoData(cfg) {
+		log.Println("ข้ามข้อมูลสาธิต (บัญชีทดสอบ + รายชื่อ eligible ปลอม) — " +
+			"ตั้ง SEED_DEMO_DATA=true ถ้าต้องการจริงๆ")
+		log.Println("seed เสร็จแล้ว ✓")
+		return
+	}
+	seeduser(db)
 	seedTestEligibleStudents(db)
 
 	log.Println("seed เสร็จแล้ว ✓")
+}
+
+// seedDemoData ตัดสินว่าจะใส่ข้อมูลสาธิตหรือไม่
+//
+// ค่าปกติ: ใส่ตอน dev, ไม่ใส่ตอน production — ตั้ง SEED_DEMO_DATA ทับได้ทั้งสองทาง
+// (เผื่ออยากได้เครื่อง staging ที่มีข้อมูลทดสอบครบ หรืออยากได้เครื่อง dev ที่สะอาด)
+func seedDemoData(cfg *config.Config) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SEED_DEMO_DATA"))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return !cfg.IsProduction()
+	}
+}
+
+// adminPasswordFor เลือกรหัสผ่านตั้งต้นของ admin
+//
+// บนเครื่องจริงห้ามใช้ค่าที่เขียนไว้ในซอร์ส — ใครอ่าน repo ก็ล็อกอินเป็นแอดมินได้ทันที
+// จึงบังคับให้ตั้ง SEED_ADMIN_PASSWORD เอง และไม่ยอมให้ตั้งซ้ำกับค่าตัวอย่าง
+// (หลักการเดียวกับที่ config.Load ไม่ยอมให้ production ใช้ JWT_SECRET=dev-secret)
+func adminPasswordFor(cfg *config.Config) string {
+	pw := os.Getenv("SEED_ADMIN_PASSWORD")
+	if !cfg.IsProduction() {
+		if pw == "" {
+			return devAdminPassword
+		}
+		return pw
+	}
+	if pw == "" || pw == devAdminPassword || len(pw) < 12 {
+		log.Fatal("APP_ENV=production ต้องตั้ง SEED_ADMIN_PASSWORD เป็นรหัสผ่านของตัวเอง " +
+			"ยาวอย่างน้อย 12 ตัวอักษร และห้ามใช้ค่าตัวอย่างในซอร์ส")
+	}
+	return pw
 }
 
 // seedRoles ใส่ role ตั้งต้น (user, admin) ลงตาราง roles
@@ -61,34 +100,34 @@ func seedRoles(db *gorm.DB) {
 func seedRequestTemplates(db *gorm.DB) {
 	templates := []entity.RequestTemplate{
 		{
-			OptionName:      "Cyber Range Node",
-			Category:        "Security",
-			Description:     "เครื่องจำลองเครือข่ายสำหรับทดสอบความปลอดภัยไซเบอร์",
-			RelateSubject:   "Cyber Security",
-			CPULimitMilli:   2000, // 2 Core
-			RAMLimitMB:      4096, // 4 GB
-			StorageGB:       20,   // 20 GB
-			IsActive:        false,
+			OptionName:    "Cyber Range Node",
+			Category:      "Security",
+			Description:   "เครื่องจำลองเครือข่ายสำหรับทดสอบความปลอดภัยไซเบอร์",
+			RelateSubject: "Cyber Security",
+			CPULimitMilli: 2000, // 2 Core
+			RAMLimitMB:    4096, // 4 GB
+			StorageGB:     20,   // 20 GB
+			IsActive:      false,
 		},
 		{
-			OptionName:      "AI Vision Model",
-			Category:        "Deep Learning",
-			Description:     "เครื่องสเปกสูงสำหรับเทรนโมเดล YOLO และ Vision Transformers",
-			RelateSubject:   "Deep Learning",
-			CPULimitMilli:   4000, // 4 Core
-			RAMLimitMB:      8192, // 8 GB
-			StorageGB:       50,   // 50 GB
-			IsActive:        false,
+			OptionName:    "AI Vision Model",
+			Category:      "Deep Learning",
+			Description:   "เครื่องสเปกสูงสำหรับเทรนโมเดล YOLO และ Vision Transformers",
+			RelateSubject: "Deep Learning",
+			CPULimitMilli: 4000, // 4 Core
+			RAMLimitMB:    8192, // 8 GB
+			StorageGB:     50,   // 50 GB
+			IsActive:      false,
 		},
 		{
-			OptionName:      "Basic Web Service",
-			Category:        "Web",
-			Description:     "เครื่องสำหรับรัน Full-Stack Web (React, Go, Node.js)",
-			RelateSubject:   "System Analysis",
-			CPULimitMilli:   1000, // 1 Core
-			RAMLimitMB:      2048, // 2 GB
-			StorageGB:       15,   // 15 GB
-			IsActive:        false,
+			OptionName:    "Basic Web Service",
+			Category:      "Web",
+			Description:   "เครื่องสำหรับรัน Full-Stack Web (React, Go, Node.js)",
+			RelateSubject: "System Analysis",
+			CPULimitMilli: 1000, // 1 Core
+			RAMLimitMB:    2048, // 2 GB
+			StorageGB:     15,   // 15 GB
+			IsActive:      false,
 		},
 	}
 
@@ -98,14 +137,10 @@ func seedRequestTemplates(db *gorm.DB) {
 	log.Println("request templates พร้อมแล้ว [OK]")
 }
 
-// seedAdmin สร้าง admin คนแรกของระบบ (ข้ามถ้ามี admin อยู่แล้ว)
-//
-// data flow: COUNT users ที่ role = admin → ถ้ามีแล้วข้าม
-// → ถ้ายังไม่มี: INSERT eligible_students ก่อน (เพราะ users.student_id มี FK ชี้มาที่ตารางนี้)
-// → hash password → INSERT users พร้อม role_id ของ admin
-//
-// ลำดับสำคัญ: ข้าม eligible_students ไม่ได้ ต่อให้เป็น admin ก็ต้องอยู่ในรายชื่อ (กฎเดียวกันทั้งระบบ)
-func seedAdmin(db *gorm.DB) {
+// seedAdmin สร้าง admin คนแรกของระบบ (ข้ามถ้ามีอยู่แล้ว)
+// ต้อง INSERT eligible_students ก่อนเสมอ เพราะ users.student_id มี FK ชี้มาที่ตารางนั้น —
+// ต่อให้เป็น admin ก็ต้องอยู่ในรายชื่อ (กฎเดียวกันทั้งระบบ)
+func seedAdmin(db *gorm.DB, cfg *config.Config) {
 	var adminRole entity.Role
 	if err := db.Where("name = ?", entity.RoleAdmin).First(&adminRole).Error; err != nil {
 		log.Fatalf("หา role admin ไม่เจอ: %v", err)
@@ -124,19 +159,25 @@ func seedAdmin(db *gorm.DB) {
 		log.Fatalf("seed eligible admin ไม่สำเร็จ: %v", err)
 	}
 
-	hashadmin, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	hashadmin, err := bcrypt.GenerateFromPassword([]byte(adminPasswordFor(cfg)), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("hash ไม่สำเร็จ: %v", err)
 	}
 
+	// บัญชีที่ seed สร้างเองต้องนับว่ายืนยันอีเมลแล้ว — ไม่มีใครไปกดลิงก์ยืนยันแทนได้
+	// (ที่อยู่ที่ใส่ไว้ก็เป็นอีเมลสมมติ) ถ้าปล่อยเป็น NULL บัญชีที่ seed ไว้จะล็อกอินไม่ได้เลยตั้งแต่แรก
+	// UTC เสมอ ด้วยเหตุผลเดียวกับ controller.dbNow (คอลัมน์เป็น timestamp without time zone)
+	verifiedAt := time.Now().UTC()
+
 	admin := entity.User{
-		StudentID: adminStudentID,
-		RoleID:    adminRole.ID,
-		RealName:  "System Admin",
-		NickName:  "admin",
-		Gmail:	 "system@gmail.com",
-		EntryYear: 3,
-		Password:  string(hashadmin),
+		StudentID:       adminStudentID,
+		RoleID:          adminRole.ID,
+		RealName:        "System Admin",
+		NickName:        "admin",
+		Gmail:           "system@gmail.com",
+		EntryYear:       3,
+		Password:        string(hashadmin),
+		GmailVerifiedAt: &verifiedAt,
 	}
 	if err := db.Create(&admin).Error; err != nil {
 		log.Fatalf("seed admin ไม่สำเร็จ: %v", err)
@@ -169,14 +210,20 @@ func seeduser(db *gorm.DB) {
 	if err != nil {
 		log.Fatalf("hash ไม่สำเร็จ: %v", err)
 	}
+	// บัญชีที่ seed สร้างเองต้องนับว่ายืนยันอีเมลแล้ว — ไม่มีใครไปกดลิงก์ยืนยันแทนได้
+	// (ที่อยู่ที่ใส่ไว้ก็เป็นอีเมลสมมติ) ถ้าปล่อยเป็น NULL บัญชีที่ seed ไว้จะล็อกอินไม่ได้เลยตั้งแต่แรก
+	// UTC เสมอ ด้วยเหตุผลเดียวกับ controller.dbNow (คอลัมน์เป็น timestamp without time zone)
+	verifiedAt := time.Now().UTC()
+
 	user := entity.User{
-		StudentID: StudentID,
-		RoleID:    userRole.ID,
-		RealName:  "Nattanant",
-		NickName:  "Earth",
-		Gmail:	 "Nattanant563214@gmail.com",
-		EntryYear: 4,
-		Password:  string(hashuser),
+		StudentID:       StudentID,
+		RoleID:          userRole.ID,
+		RealName:        "Nattanant",
+		NickName:        "Earth",
+		Gmail:           "nattanant563214@gmail.com",
+		EntryYear:       4,
+		Password:        string(hashuser),
+		GmailVerifiedAt: &verifiedAt,
 	}
 	if err := db.Create(&user).Error; err != nil {
 		log.Fatalf("seed user ไม่สำเร็จ: %v", err)
@@ -186,22 +233,16 @@ func seeduser(db *gorm.DB) {
 	log.Println("*** เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก ***")
 }
 
-// seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600011 ลงตาราง eligible_students
-// ไว้ให้ทีม frontend/QA ทดสอบหน้า Register ได้เลยโดยไม่ต้องยิง POST /api/admin/eligible-students เอง
+// seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600011 (ON CONFLICT DO NOTHING รันซ้ำได้)
 //
-// จงใจใส่ major/สถานภาพไม่เหมือนกันหมด (7 คนแรกเป็น CPE + สถานภาพ 10, คนที่ 8 เป็น CPE แต่สถานภาพ 40)
-// เพื่อให้ทดสอบด่านที่ 2 และ 3 ของ Register ได้ครบ:
-//   - ด่าน 1 (หา student_id ไม่เจอเลย) ทดสอบได้จาก student_id ไหนก็ได้ที่ไม่อยู่ใน 11 ตัวนี้
-//   - ด่าน 2 (เจอ student_id แต่ไม่ใช่ CPE → 403 NOT_CPE) ทดสอบด้วย B6600009-B6600010
-//   - ด่าน 3 (เจอ student_id + เป็น CPE แต่สถานภาพไม่ active → 403 NOT_ACTIVE_STUDENT) ทดสอบด้วย B6600008
-//
-// data flow: INSERT eligible_students แบบ ON CONFLICT DO NOTHING (รันซ้ำได้ ไม่พัง)
+// จงใจใส่ major/สถานภาพไม่เหมือนกันเพื่อทดสอบด่านของ Register ได้ครบ: B6600009-B6600010 ไม่ใช่ CPE
+// (NOT_CPE) และ B6600008 เป็น CPE แต่สถานภาพ 40 (NOT_ACTIVE_STUDENT)
 func seedTestEligibleStudents(db *gorm.DB) {
 	rows := make([]entity.EligibleStudent, 0, 10)
 	for i := 1; i <= 7; i++ {
 		rows = append(rows, entity.EligibleStudent{
 			StudentID:        fmt.Sprintf("B66%05d", i),
-			Major:             entity.MajorCPE,
+			Major:            entity.MajorCPE,
 			EnrollmentStatus: 10,
 		})
 	}

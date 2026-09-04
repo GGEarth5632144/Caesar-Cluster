@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"errors"
+	"io"
+	"log"
 
 	"gorm.io/gorm"
 
@@ -115,18 +117,39 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 	// deploy ของจริงขึ้น cluster
 	if err := m.prov.DeployService(ctx, ns.Name, svc); err != nil {
 		// deploy ไม่สำเร็จ → ลบ row ทิ้ง เพื่อคืนโควตาให้ namespace ทันที
-		m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID)
+		m.releaseReservation(ctx, svc.ID, err)
 		return nil, err
 	}
 
-	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว (ถ้า deploy สำเร็จ) — persist คู่กับ status ในทีเดียว
-	if err := m.db.WithContext(ctx).Model(&entity.Service{}).
+	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว — persist คู่กับ status ในทีเดียว
+	//
+	// ตัด cancel ออกด้วยเหตุผลเดียวกับ releaseReservation: ของถูกสร้างบนคลัสเตอร์ไปแล้วจริง
+	// ถ้าเขียนสถานะกลับไม่ได้เพราะผู้ใช้ปิดหน้าเว็บ แถวนี้จะค้างเป็น "creating" ตลอดกาล
+	// ทั้งที่ workload รันอยู่ และไม่มีอะไรมาแก้ให้
+	if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
 		Where("id = ?", svc.ID).
 		Updates(map[string]any{"status": entity.ServiceRunning, "node_port": svc.NodePort}).Error; err != nil {
 		return nil, err
 	}
 	svc.Status = entity.ServiceRunning
 	return svc, nil
+}
+
+// releaseReservation ลบแถว service ที่จองโควตาไว้ทิ้ง หลัง deploy ล้มเหลว
+//
+// ต้องใช้ context.WithoutCancel: สาเหตุที่ deploy ล้มบ่อยที่สุดสาเหตุหนึ่งคือผู้ใช้ปิดหน้าเว็บ
+// ระหว่างรอ ซึ่ง cancel ctx ของ HTTP request ไปด้วย ถ้าใช้ ctx ตัวเดิมมาลบ DELETE จะล้มทันที
+// ด้วย "context canceled" แล้วแถวที่จองโควตาไว้ค้างตลอดไปโดยไม่มี workload จริง
+// (เคยเกิดจริง: โควตาหาย 400m/256MB โดยผู้ใช้เห็นแค่ข้อความ error)
+//
+// error ของการลบต้อง log เสมอ ไม่กลืนทิ้ง — ลบไม่สำเร็จแปลว่าโควตารั่วจริง ต้องมีร่องรอยให้ตามเก็บ
+func (m *ServiceManager) releaseReservation(ctx context.Context, serviceID int, cause error) {
+	err := m.db.WithContext(context.WithoutCancel(ctx)).
+		Delete(&entity.Service{}, serviceID).Error
+	if err != nil {
+		log.Printf("!! deploy service id=%d ล้มเหลว (%v) และคืนโควตาไม่สำเร็จด้วย: %v "+
+			"— แถวนี้ยังกินโควตาของ namespace อยู่ ต้องลบมือ", serviceID, cause, err)
+	}
 }
 
 // Delete ลบ service ออกจาก namespace: ถอนของจริงบน cluster ก่อน แล้วค่อยลบ row (คืนโควตา)
@@ -157,4 +180,29 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 		return err
 	}
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
+}
+
+// Logs เปิด stream ของ log จาก service หนึ่งตัว — ระบบไม่เก็บสำเนา log ไว้ อ่านสดจากคลัสเตอร์ทุกครั้ง
+// แตะ DB แค่เช็คว่า service นี้อยู่ใน namespace ของผู้เรียกจริง (กันดู log ข้าม space)
+//
+// data flow: ตรวจสิทธิ์แบบเดียวกับ Delete → หาชื่อ namespace บนคลัสเตอร์ → ให้ provisioner
+// เปิด stream → คืน io.ReadCloser ให้ ServiceController อ่านต่อออก HTTP response
+// ผู้เรียกมีหน้าที่ Close() เสมอ
+func (m *ServiceManager) Logs(ctx context.Context, serviceID, namespaceID int, opts LogOptions) (io.ReadCloser, error) {
+	var svc entity.Service
+	err := m.db.WithContext(ctx).
+		Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrServiceNotFound
+		}
+		return nil, err
+	}
+
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
+		return nil, err
+	}
+
+	return m.prov.Logs(ctx, ns.Name, svc.Name, opts)
 }

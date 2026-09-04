@@ -8,7 +8,7 @@ import "backend/internal/entity"
 type RegisterRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	RealName  string `json:"real_name" binding:"required"`
-	Gmail	  string `json:"gmail" binding:"required,email"`
+	Gmail     string `json:"gmail" binding:"required,email"`
 	NickName  string `json:"nick_name"`
 	Password  string `json:"password" binding:"required,min=8"`
 }
@@ -20,6 +20,20 @@ type LoginRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	Password  string `json:"password" binding:"required"`
 	Remember  bool   `json:"remember"`
+}
+
+// VerifyEmailRequest = body ของ POST /api/verify-email (token มาจาก query ของลิงก์ในอีเมล)
+//
+// ให้หน้าเว็บยิง POST แทนที่จะให้ลิงก์ชี้มาที่ backend ตรงๆ ด้วย GET เพราะตัวสแกนลิงก์ของ
+// Gmail/Outlook กดลิงก์ให้ก่อนผู้ใช้เสมอ ถ้าลิงก์นั้นเผาโทเคนทิ้ง ผู้ใช้จะเจอ "ลิงก์ถูกใช้แล้ว" ทุกครั้ง
+type VerifyEmailRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// ResendVerificationRequest = body ของ POST /api/resend-verification
+// หา user ที่ยังไม่ยืนยันจาก gmail → ออกลิงก์ใบใหม่ (ตอบข้อความ generic เสมอ เหมือน /forgot-password)
+type ResendVerificationRequest struct {
+	Gmail string `json:"gmail" binding:"required,email"`
 }
 
 type UpdateUserRequest struct {

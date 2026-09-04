@@ -1,13 +1,17 @@
 package controller
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
 	"backend/internal/entity"
+	"backend/internal/middlewares"
 	"backend/internal/utils"
 )
 
@@ -49,16 +53,37 @@ func isValidEnvVars(env map[string]string) bool {
 }
 
 // currentNamespaceID ดึง namespace ของผู้ใช้ที่ล็อกอินอยู่ (กติกา 1 คน = 1 space)
-//
-// data flow: อ่าน userID ที่ middleware Auth ตั้งไว้ → SELECT users → คืน users.namespace_id
-// ถ้ายังไม่มี space (NULL) จะตอบ 409 NO_NAMESPACE ให้เลย แล้วคืน ok=false เพื่อให้ handler หยุดทำงานต่อ
-//
 // controller ที่ต้องใช้ namespace (service, namespace/me) เรียกตัวนี้เป็นด่านแรกเสมอ
-// จะได้ไม่ต้องเขียน logic เดิมซ้ำในทุก handler
+//
+// data flow: อ่านค่าที่ middleware Auth โหลดจาก DB ไว้ใน context แล้ว → คืน namespace_id
+// ยังไม่มี space (NULL) = ตอบ 409 NO_NAMESPACE ให้เลย แล้วคืน ok=false ให้ handler หยุด
+//
+// อ่านจาก context แทนการยิง SELECT users ซ้ำ นอกจากประหยัดแล้วยังกันไม่ให้ middleware
+// กับ handler เห็นค่าคนละแบบถ้ามีคนแก้ระหว่างนั้น (db คงไว้สำหรับ fallback ข้างล่าง)
 func currentNamespaceID(c *gin.Context, db *gorm.DB) (int, bool) {
+	if v, exists := c.Get(middlewares.CtxNamespaceID); exists {
+		nsID, _ := v.(*int)
+		if nsID == nil {
+			utils.Error(c, http.StatusConflict, "NO_NAMESPACE",
+				"คุณยังไม่มี namespace — สร้าง space ของตัวเองหรือเข้าร่วมกลุ่มก่อน")
+			return 0, false
+		}
+		return *nsID, true
+	}
+
+	// ไม่ควรเกิด (ทุก route ที่เรียกตัวนี้อยู่หลัง Auth ทั้งหมด) แต่ถ้ามีใครผูก route ใหม่โดยลืมใส่
+	// Auth การอ่าน DB เองยังปลอดภัยกว่าปล่อยให้ค่าศูนย์หลุดไปเป็น namespace_id ของคนอื่น
 	var user entity.User
-	if err := db.WithContext(c.Request.Context()).First(&user, c.GetInt("userID")).Error; err != nil {
-		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
+	if err := db.WithContext(c.Request.Context()).First(&user, c.GetInt(middlewares.CtxUserID)).Error; err != nil {
+		// แยก "ไม่มี user คนนี้จริงๆ" ออกจาก "ถาม DB ไม่ได้" — เดิมตอบ 404 เหมือนกันทั้งคู่
+		// ตอน DB ล่ม ผู้ใช้เลยเห็น "ไม่พบผู้ใช้" แล้วเข้าใจว่าบัญชีถูกลบจนไปสมัครใหม่ ทั้งที่ระบบ
+		// แค่มีปัญหาชั่วคราว และไม่มีอะไรเข้า log ให้ตามต่อได้
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
+			return 0, false
+		}
+		log.Printf("currentNamespaceID: อ่าน user id=%d ไม่สำเร็จ: %v", c.GetInt(middlewares.CtxUserID), err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
 		return 0, false
 	}
 	if user.NamespaceID == nil {
@@ -68,3 +93,10 @@ func currentNamespaceID(c *gin.Context, db *gorm.DB) (int, bool) {
 	}
 	return *user.NamespaceID, true
 }
+
+// dbNow คืนเวลาปัจจุบันเป็น UTC — ใช้ทุกครั้งที่เขียนเวลาลง DB หรือส่งเวลาไปเทียบใน SQL
+//
+// คอลัมน์เวลาเป็น timestamp without time zone คือเก็บแต่ตัวเลขหน้าปัด ไม่เก็บ offset เขียนด้วย
+// time.Now() ตรงๆ บนเครื่อง UTC+7 จะได้ "11:44" ซึ่งพออ่านกลับถูกตีความเป็น UTC = อนาคตอีก 7 ชม.
+// (เคยทำให้ลิงก์อายุ 24 ชม. มีอายุจริง 31 ชม. ส่วน created_at ที่ GORM จัดการเองเป็น UTC อยู่แล้ว)
+func dbNow() time.Time { return time.Now().UTC() }
