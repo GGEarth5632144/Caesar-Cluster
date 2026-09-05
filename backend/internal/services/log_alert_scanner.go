@@ -352,6 +352,16 @@ func (s *LogAlertScanner) collectFindings(r io.Reader, serviceID int, cursor tim
 		order = append(order, fp)
 	}
 
+	// Scan() คืน false ทั้งตอนจบ stream ปกติและตอนพังกลางทาง — ต้องถาม Err() ถึงจะแยกออก
+	// ไม่ทิ้ง findings ที่เก็บมาได้ (ยังเป็นของจริง ควรแจ้งเตือนต่อ) แค่ให้รู้ว่าอ่านไม่ครบ
+	//
+	// ที่ต้องรู้เพราะบรรทัดยาวเกินเพดานด้านบนจะทำให้ scanner หยุดที่จุดเดิมซ้ำทุกรอบ
+	// cursor เลื่อนได้แค่บรรทัดก่อนหน้า log ที่เหลือจึงไม่ถูกสแกนเลยจนกว่าบรรทัดนั้นจะหลุดช่วงเวลาที่ดึงมา
+	if err := sc.Err(); err != nil {
+		log.Printf("log alert scanner: อ่าน log ของ service id=%d ไม่จบ (%v) — ใช้เท่าที่อ่านได้",
+			serviceID, err)
+	}
+
 	out := make([]logFinding, 0, len(order))
 	for _, fp := range order {
 		out = append(out, *byFingerprint[fp])

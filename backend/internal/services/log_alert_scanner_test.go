@@ -252,3 +252,38 @@ func TestMockLogLineProducesErrors(t *testing.T) {
 		t.Errorf("บรรทัดปกติควรเป็นส่วนใหญ่ แต่มีแค่ %d จาก 100", normal)
 	}
 }
+
+// TestCollectFindingsSurvivesOversizedLine — บรรทัดที่ยาวเกินเพดานของ bufio ทำให้ Scan() หยุดกลางทาง
+// โดยไม่แจ้งอะไรเลยถ้าไม่ถาม sc.Err() (เดิมโค้ดไม่ได้ถาม จึงเงียบสนิท)
+//
+// สิ่งที่เทสต์นี้ล็อกไว้คือพฤติกรรมสองอย่างที่ต้องอยู่คู่กัน: error กลางทางต้องไม่ทำให้ finding
+// ที่อ่านได้ก่อนหน้าหายไป และ cursor ต้องหยุดอยู่แค่บรรทัดสุดท้ายที่อ่านสำเร็จจริง
+// (ถ้า cursor เลยไปกว่านั้น รอบถัดไปจะข้าม log ช่วงที่ยังไม่เคยอ่านทิ้งไปเลย)
+func TestCollectFindingsSurvivesOversizedLine(t *testing.T) {
+	s := newTestScanner(false)
+	base := time.Now().Add(-time.Minute)
+
+	// บรรทัดที่ 3 ยาวเกิน 1MB ที่ตั้งไว้ใน sc.Buffer — Scanner จะหยุดตรงนั้นด้วย ErrTooLong
+	huge := strings.Repeat("x", 2*1024*1024)
+	stream := logStream(base,
+		`level=error msg="first failure"`,
+		`GET / 200 9ms`,
+		huge,
+		`level=error msg="after the huge line"`,
+	)
+
+	findings, cursor := s.collectFindings(strings.NewReader(stream), 1, time.Time{})
+
+	if len(findings) != 1 {
+		t.Fatalf("ควรได้ finding ที่อ่านทันก่อนบรรทัดยักษ์ 1 เรื่อง แต่ได้ %d เรื่อง", len(findings))
+	}
+	if !strings.Contains(findings[0].sample, "first failure") {
+		t.Errorf("finding ที่ได้ควรเป็นบรรทัดก่อนบรรทัดยักษ์ แต่ได้: %s", findings[0].sample)
+	}
+
+	// cursor ต้องไม่เลยบรรทัดที่ 2 (บรรทัดสุดท้ายที่อ่านสำเร็จ) — บรรทัดที่ 4 ยังไม่เคยถูกอ่าน
+	limit := base.Add(2 * time.Second)
+	if cursor.After(limit) {
+		t.Errorf("cursor ไม่ควรเลยบรรทัดสุดท้ายที่อ่านสำเร็จ (%s) แต่ได้ %s", limit, cursor)
+	}
+}
