@@ -11,6 +11,7 @@ import {
   Trash2,
   Terminal,
   Upload,
+  Copy,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -31,6 +32,14 @@ const MIN_CPU_MILLI = 100;
 const MAX_CPU_MILLI = 3000;
 const MIN_RAM_MB = 128;
 const MAX_RAM_MB = 2048;
+
+// พอร์ตที่ image ฟังอยู่ข้างใน คนละชั้นกับ node port ที่ k8s จ่ายให้ — ตรงกับ entity.MinContainerPort/Max
+const MIN_CONTAINER_PORT = 1;
+const MAX_CONTAINER_PORT = 65535;
+
+// ตรงกับ entity.MaxReplicas ที่ backend บังคับ
+const MAX_REPLICAS = 10;
+const REPLICA_CHOICES = Array.from({ length: MAX_REPLICAS }, (_, i) => i + 1);
 
 // กติกา env var ฝั่ง backend (controller/helper.go) — ยึดตามนี้ตั้งแต่ตอน import เข้าตาราง
 // ไม่งั้นค่าที่ paste/อัปโหลดมาจะผ่านหน้าเว็บแต่ไปโดน 400 ทั้งคำขอตอนกด deploy
@@ -123,6 +132,8 @@ export default function RequestQuotar() {
   const [showCreate, setShowCreate] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // service ที่รอผล scale อยู่ — ล็อก dropdown ไม่ให้กดรัวจนคำสั่งซ้อนกัน
+  const [scalingId, setScalingId] = useState<number | null>(null);
 
   // ดึงใหม่ทุกครั้งที่จำนวน service เปลี่ยน — ยอดคงเหลือจะได้ตรงกับของจริงตอนเปิดฟอร์มรอบถัดไป
   const fetchNamespace = () => {
@@ -152,6 +163,22 @@ export default function RequestQuotar() {
 
   const runningCount = services.filter((s) => s.status === "running").length;
   const deployingCount = services.filter((s) => s.status === "creating").length;
+
+  // backend เช็คโควตาให้ก่อน ถ้าไม่พอตอบ 409 แล้วเราคง state เดิมไว้ พร้อมโชว์เหตุผลที่ backend บอกมา
+  const handleScale = async (id: number, replicas: number) => {
+    setScalingId(id);
+    setError(null);
+    try {
+      const updated = await serviceApi.scale(id, replicas);
+      setServices((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      fetchNamespace();
+    } catch (err) {
+      console.error(err);
+      setError(getApiErrorMessage(err, "ปรับจำนวน replica ไม่สำเร็จ"));
+    } finally {
+      setScalingId(null);
+    }
+  };
 
   const handleDelete = async (id: number) => {
     setDeletingId(id);
@@ -202,6 +229,10 @@ export default function RequestQuotar() {
             const badge = statusBadge(svc.status);
             const isConfirming = pendingDeleteId === svc.id;
             const isDeleting = deletingId === svc.id;
+            const isScaling = scalingId === svc.id;
+            // ระหว่าง status=creating ตัว provisioner ยังถือสเปกเดิม แทรก scale ตอนนั้นแล้ว
+            // คลัสเตอร์จะได้จำนวนเก่าแต่ DB บอกจำนวนใหม่ — backend ปฏิเสธอยู่แล้ว ตรงนี้กันไม่ให้กดไปเจอ error เปล่าๆ
+            const canScale = svc.status === "running";
 
             return (
               <div
@@ -230,6 +261,7 @@ export default function RequestQuotar() {
                   </span>
                 </div>
 
+                {/* สเปกต่อ 1 Pod — คูณด้วยจำนวน replica ด้านล่างถึงจะเป็นยอดที่กินโควตาจริง */}
                 <div className="grid grid-cols-3 gap-2 pt-3 border-t border-black/5 text-sm font-medium text-[#211a14]/70">
                   <div className="flex items-center gap-1.5">
                     <Cpu size={16} className="text-[#BB6653]" />
@@ -241,9 +273,44 @@ export default function RequestQuotar() {
                       ? `${(svc.ram_mb / 1024).toFixed(1)} GB`
                       : `${svc.ram_mb} MB`}
                   </div>
+                  <div className="flex items-center gap-1.5" title="container port">
+                    <Box size={16} className="text-[#BB6653]" />
+                    {svc.container_port}
+                  </div>
+                </div>
+
+                {/* ทางเข้าจากนอกคลัสเตอร์ — คนละพอร์ตกับ container port ด้านบนที่ image ฟังอยู่ข้างใน */}
+                <div className="flex items-center gap-1.5 text-sm text-[#211a14]/45">
+                  <Network size={16} className="text-[#BB6653] shrink-0" />
+                  {svc.node_port ? (
+                    <span className="truncate">
+                      &lt;node-ip&gt;:{svc.node_port} &rarr; :{svc.container_port}
+                    </span>
+                  ) : (
+                    <span>รอคลัสเตอร์จ่ายพอร์ต...</span>
+                  )}
+                </div>
+
+                {/* เพิ่มตัวรับโหลดตอนคนใช้เยอะ — กินสเปกต่อ Pod x จำนวนนี้ ระบบเช็คโควตากลุ่มให้ก่อนทุกครั้ง */}
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-1.5 text-[#211a14]/50">
+                    <Copy size={16} className="text-[#BB6653]" /> Replicas
+                  </span>
                   <div className="flex items-center gap-1.5">
-                    <Network size={16} className="text-[#BB6653]" />
-                    {svc.node_port ? `:${svc.node_port}` : "—"}
+                    {isScaling && <Loader2 size={14} className="animate-spin text-[#BB6653]" />}
+                    <select
+                      value={svc.replicas}
+                      disabled={isScaling || isDeleting || !canScale}
+                      title={canScale ? undefined : "ปรับได้หลัง deploy เสร็จ"}
+                      onChange={(e) => handleScale(svc.id, Number(e.target.value))}
+                      className="rounded-lg border border-black/10 bg-white px-2.5 py-1 text-sm text-[#211a14] outline-none disabled:opacity-50"
+                    >
+                      {REPLICA_CHOICES.map((n) => (
+                        <option key={n} value={n}>
+                          {n} {n === 1 ? "pod" : "pods"}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
@@ -333,6 +400,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   // เลือกระดับที่จะใช้เองได้อิสระ ไม่ผูกกับ preset ตายตัวอีกแล้ว — เก็บเป็นหน่วยเดียวกับที่ backend รับ
   const [cpuMilli, setCpuMilli] = useState(500);
   const [ramMb, setRamMb] = useState(512);
+  // เก็บเป็น string เพื่อให้ลบจนว่างระหว่างพิมพ์ได้ ไม่เด้งกลับเป็น 0
+  const [containerPort, setContainerPort] = useState("8080");
+  const [replicas, setReplicas] = useState(1);
   const [envVars, setEnvVars] = useState<EnvPair[]>([{ key: "", value: "" }]);
   const [envNotice, setEnvNotice] = useState<string | null>(null);
   const envFileRef = useRef<HTMLInputElement>(null);
@@ -349,9 +419,13 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const cpuAvailable = Math.max(cpuLimit - cpuUsed, 0);
   const ramAvailable = Math.max(ramLimit - ramUsed, 0);
 
+  // ที่กินจริง = สเปกต่อ Pod x จำนวน Pod (0.5 core x 3 = 1.5 core) ตรงกับที่ backend คิดใน QuotaService
+  const cpuTotal = cpuMilli * replicas;
+  const ramTotal = ramMb * replicas;
+
   // ยอดคงเหลือหลังหักตัวที่กำลังจะขอ — ติดลบเมื่อไรคือขอเกิน (backend จะตอบ ErrQuotaExceeded อยู่ดี)
-  const cpuRemaining = cpuAvailable - cpuMilli;
-  const ramRemaining = ramAvailable - ramMb;
+  const cpuRemaining = cpuAvailable - cpuTotal;
+  const ramRemaining = ramAvailable - ramTotal;
   const overCpu = namespace !== null && cpuRemaining < 0;
   const overRam = namespace !== null && ramRemaining < 0;
 
@@ -365,10 +439,19 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
   const nameHasError = name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
 
+  // นอกช่วงนี้ backend ตีกลับเป็น 400 ตั้งแต่ binding
+  const portNumber = Number(containerPort);
+  const portIsValid =
+    containerPort.trim() !== "" &&
+    Number.isInteger(portNumber) &&
+    portNumber >= MIN_CONTAINER_PORT &&
+    portNumber <= MAX_CONTAINER_PORT;
+
   const canSubmit =
     image.trim().length >= 3 &&
     name.trim().length >= 3 &&
     NAME_PATTERN.test(name.trim()) &&
+    portIsValid &&
     !overCpu &&
     !overRam;
 
@@ -428,6 +511,8 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
         env_vars: buildEnvMap(),
         cpu_milli: cpuMilli,
         ram_mb: ramMb,
+        container_port: portNumber,
+        replicas,
       });
       onCreated(svc);
     } catch (err) {
@@ -501,6 +586,41 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               {nameHasError
                 ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
                 : "lowercase letters, numbers and hyphens only"}
+            </p>
+          </div>
+
+          {/* พอร์ตที่ image ฟังอยู่ข้างใน ไม่ใช่พอร์ตที่ใช้เข้าถึงจากข้างนอก (อันนั้นคลัสเตอร์จ่ายให้เองตอน deploy เสร็จ) */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+              Container Port
+            </label>
+            <div
+              className={cn(
+                "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
+                containerPort.trim() !== "" && !portIsValid ? "border-red-300" : "border-black/10",
+              )}
+            >
+              <Network size={18} className="text-[#211a14]/30 shrink-0" />
+              <input
+                type="number"
+                min={MIN_CONTAINER_PORT}
+                max={MAX_CONTAINER_PORT}
+                value={containerPort}
+                onChange={(e) => setContainerPort(e.target.value)}
+                disabled={submitting}
+                placeholder="8080"
+                className="w-full bg-transparent text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
+              />
+            </div>
+            <p
+              className={cn(
+                "text-sm",
+                containerPort.trim() !== "" && !portIsValid ? "text-red-500" : "text-[#211a14]/40",
+              )}
+            >
+              {containerPort.trim() !== "" && !portIsValid
+                ? `พอร์ตต้องเป็นตัวเลข ${MIN_CONTAINER_PORT}-${MAX_CONTAINER_PORT}`
+                : "พอร์ตที่โปรเซสใน container ฟังอยู่ (ตรงกับ EXPOSE ใน image) — ส่วนพอร์ตสำหรับเข้าใช้งานจากข้างนอก ระบบจะจ่ายให้เองหลัง deploy"}
             </p>
           </div>
 
@@ -588,6 +708,26 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               />
             </div>
 
+            {/* จำนวน Pod ที่รันขนานกัน เอาไว้รองรับโหลด/ทำ HA — ทรัพยากรถูกคูณตามจำนวนนี้
+                แต่ไม่กระทบเพดานต่อ service เพราะมันคือการทำซ้ำ Pod */}
+            <div className="flex items-center justify-between gap-2">
+              <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
+                <Copy size={14} className="text-[#BB6653]" /> Replicas
+              </label>
+              <select
+                value={replicas}
+                disabled={submitting}
+                onChange={(e) => setReplicas(Number(e.target.value))}
+                className="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
+              >
+                {REPLICA_CHOICES.map((n) => (
+                  <option key={n} value={n}>
+                    {n} {n === 1 ? "pod" : "pods"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="rounded-xl border border-black/8 bg-white/60 p-4">
               {namespace ? (
                 <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 gap-y-2 text-sm">
@@ -606,9 +746,17 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   <span className="text-right text-[#211a14]/70">- {formatCores(cpuUsed)}</span>
                   <span className="text-right text-[#211a14]/70">- {formatRam(ramUsed)}</span>
 
-                  <span className="text-[#211a14]/55">This service</span>
-                  <span className="text-right text-[#BB6653]">- {formatCores(cpuMilli)}</span>
-                  <span className="text-right text-[#BB6653]">- {formatRam(ramMb)}</span>
+                  <span className="text-[#211a14]/55">
+                    This service
+                    {replicas > 1 && (
+                      <span className="text-[#211a14]/35">
+                        {" "}
+                        ({formatCores(cpuMilli)} / {formatRam(ramMb)} x {replicas})
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-right text-[#BB6653]">- {formatCores(cpuTotal)}</span>
+                  <span className="text-right text-[#BB6653]">- {formatRam(ramTotal)}</span>
 
                   <span className="border-t border-black/5 pt-2 font-bold text-[#211a14]">
                     Remaining

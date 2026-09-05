@@ -36,10 +36,15 @@ type Provisioner interface {
 	DeleteNamespace(ctx context.Context, nsName string) error
 
 	// DeployService สร้าง workload จริงเข้าไปใน namespace ที่กำหนด
-	// (resource request/limit ของ container มาจาก svc.CPUMilli / svc.RAMMB)
+	// (สเปกต่อ 1 Pod มาจาก svc.CPUMilli/RAMMB, จำนวน Pod จาก svc.Replicas, พอร์ตจาก svc.ContainerPort)
 	// สำเร็จแล้วต้องเซ็ต svc.NodePort กลับเข้า struct เดิม (k8s Service ชนิด NodePort เป็นตัวจ่าย port ให้)
 	// ServiceManager.Create เป็นคนเอาไป UPDATE ลง DB อีกที — provisioner ไม่รู้จัก DB
 	DeployService(ctx context.Context, nsName string, svc *entity.Service) error
+
+	// ScaleService เปลี่ยนจำนวน Pod ของ workload ที่ deploy ไปแล้ว (Deployment.spec.replicas)
+	// แยกจาก DeployService เพราะแตะแค่จำนวน Pod ไม่ยุ่งกับ Service/NodePort ที่จ่ายไปแล้ว
+	// (NodePort ต้องคงเดิม ไม่งั้น URL ที่ผู้ใช้ถืออยู่จะใช้ไม่ได้)
+	ScaleService(ctx context.Context, nsName, svcName string, replicas int) error
 
 	// DeleteService ลบ workload ตัวเดียวออกจาก namespace
 	DeleteService(ctx context.Context, nsName, svcName string) error

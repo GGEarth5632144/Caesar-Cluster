@@ -37,13 +37,20 @@ func (m *MockProvisioner) DeleteNamespace(ctx context.Context, nsName string) er
 // data flow: รับชื่อ namespace + service (สเปก snapshot แล้ว) จาก ServiceManager.Create → log
 // → เซ็ต svc.NodePort (จำลองพฤติกรรมของ k8s Service ชนิด NodePort) → คืน nil
 func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
-	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %dm CPU / %d MB / %d env vars",
-		svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB, len(svc.EnvVars))
+	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %d replica × (%dm CPU / %d MB) / port %d / %d env vars",
+		svc.Name, svc.Image, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, svc.ContainerPort, len(svc.EnvVars))
 	time.Sleep(300 * time.Millisecond) // จำลองว่าใช้เวลา
 
 	port := 30000 + (svc.ID % 2768) // เลขปลอมแต่นิ่งต่อ service เดิม อยู่ในช่วง NodePort ของ k8s
 	svc.NodePort = &port
-	log.Printf("[MOCK] service '%s' เข้าถึงได้ที่ <node-ip>:%d", svc.Name, port)
+	log.Printf("[MOCK] service '%s' เข้าถึงได้ที่ <node-ip>:%d → container port %d",
+		svc.Name, port, svc.ContainerPort)
+	return nil
+}
+
+// ScaleService จำลองการปรับจำนวน Pod — ของจริงคือแก้ Deployment.spec.replicas เฉยๆ
+func (m *MockProvisioner) ScaleService(ctx context.Context, nsName, svcName string, replicas int) error {
+	log.Printf("[MOCK] scale service '%s' ใน namespace '%s' เป็น %d replica", svcName, nsName, replicas)
 	return nil
 }
 

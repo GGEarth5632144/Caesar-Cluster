@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 
@@ -14,6 +15,7 @@ import (
 var (
 	ErrRequestTemplateNotFound = errors.New("ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
 	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
+	ErrServiceNotReady         = errors.New("service ยังไม่พร้อม — รอให้ deploy เสร็จก่อนค่อยปรับจำนวน replica")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
@@ -27,7 +29,11 @@ type CreateServiceParams struct {
 	RequestTemplateID *int
 	CPUMilli          int
 	RAMMB             int
-	EnvVars           map[string]string
+	// เป็น 0 ได้ = ไม่ได้ระบุมา แล้ว Create เติม default ให้ (8080 / 1 replica) — ทำที่ชั้นนี้
+	// ไม่ใช่ที่ DTO เพราะ default เป็นกติกาของ domain ไม่ใช่ของ HTTP layer
+	ContainerPort int
+	Replicas      int
+	EnvVars       map[string]string
 }
 
 // ServiceManager = business logic ของ workload: เช็คโควตา → บันทึก DB → deploy จริงขึ้น cluster
@@ -89,6 +95,15 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		cpuMilli, ramMB = tmpl.CPULimitMilli, tmpl.RAMLimitMB
 	}
 
+	containerPort := p.ContainerPort
+	if containerPort == 0 {
+		containerPort = entity.DefaultContainerPort
+	}
+	replicas := p.Replicas
+	if replicas == 0 {
+		replicas = entity.DefaultReplicas
+	}
+
 	svc := &entity.Service{
 		NamespaceID:       namespaceID,
 		Name:              p.Name,
@@ -97,12 +112,15 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		Image:             p.Image,
 		CPUMilli:          cpuMilli,
 		RAMMB:             ramMB,
+		ContainerPort:     containerPort,
+		Replicas:          replicas,
 		Status:            entity.ServiceCreating,
 		EnvVars:           entity.EnvVarMap(p.EnvVars),
 	}
 
 	// เช็คโควตาของ namespace แล้ว INSERT ภายใน transaction เดียวกับที่ล็อก namespace ไว้
-	err := m.quota.ReserveAndInsert(ctx, namespaceID, cpuMilli, ramMB, func(tx *gorm.DB) error {
+	// (โควตาที่หักคือ cpu/ram × replicas — ดู ReserveAndInsert)
+	err := m.quota.ReserveAndInsert(ctx, namespaceID, cpuMilli, ramMB, replicas, func(tx *gorm.DB) error {
 		return tx.Create(svc).Error
 	})
 	if err != nil {
@@ -150,6 +168,78 @@ func (m *ServiceManager) releaseReservation(ctx context.Context, serviceID int, 
 		log.Printf("!! deploy service id=%d ล้มเหลว (%v) และคืนโควตาไม่สำเร็จด้วย: %v "+
 			"— แถวนี้ยังกินโควตาของ namespace อยู่ ต้องลบมือ", serviceID, cause, err)
 	}
+}
+
+// Scale ปรับจำนวน Pod ของ service ที่ deploy ไปแล้ว (ใช้ตอนโหลดเยอะจนต้องเพิ่ม Pod มารับ)
+//
+// data flow: ตรวจสิทธิ์แบบเดียวกับ Delete → ReserveScale ล็อก namespace + เช็คโควตา + UPDATE ใน tx เดียว
+// → นอก transaction สั่ง prov.ScaleService → คลัสเตอร์ไม่รับก็เขียนค่าเดิมกลับ
+//
+// ลำดับ "DB ก่อน แล้วค่อยคลัสเตอร์" ตรงข้ามกับ Delete โดยตั้งใจ: ที่นี่ DB เป็นตัวถือโควตา
+// ถ้าไปเพิ่ม Pod บนคลัสเตอร์ก่อนโดยยังไม่จอง มีสิทธิ์แซงโควตาที่คนอื่นกำลังจองพร้อมกันอยู่
+func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, replicas int) (*entity.Service, error) {
+	var svc entity.Service
+	err := m.db.WithContext(ctx).
+		Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrServiceNotFound
+		}
+		return nil, err
+	}
+
+	// ห้าม scale ระหว่างที่ Create ยังทำงานอยู่ ไม่งั้น DB กับคลัสเตอร์จะ drift ถาวร:
+	// Create อ่านค่า Replicas ไว้ตั้งแต่ก่อนเรียก provisioner แล้วไป apply ด้วยจำนวนเดิม
+	// ส่วน Scale เขียนจำนวนใหม่ลง DB ไปแล้ว — จบมาคลัสเตอร์ได้จำนวนเก่า และไม่มีอะไรมาปรับให้ตรงกันทีหลัง
+	// ช่องนี้กว้างหลายวินาทีบน k8s จริง ไม่ใช่แค่ 300ms แบบ mock
+	if svc.Status != entity.ServiceRunning {
+		return nil, fmt.Errorf("%w (สถานะตอนนี้: %s)", ErrServiceNotReady, svc.Status)
+	}
+
+	previous := svc.Replicas
+	if previous == replicas {
+		return &svc, nil // ไม่มีอะไรเปลี่ยน ไม่ต้องกวนคลัสเตอร์
+	}
+
+	err = m.quota.ReserveScale(ctx, namespaceID, serviceID, svc.CPUMilli, svc.RAMMB, replicas,
+		func(tx *gorm.DB) error {
+			// UPDATE ที่ไม่โดนแถวไหน GORM ไม่ถือเป็น error — ถ้ามีคนลบ service แซงตอนเรารอ lock
+			// Scale จะตอบ success แล้วไปสั่งคลัสเตอร์ scale ของที่ถูกลบไปแล้ว
+			res := tx.Model(&entity.Service{}).
+				Where("id = ? AND namespace_id = ?", serviceID, namespaceID).
+				Update("replicas", replicas)
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrServiceNotFound
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
+		return nil, err
+	}
+
+	if err := m.prov.ScaleService(ctx, ns.Name, svc.Name, replicas); err != nil {
+		// คลัสเตอร์ไม่รับ → คืนค่าเดิม ไม่งั้นโควตาถูกจองไว้เกินของจริง
+		// WithoutCancel ด้วยเหตุผลเดียวกับ releaseReservation (ผู้ใช้ปิดหน้าเว็บระหว่างรอ)
+		if rbErr := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
+			Where("id = ?", serviceID).
+			Update("replicas", previous).Error; rbErr != nil {
+			log.Printf("!! scale service id=%d ล้มเหลว (%v) และย้อน replicas กลับเป็น %d ไม่สำเร็จ: %v "+
+				"— DB บอก %d replica แต่บนคลัสเตอร์ยังเป็น %d ต้องแก้มือ",
+				serviceID, err, previous, rbErr, replicas, previous)
+		}
+		return nil, err
+	}
+
+	svc.Replicas = replicas
+	return &svc, nil
 }
 
 // Delete ลบ service ออกจาก namespace: ถอนของจริงบน cluster ก่อน แล้วค่อยลบ row (คืนโควตา)

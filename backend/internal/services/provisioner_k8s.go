@@ -50,11 +50,23 @@ func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName stri
 
 // DeployService (ยังไม่ทำ) — จะสร้าง Deployment + Service ชนิด NodePort ใน namespace ที่กำหนด
 // data flow (แผน): รับ entity.Service จาก ServiceManager.Create → ตั้ง resources.requests/limits
-// จาก CPUMilli ("300m") และ RAMMB ("2048Mi") → svc.EnvVars ใส่เป็น container env (corev1.EnvVar)
-// → apply Deployment + Service(type=NodePort) เข้า cluster
+// จาก CPUMilli ("300m") และ RAMMB ("2048Mi") ต่อ 1 Pod → Deployment.spec.replicas = svc.Replicas
+// → containerPort = svc.ContainerPort → svc.EnvVars ใส่เป็น container env (corev1.EnvVar)
+// → apply Deployment + Service(type=NodePort, targetPort=svc.ContainerPort) เข้า cluster
 // → อ่าน nodePort ที่ k8s สุ่มจ่ายให้ (หรือระบุเองถ้าอยากคุมเลข) → เซ็ตกลับที่ svc.NodePort ก่อน return
+//
+// targetPort ต้องชี้ที่ ContainerPort เสมอ — ตั้งผิดแล้ว Service จะสร้างสำเร็จแต่ traffic เข้าไปไม่มีใครฟัง
+// กลายเป็น connection refused ที่ debug ยากเพราะ deploy "ผ่าน"
 func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
 	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeployService)")
+}
+
+// ScaleService (ยังไม่ทำ) — จะ Patch เฉพาะ Deployment.spec.replicas ของ workload ที่มีอยู่แล้ว
+// (หรือใช้ UpdateScale ผ่าน scale subresource)
+//
+// ห้ามแตะ Service/NodePort ที่จ่ายไปแล้ว — ผู้ใช้ถือ URL <node-ip>:<node_port> อยู่
+func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcName string, replicas int) error {
+	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (ScaleService)")
 }
 
 // DeleteService (ยังไม่ทำ) — จะลบ Deployment ตัวเดียวออกจาก namespace

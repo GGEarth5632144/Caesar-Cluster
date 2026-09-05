@@ -79,6 +79,8 @@ func (h *ServiceController) Create(c *gin.Context) {
 		RequestTemplateID: req.RequestTemplateID,
 		CPUMilli:          req.CPUMilli,
 		RAMMB:             req.RAMMB,
+		ContainerPort:     req.ContainerPort,
+		Replicas:          req.Replicas,
 		EnvVars:           req.EnvVars,
 	})
 	if err != nil {
@@ -96,6 +98,49 @@ func (h *ServiceController) Create(c *gin.Context) {
 		return
 	}
 	utils.OK(c, http.StatusCreated, svc)
+}
+
+// Scale ปรับจำนวน Pod ของ service ที่ deploy ไปแล้ว
+//
+// data flow: id จาก path + JSON body → ServiceManager.Scale (เช็คโควตา namespace ก่อนเสมอ) → ตอบ service ที่อัปเดตแล้ว
+// โควตาไม่พอ = 409 พร้อมบอกว่าเหลือเท่าไหร่ ให้ผู้ใช้เลือกลดจำนวนหรือไปลบ service อื่นก่อน
+func (h *ServiceController) Scale(c *gin.Context) {
+	nsID, ok := currentNamespaceID(c, h.db)
+	if !ok {
+		return
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	var req dto.ScaleServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	svc, err := h.svc.Scale(c.Request.Context(), id, nsID, req.Replicas)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrServiceNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		// 409 ไม่ใช่ 400: รูปแบบคำขอถูกต้อง แค่มาผิดจังหวะ ลองใหม่ตอน deploy เสร็จได้
+		case errors.Is(err, services.ErrServiceNotReady):
+			utils.Error(c, http.StatusConflict, "SERVICE_NOT_READY", err.Error())
+		case errors.Is(err, services.ErrQuotaExceeded):
+			utils.Error(c, http.StatusConflict, "QUOTA_EXCEEDED", err.Error())
+		case errors.Is(err, services.ErrServiceTooLarge):
+			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
+		default:
+			log.Printf("scale service error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ปรับจำนวน replica ไม่สำเร็จ")
+		}
+		return
+	}
+	utils.OK(c, http.StatusOK, svc)
 }
 
 // Delete ลบ service ออกจาก space ของผู้ใช้ (คืนโควตาให้ namespace ทันที)
