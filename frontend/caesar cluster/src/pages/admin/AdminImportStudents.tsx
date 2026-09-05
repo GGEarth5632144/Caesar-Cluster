@@ -92,26 +92,26 @@ export default function AdminImportStudents() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <div className="rounded-3xl bg-[#FFFDF6] p-8 shadow-sm">
-        <h2 className="text-xl font-bold text-[#BB6653]">Import Students</h2>
-        <p className="mt-1 text-sm text-[#211a14]/60">
+        <h2 className="text-2xl font-bold text-[#BB6653]">Import Students</h2>
+        <p className="mt-1 text-base text-[#211a14]/60">
           อัปโหลดไฟล์รายชื่อนักศึกษา (.xlsx หรือ .xls) จากระบบทะเบียน — ระบบจะตรวจสอบก่อน ยังไม่บันทึกจนกว่าจะกดยืนยัน
         </p>
 
         {error && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
-            <AlertTriangle size={18} />
+          <div className="mt-4 flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-base text-red-600">
+            <AlertTriangle size={20} />
             {error}
           </div>
         )}
 
         {currentView === "upload" && (
           <div className="mt-6 flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-black/15 py-14">
-            <FileSpreadsheet size={40} className="text-[#BB6653]/60" />
-            <p className="text-sm text-[#211a14]/60">
+            <FileSpreadsheet size={42} className="text-[#BB6653]/60" />
+            <p className="text-base text-[#211a14]/60">
               {isLoading ? "กำลังอ่านไฟล์..." : "เลือกไฟล์ .xlsx หรือ .xls เพื่ออัปโหลด"}
             </p>
-            <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-xl bg-[#F08B51] px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#F08B51]/90">
-              <Upload size={16} />
+            <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-xl bg-[#F08B51] px-6 py-2.5 text-base font-medium text-white transition-colors hover:bg-[#F08B51]/90">
+              <Upload size={18} />
               เลือกไฟล์
               <input
                 ref={fileInputRef}
@@ -173,7 +173,7 @@ function PreviewView({
 
   return (
     <div className="mt-6 flex flex-col gap-6">
-      <p className="text-sm text-[#211a14]/70">
+      <p className="text-base text-[#211a14]/70">
         ไฟล์: <span className="font-medium">{fileName}</span>
       </p>
 
@@ -185,12 +185,12 @@ function PreviewView({
 
       {data.invalid.length > 0 && (
         <div>
-          <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-red-600">
-            <AlertTriangle size={16} />
+          <p className="mb-2 flex items-center gap-1.5 text-base font-semibold text-red-600">
+            <AlertTriangle size={18} />
             แถวที่มีปัญหา ({data.invalid.length} แถว — จะไม่ถูก import)
           </p>
           <div className="max-h-48 overflow-y-auto rounded-xl border border-red-100">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-base">
               <thead>
                 <tr className="border-b border-red-100 bg-red-50 text-red-600">
                   <th className="px-4 py-2 font-semibold">แถวที่</th>
@@ -212,19 +212,19 @@ function PreviewView({
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-sm font-semibold text-[#BB6653]">
+          <p className="text-base font-semibold text-[#BB6653]">
             เลือกรายชื่อที่จะ import ({selectedIds.size}/{data.valid.length} คน)
           </p>
           <button
             type="button"
             onClick={onToggleAll}
-            className="text-xs font-medium text-[#BB6653] underline-offset-2 hover:underline"
+            className="text-sm font-medium text-[#BB6653] underline-offset-2 hover:underline"
           >
             {allSelected ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมด"}
           </button>
         </div>
         <div className="max-h-64 overflow-y-auto rounded-xl border border-black/10">
-          <table className="w-full text-left text-sm text-[#211a14]">
+          <table className="w-full text-left text-base text-[#211a14]">
             <thead>
               <tr className="border-b border-black/10 bg-black/[0.02] text-[#BB6653]">
                 <th className="w-10 px-4 py-2">
@@ -276,14 +276,14 @@ function PreviewView({
         <button
           onClick={onCancel}
           disabled={isSubmitting}
-          className="rounded-xl border border-black/20 px-6 py-2.5 text-sm font-medium text-[#211a14] transition-colors hover:bg-black/5 disabled:opacity-50"
+          className="rounded-xl border border-black/20 px-6 py-2.5 text-base font-medium text-[#211a14] transition-colors hover:bg-black/5 disabled:opacity-50"
         >
           ยกเลิก
         </button>
         <button
           onClick={onConfirm}
           disabled={isSubmitting || selectedIds.size === 0}
-          className="rounded-xl bg-green-600 px-8 py-2.5 text-sm font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+          className="rounded-xl bg-green-600 px-8 py-2.5 text-base font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50"
         >
           {isSubmitting ? "กำลังบันทึก..." : `ยืนยัน Import (${selectedIds.size} คน)`}
         </button>
@@ -295,8 +295,8 @@ function PreviewView({
 function SummaryTile({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="rounded-2xl border border-black/10 px-5 py-4 text-center">
-      <p className={`text-2xl font-bold ${color}`}>{value}</p>
-      <p className="mt-1 text-xs text-[#211a14]/60">{label}</p>
+      <p className={`text-3xl font-bold ${color}`}>{value}</p>
+      <p className="mt-1 text-sm text-[#211a14]/60">{label}</p>
     </div>
   );
 }
@@ -312,23 +312,23 @@ function DoneView({
 }) {
   return (
     <div className="mt-6 flex flex-col items-center gap-3 py-10 text-center">
-      <CheckCircle2 size={44} className="text-green-600" />
-      <p className="text-lg font-semibold text-[#211a14]">Import สำเร็จ</p>
-      <p className="text-sm text-[#211a14]/60">
+      <CheckCircle2 size={46} className="text-green-600" />
+      <p className="text-xl font-semibold text-[#211a14]">Import สำเร็จ</p>
+      <p className="text-base text-[#211a14]/60">
         บันทึก/อัปเดตแล้ว {result.upserted} จากทั้งหมด {result.submitted} รายการ
       </p>
       <div className="mt-4 flex gap-3">
         <button
           onClick={onImportAnother}
-          className="rounded-xl border border-[#F08B51] px-6 py-2.5 text-sm font-medium text-[#F08B51] transition-colors hover:bg-[#F08B51]/10"
+          className="rounded-xl border border-[#F08B51] px-6 py-2.5 text-base font-medium text-[#F08B51] transition-colors hover:bg-[#F08B51]/10"
         >
           Import ไฟล์อื่น
         </button>
         <button
           onClick={onGoToUserManagement}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#F08B51] px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#F08B51]/90"
+          className="inline-flex items-center gap-2 rounded-xl bg-[#F08B51] px-6 py-2.5 text-base font-medium text-white transition-colors hover:bg-[#F08B51]/90"
         >
-          <Users size={16} />
+          <Users size={18} />
           ไปที่ User Management
         </button>
       </div>

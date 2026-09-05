@@ -35,6 +35,7 @@ type disconnectingProv struct{ cancel context.CancelFunc }
 func (p *disconnectingProv) EnsureNamespace(context.Context, *entity.Namespace) error { return nil }
 func (p *disconnectingProv) DeleteNamespace(context.Context, string) error            { return nil }
 func (p *disconnectingProv) DeleteService(context.Context, string, string) error      { return nil }
+func (p *disconnectingProv) ScaleService(context.Context, string, string, int) error  { return nil }
 func (p *disconnectingProv) Logs(context.Context, string, string, LogOptions) (io.ReadCloser, error) {
 	return nil, nil
 }

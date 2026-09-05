@@ -161,16 +161,16 @@ export default function ServiceLogs() {
             onClick={() => navigate(`/${PATHS.services}`)}
             className="mt-0.5 rounded-xl p-2 text-[#211a14]/50 transition-colors hover:bg-black/5"
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={20} />
           </button>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Terminal size={16} className="text-[#BB6653] shrink-0" />
-              <h1 className="text-lg font-bold text-[#211a14] truncate">
+              <Terminal size={18} className="text-[#BB6653] shrink-0" />
+              <h1 className="text-xl font-bold text-[#211a14] truncate">
                 {service?.name ?? `service #${id}`}
               </h1>
             </div>
-            <p className="text-xs text-[#211a14]/45 truncate">{service?.image ?? "กำลังโหลดรายละเอียด..."}</p>
+            <p className="text-sm text-[#211a14]/45 truncate">{service?.image ?? "กำลังโหลดรายละเอียด..."}</p>
           </div>
         </div>
       </div>
@@ -181,19 +181,19 @@ export default function ServiceLogs() {
           type="button"
           onClick={() => setFollow((f) => !f)}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
+            "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition-colors",
             follow ? "bg-[#BB6653] text-white" : "border border-black/10 text-[#211a14]/70 hover:bg-black/[0.03]",
           )}
           title={follow ? "หยุดไหลสด" : "เริ่มไหลสด (live tail)"}
         >
-          {follow ? <Pause size={13} /> : <Play size={13} />}
+          {follow ? <Pause size={15} /> : <Play size={15} />}
           {follow ? "Streaming" : "Paused"}
         </button>
 
         <select
           value={tail}
           onChange={(e) => setTail(Number(e.target.value))}
-          className="rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-xs font-medium text-[#211a14] outline-none"
+          className="rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-sm font-medium text-[#211a14] outline-none"
           title="จำนวนบรรทัดล่าสุดที่ดึงตอนเปิด"
         >
           {TAIL_OPTIONS.map((n) => (
@@ -204,16 +204,16 @@ export default function ServiceLogs() {
         </select>
 
         <div className="flex min-w-[160px] flex-1 items-center gap-1.5 rounded-lg border border-black/10 bg-white px-2.5 py-1.5">
-          <Search size={13} className="text-[#211a14]/30 shrink-0" />
+          <Search size={15} className="text-[#211a14]/30 shrink-0" />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="filter log lines..."
-            className="w-full bg-transparent text-xs text-[#211a14] placeholder:text-[#211a14]/30 outline-none"
+            className="w-full bg-transparent text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none"
           />
           {filter !== "" && (
             <button type="button" onClick={() => setFilter("")} className="text-[#211a14]/30 hover:text-[#211a14]/60">
-              <X size={13} />
+              <X size={15} />
             </button>
           )}
         </div>
@@ -221,35 +221,35 @@ export default function ServiceLogs() {
         <button
           type="button"
           onClick={() => setLines([])}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-1.5 text-xs font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03]"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-1.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03]"
           title="ล้างบรรทัดที่แสดงอยู่ (ไม่หยุด stream)"
         >
-          <Trash2 size={13} /> Clear
+          <Trash2 size={15} /> Clear
         </button>
 
         <button
           type="button"
           onClick={handleDownload}
           disabled={lines.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-1.5 text-xs font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03] disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-1.5 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03] disabled:opacity-40"
           title="ดาวน์โหลด log ที่เห็นอยู่ตอนนี้เป็นไฟล์ .txt"
         >
-          <Download size={13} /> Download
+          <Download size={15} /> Download
         </button>
 
-        <div className="flex items-center gap-1.5 pl-1 text-[11px] font-semibold text-[#211a14]/50">
+        <div className="flex items-center gap-1.5 pl-1 text-base font-semibold text-[#211a14]/50">
           <span className={cn("size-2 rounded-full", statusDot.cls)} />
           {statusDot.label}
         </div>
       </div>
 
       {errorMsg && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-600">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-base text-red-600">
           <span>{errorMsg}</span>
           <button
             type="button"
             onClick={startStream}
-            className="shrink-0 rounded-lg bg-red-500 px-3 py-1 text-xs font-bold text-white hover:bg-red-600"
+            className="shrink-0 rounded-lg bg-red-500 px-3 py-1 text-sm font-bold text-white hover:bg-red-600"
           >
             ลองใหม่
           </button>
@@ -262,7 +262,7 @@ export default function ServiceLogs() {
           <span className="size-2.5 rounded-full bg-red-500/70" />
           <span className="size-2.5 rounded-full bg-yellow-500/70" />
           <span className="size-2.5 rounded-full bg-green-500/70" />
-          <span className="ml-2 font-mono text-[11px] text-white/30">
+          <span className="ml-2 font-mono text-base text-white/30">
             {filter ? `${filteredLines.length} / ${lines.length} lines (filtered)` : `${lines.length} lines`}
           </span>
         </div>
@@ -270,11 +270,11 @@ export default function ServiceLogs() {
         <div
           ref={paneRef}
           onScroll={handlePaneScroll}
-          className="h-full max-h-[calc(100%-2.5rem)] overflow-y-auto px-4 py-3 font-mono text-[12px] leading-relaxed"
+          className="h-full max-h-[calc(100%-2.5rem)] overflow-y-auto px-4 py-3 font-mono text-base leading-relaxed"
         >
           {connState === "connecting" && lines.length === 0 && (
             <p className="flex items-center gap-2 text-white/30">
-              <Loader2 size={13} className="animate-spin" /> กำลังเชื่อมต่อ...
+              <Loader2 size={15} className="animate-spin" /> กำลังเชื่อมต่อ...
             </p>
           )}
           {connState !== "connecting" && filteredLines.length === 0 && (
@@ -294,9 +294,9 @@ export default function ServiceLogs() {
           <button
             type="button"
             onClick={jumpToLatest}
-            className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-[#BB6653] px-3.5 py-2 text-xs font-bold text-white shadow-lg transition-colors hover:bg-[#F08B51]"
+            className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-[#BB6653] px-3.5 py-2 text-sm font-bold text-white shadow-lg transition-colors hover:bg-[#F08B51]"
           >
-            <ArrowDownToLine size={13} /> Jump to latest
+            <ArrowDownToLine size={15} /> Jump to latest
           </button>
         )}
       </div>

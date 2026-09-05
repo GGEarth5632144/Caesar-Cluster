@@ -37,8 +37,8 @@ export default function RequestResources() {
   return (
     <div className="flex flex-col gap-6 text-left font-mono animate-in fade-in duration-200">
       <div>
-        <h1 className="text-4xl font-bold text-[#211a14]">My Requests</h1>
-        <p className="max-w-2xl text-base text-[#211a14]/60 mt-1">
+        <h1 className="text-5xl font-bold text-[#211a14]">My Requests</h1>
+        <p className="max-w-2xl text-lg text-[#211a14]/60 mt-1">
           Track your VM and quota requests, and their approval status.
         </p>
       </div>
@@ -46,7 +46,7 @@ export default function RequestResources() {
       {loading && <RequestListSkeleton />}
 
       {error && (
-        <div className="p-4 rounded-xl bg-red-50 text-red-600 text-sm border border-red-100 max-w-3xl">
+        <div className="p-4 rounded-xl bg-red-50 text-red-600 text-base border border-red-100 max-w-3xl">
           {error}
         </div>
       )}
@@ -85,22 +85,22 @@ export default function RequestResources() {
                       isApproved && "bg-green-50 text-green-600",
                       isDenied && "bg-red-50 text-red-500"
                     )}>
-                      {isPending && <Clock size={24} />}
-                      {isApproved && <CheckCircle2 size={24} />}
-                      {isDenied && <XCircle size={24} />}
+                      {isPending && <Clock size={26} />}
+                      {isApproved && <CheckCircle2 size={26} />}
+                      {isDenied && <XCircle size={26} />}
                     </div>
                     <div>
-                      <h3 className="text-xl font-bold text-[#211a14]">
+                      <h3 className="text-2xl font-bold text-[#211a14]">
                         New VM request submitted
                       </h3>
-                      <p className="text-xs text-[#211a14]/40 mt-0.5">
+                      <p className="text-sm text-[#211a14]/40 mt-0.5">
                         #REQ-{req.id} • submitted {formatTimeAgo(req.created_at)}
                       </p>
                     </div>
                   </div>
 
                   <div className={cn(
-                    "inline-flex items-center gap-1.5 self-start sm:self-center px-3 py-1.5 rounded-full text-xs font-bold",
+                    "inline-flex items-center gap-1.5 self-start sm:self-center px-3 py-1.5 rounded-full text-sm font-bold",
                     isPending && "bg-[#FFF8E8] text-[#F08B51]",
                     isApproved && "bg-green-50 text-green-700",
                     isDenied && "bg-red-50 text-red-600"
@@ -120,10 +120,10 @@ export default function RequestResources() {
                 <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-black/5 pb-6">
 
                   <div className="flex items-center gap-2.5">
-                    <div className="flex size-6 items-center justify-center rounded-full bg-green-600 text-white text-xs font-bold">
+                    <div className="flex size-6 items-center justify-center rounded-full bg-green-600 text-white text-sm font-bold">
                       ✓
                     </div>
-                    <span className="text-sm font-semibold text-[#211a14]">Submitted</span>
+                    <span className="text-base font-semibold text-[#211a14]">Submitted</span>
                   </div>
 
                   <div className={cn(
@@ -133,14 +133,14 @@ export default function RequestResources() {
 
                   <div className="flex items-center gap-2.5">
                     <div className={cn(
-                      "flex size-6 items-center justify-center rounded-full text-xs font-bold",
+                      "flex size-6 items-center justify-center rounded-full text-sm font-bold",
                       isPending && "bg-[#F08B51] text-white",
                       isApproved && "bg-green-600 text-white",
                       isDenied && "bg-red-500 text-white",
                     )}>
                       {isApproved ? "✓" : isDenied ? "✕" : "2"}
                     </div>
-                    <span className={cn("text-sm font-semibold", !isPending && "text-[#211a14]/50", isPending && "text-[#211a14]")}>
+                    <span className={cn("text-base font-semibold", !isPending && "text-[#211a14]/50", isPending && "text-[#211a14]")}>
                       Admin review
                     </span>
                   </div>
@@ -152,33 +152,33 @@ export default function RequestResources() {
 
                   <div className="flex items-center gap-2.5">
                     <div className={cn(
-                      "flex size-6 items-center justify-center rounded-full text-xs font-bold bg-black/10 text-black/40",
+                      "flex size-6 items-center justify-center rounded-full text-sm font-bold bg-black/10 text-black/40",
                       isApproved && "bg-green-600 text-white"
                     )}>
                       {isApproved ? "✓" : "3"}
                     </div>
-                    <span className={cn("text-sm font-semibold text-[#211a14]/40", isApproved && "text-[#211a14]")}>
+                    <span className={cn("text-base font-semibold text-[#211a14]/40", isApproved && "text-[#211a14]")}>
                       Provisioned
                     </span>
                   </div>
 
                 </div>
 
-                <div className="mt-6 rounded-xl bg-[#FFF8E8]/40 px-5 py-4 text-sm font-medium text-[#211a14]/80 flex flex-wrap items-center gap-x-6 gap-y-2">
+                <div className="mt-6 rounded-xl bg-[#FFF8E8]/40 px-5 py-4 text-base font-medium text-[#211a14]/80 flex flex-wrap items-center gap-x-6 gap-y-2">
                   <div className="flex items-center gap-1">
-                    <Cpu size={14} className="text-[#BB6653]" />
+                    <Cpu size={16} className="text-[#BB6653]" />
                     <span>{coreDisplay} cores</span>
                   </div>
                   <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
                   <div className="flex items-center gap-1">
-                    <Layers size={14} className="text-[#BB6653]" />
+                    <Layers size={16} className="text-[#BB6653]" />
                     <span>{ramDisplay} RAM</span>
                   </div>
                   {req.storage_gb > 0 && (
                     <>
                       <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
                       <div className="flex items-center gap-1">
-                        <HardDrive size={14} className="text-[#BB6653]" />
+                        <HardDrive size={16} className="text-[#BB6653]" />
                         <span>{req.storage_gb} GB storage</span>
                       </div>
                     </>
@@ -186,7 +186,7 @@ export default function RequestResources() {
                   {req.description && (
                     <>
                       <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
-                      <div className="text-xs text-[#211a14]/50 italic truncate max-w-xs">
+                      <div className="text-sm text-[#211a14]/50 italic truncate max-w-xs">
                         Note: "{req.description}"
                       </div>
                     </>

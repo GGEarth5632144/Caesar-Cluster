@@ -14,6 +14,21 @@ const (
 	ServiceFailed   = "failed"   // provisioner deploy ไม่สำเร็จ
 )
 
+// ContainerPort = พอร์ตที่โปรเซสข้างใน container ฟังอยู่ (ตรงกับ EXPOSE ใน image) คนละชั้นกับ
+// NodePort ที่ k8s จ่ายให้ (30000-32767) เป็นทางเข้าจากนอก — Service เป็นตัวเชื่อมสองอันนี้
+//
+// Replicas = จำนวน Pod ที่รันขนานกัน (1 Pod = 1 container) กินโควตา namespace เป็น cpu_milli × replicas
+// เพดาน 10 กันตั้งเลขหลุดจนกินทั้งคลัสเตอร์
+const (
+	DefaultContainerPort = 8080
+	MinContainerPort     = 1
+	MaxContainerPort     = 65535
+
+	DefaultReplicas = 1
+	MinReplicas     = 1
+	MaxReplicas     = 10
+)
+
 // EnvVarMap คือ environment variables ของ service เดียว เก็บเป็น jsonb คอลัมน์เดียว
 // ตั้งใจใช้ map[string]string (ไม่ใช้ JSONB ที่มีอยู่แล้วซึ่งเป็น map[string]any) เพราะ env var
 // เป็น key-value string ล้วนเสมอ — ฝั่งที่ใช้งานจริง (provisioner) จะได้ไม่ต้อง type-assert ทุกค่า
@@ -75,7 +90,9 @@ type Service struct {
 	Image             string    `gorm:"column:image;type:varchar(200);not null" json:"image"`
 	CPUMilli          int       `gorm:"column:cpu_milli;type:integer;not null;check:cpu_milli > 0" json:"cpu_milli"`
 	RAMMB             int       `gorm:"column:ram_mb;type:integer;not null;check:ram_mb > 0" json:"ram_mb"`
+	ContainerPort     int       `gorm:"column:container_port;type:integer;not null;default:8080;check:container_port BETWEEN 1 AND 65535" json:"container_port"`
 	NodePort          *int      `gorm:"column:node_port;type:integer;check:node_port IS NULL OR (node_port BETWEEN 30000 AND 32767)" json:"node_port"`
+	Replicas          int       `gorm:"column:replicas;type:integer;not null;default:1;check:replicas BETWEEN 1 AND 10" json:"replicas"`
 	Status            string    `gorm:"column:status;type:varchar(20);not null;default:creating" json:"status"`
 	EnvVars           EnvVarMap `gorm:"column:env_vars;type:jsonb;not null;default:'{}'" json:"env_vars"`
 	CreatedAt         time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`

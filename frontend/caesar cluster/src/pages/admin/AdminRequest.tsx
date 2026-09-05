@@ -67,7 +67,7 @@ export default function AdminRequest() {
             onClick={handleCreateClick}
             className="flex size-10 items-center justify-center rounded-xl bg-green-600 text-white hover:bg-green-700 transition-colors shadow-sm"
           >
-            <Plus size={24} />
+            <Plus size={26} />
           </button>
         )}
       </div>
@@ -78,7 +78,7 @@ export default function AdminRequest() {
             <Skeleton className="h-6 w-40" />
             <Skeleton className="h-10 w-72 rounded-full" />
           </div>
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-base">
             <tbody>
               <TableRowsSkeleton rows={5} cols={5} />
             </tbody>
@@ -151,22 +151,22 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
   return (
     <div className="rounded-3xl bg-[#FFFDF6] p-8 shadow-sm">
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-xl font-bold text-[#BB6653]">Request Option</h2>
+        <h2 className="text-2xl font-bold text-[#BB6653]">Request Option</h2>
         <div className="relative w-72">
           <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <Search size={18} className="text-[#BB6653]/60" />
+            <Search size={20} className="text-[#BB6653]/60" />
           </div>
           <input
             type="text"
             placeholder="Search"
             value={searchTerm}
             onChange={handleSearchChange}
-            className="w-full rounded-full border border-black/10 bg-white py-2.5 pl-10 pr-4 text-sm text-[#211a14] outline-none transition-shadow focus:ring-2 focus:ring-[#BB6653]/50"
+            className="w-full rounded-full border border-black/10 bg-white py-2.5 pl-10 pr-4 text-base text-[#211a14] outline-none transition-shadow focus:ring-2 focus:ring-[#BB6653]/50"
           />
         </div>
       </div>
 
-      <table className="w-full text-left text-sm text-[#211a14]">
+      <table className="w-full text-left text-base text-[#211a14]">
         <thead>
           <tr className="border-b border-black/10 text-[#BB6653]">
             <th className="pb-4 font-semibold">Option Name</th>
@@ -197,13 +197,13 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
                       onClick={() => onToggleStatus(item.id, item.is_active)}
                       className="transition-colors hover:text-[#F08B51] focus:outline-none"
                     >
-                      {item.is_active ? <CheckSquare size={20} /> : <Square size={20} />}
+                      {item.is_active ? <CheckSquare size={22} /> : <Square size={22} />}
                     </button>
                   </div>
                 </td>
                 <td className="py-4 text-center">
                   <button onClick={() => onEdit(item)} className="text-[#BB6653] transition-colors hover:text-[#F08B51]">
-                    <Edit2 size={18} />
+                    <Edit2 size={20} />
                   </button>
                 </td>
               </tr>
@@ -214,7 +214,7 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
 
       {/* ส่วนควบคุมหน้า (Pagination Controls) */}
       {filteredData.length > 0 && (
-        <div className="mt-6 flex items-center justify-between text-sm text-[#211a14]/60">
+        <div className="mt-6 flex items-center justify-between text-base text-[#211a14]/60">
           <div>
             แสดง {startIndex + 1} ถึง {Math.min(startIndex + itemsPerPage, filteredData.length)} จากทั้งหมด {filteredData.length} รายการ
           </div>
@@ -224,7 +224,7 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
               disabled={currentPage === 1}
               className="flex size-8 items-center justify-center rounded-lg border border-black/10 hover:bg-black/5 disabled:opacity-30 disabled:hover:bg-transparent"
             >
-              <ChevronLeft size={18} />
+              <ChevronLeft size={20} />
             </button>
             <span className="px-2 font-medium">
               หน้า {currentPage} / {totalPages}
@@ -234,7 +234,7 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
               disabled={currentPage === totalPages}
               className="flex size-8 items-center justify-center rounded-lg border border-black/10 hover:bg-black/5 disabled:opacity-30 disabled:hover:bg-transparent"
             >
-              <ChevronRight size={18} />
+              <ChevronRight size={20} />
             </button>
           </div>
         </div>
@@ -345,28 +345,28 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
         
         <div className="grid grid-cols-2 gap-5">
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-[#BB6653] ml-1">Option Name</label>
+            <label className="text-base font-semibold text-[#BB6653] ml-1">Option Name</label>
             <input name="option_name" value={formData.option_name} onChange={handleChange} placeholder="Option Name" className={inputClass} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-[#BB6653] ml-1">Category</label>
+            <label className="text-base font-semibold text-[#BB6653] ml-1">Category</label>
             <input name="category" value={formData.category} onChange={handleChange} placeholder="Category" className={inputClass} />
           </div>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-semibold text-[#BB6653] ml-1">Description</label>
+          <label className="text-base font-semibold text-[#BB6653] ml-1">Description</label>
           <textarea name="description" value={formData.description} onChange={handleChange} placeholder="Description" rows={3} className={inputClass} />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-semibold text-[#BB6653] ml-1">Relate Subject</label>
+          <label className="text-base font-semibold text-[#BB6653] ml-1">Relate Subject</label>
           <input name="relate_subject" value={formData.relate_subject} onChange={handleChange} placeholder="Relate subject" className={inputClass} />
         </div>
 
         <div className="grid grid-cols-3 gap-5">
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-[#BB6653] ml-1">CPU Limit (Milli)</label>
+            <label className="text-base font-semibold text-[#BB6653] ml-1">CPU Limit (Milli)</label>
             <select name="cpu_limit_milli" value={formData.cpu_limit_milli} onChange={handleChange} className={inputClass}>
               <option value="" disabled>เลือก CPU</option>
               {cpuOptions.map((val) => (
@@ -375,7 +375,7 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-[#BB6653] ml-1">Memory Limit (MB)</label>
+            <label className="text-base font-semibold text-[#BB6653] ml-1">Memory Limit (MB)</label>
             <select name="ram_limit_mb" value={formData.ram_limit_mb} onChange={handleChange} className={inputClass}>
               <option value="" disabled>เลือก RAM</option>
               {ramOptions.map((val) => (
@@ -384,7 +384,7 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold text-[#BB6653] ml-1">Storage (GB)</label>
+            <label className="text-base font-semibold text-[#BB6653] ml-1">Storage (GB)</label>
             <input name="storage_gb" value={formData.storage_gb} onChange={handleChange} placeholder="Storage (GB)" type="number" className={inputClass} />
           </div>
         </div>
@@ -397,16 +397,16 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
             <button
               onClick={onBack}
               disabled={isSubmitting}
-              className="rounded-xl border border-black/20 px-6 py-2.5 text-sm font-medium text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
+              className="rounded-xl border border-black/20 px-6 py-2.5 text-base font-medium text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button 
               onClick={handleDelete}
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-xl border border-red-500 px-6 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 rounded-xl border border-red-500 px-6 py-2.5 text-base font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
             >
-              <Trash2 size={16} /> Delete
+              <Trash2 size={18} /> Delete
             </button>
           </>
         )}
@@ -415,7 +415,7 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
            <button
              onClick={onBack}
              disabled={isSubmitting}
-             className="rounded-xl border border-black/20 px-6 py-2.5 text-sm font-medium text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
+             className="rounded-xl border border-black/20 px-6 py-2.5 text-base font-medium text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
            >
              Cancel
            </button>
@@ -424,7 +424,7 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
         <button 
           onClick={handleSave}
           disabled={isSubmitting}
-          className="rounded-xl bg-green-600 px-8 py-2.5 text-sm font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+          className="rounded-xl bg-green-600 px-8 py-2.5 text-base font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50"
         >
           {isSubmitting ? "กำลังบันทึก..." : "Save change"}
         </button>
