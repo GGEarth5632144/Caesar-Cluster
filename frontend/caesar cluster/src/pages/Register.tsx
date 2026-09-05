@@ -11,7 +11,6 @@ import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { PATHS } from "@/config/routes";
 import AuthHeroArt from "@/components/AuthHeroArt";
 import ResendVerification from "@/components/ResendVerification";
-import { notify } from "@/lib/modal";
 import { cn } from "@/lib/utils";
 
 const registerSchema = z
@@ -74,9 +73,8 @@ export default function Register() {
         gmail: values.gmail,
         password: values.password,
       });
-      // popup เด้งบอกให้ไปกดลิงก์ในอีเมล ส่วนแผงด้านหลังคือที่ที่ผู้ใช้ลงมือต่อได้ถ้าเมลไม่มา
+      // ไม่มี popup แล้ว — แผงด้านล่างบอกว่าลิงก์ถูกส่งไปที่ไหน และเป็นที่ที่ผู้ใช้ลงมือต่อได้ถ้าเมลไม่มา
       setSubmitted({ gmail: result.gmail, message: result.message });
-      notify.success("ส่งลิงก์ยืนยันไปที่อีเมลแล้ว", result.message, { actionText: "เข้าใจแล้ว" });
     } catch (err) {
       setError("root", {
         message: getApiErrorMessage(err, "สมัครสมาชิกไม่สำเร็จ"),

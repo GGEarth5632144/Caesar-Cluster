@@ -98,11 +98,11 @@ export default function GroupMembers({
   return (
     <div className="w-full max-w-3xl mx-auto sm:mx-0 rounded-3xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm font-mono">
       <div className="flex items-center justify-between pb-2 border-b border-black/5">
-        <p className="flex items-center gap-2 text-sm font-bold tracking-wider text-[#BB6653] uppercase">
-          <Users size={14} />
+        <p className="flex items-center gap-2 text-base font-bold tracking-wider text-[#BB6653] uppercase">
+          <Users size={16} />
           Group Members
         </p>
-        <span className="text-sm font-semibold text-[#211a14]/60">
+        <span className="text-base font-semibold text-[#211a14]/60">
           {namespace.member_count} {namespace.member_count === 1 ? "member" : "members"}
         </span>
       </div>
@@ -114,12 +114,12 @@ export default function GroupMembers({
             className="flex items-center justify-between rounded-xl bg-[#FFF8E8]/50 p-3 border border-black/[0.02]"
           >
             <div>
-              <p className="text-sm font-medium text-[#211a14]">{member.real_name}</p>
-              <p className="text-xs text-[#211a14]/50">{member.student_id}</p>
+              <p className="text-base font-medium text-[#211a14]">{member.real_name}</p>
+              <p className="text-sm text-[#211a14]/50">{member.student_id}</p>
             </div>
             {member.is_contributor && (
               <Badge className="gap-1 bg-[#F08B51]/15 text-[#BB6653]">
-                <Crown size={11} />
+                <Crown size={13} />
                 Owner
               </Badge>
             )}
@@ -143,16 +143,16 @@ export default function GroupMembers({
               disabled={inviting || !studentId.trim()}
               className="bg-[#F08B51] text-white hover:bg-[#F08B51]/90"
             >
-              {inviting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+              {inviting ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
               Invite
             </Button>
           </form>
-          {inviteError && <p className="mt-2 text-xs text-red-600">{inviteError}</p>}
-          {inviteSuccess && <p className="mt-2 text-xs text-green-600">{inviteSuccess}</p>}
+          {inviteError && <p className="mt-2 text-sm text-red-600">{inviteError}</p>}
+          {inviteSuccess && <p className="mt-2 text-sm text-green-600">{inviteSuccess}</p>}
 
           {!loadingSent && unresolvedInvites.length > 0 && (
             <div className="mt-4 flex flex-col gap-2">
-              <p className="text-xs font-semibold text-[#211a14]/40 uppercase tracking-wider">
+              <p className="text-sm font-semibold text-[#211a14]/40 uppercase tracking-wider">
                 Invite Requests
               </p>
               {unresolvedInvites.map((invite) => (
@@ -160,7 +160,7 @@ export default function GroupMembers({
                   key={invite.id}
                   className="flex items-center justify-between rounded-xl bg-[#FFF8E8]/50 p-3 border border-black/[0.02]"
                 >
-                  <span className="text-sm text-[#211a14]">{invite.invited_student_id}</span>
+                  <span className="text-base text-[#211a14]">{invite.invited_student_id}</span>
                   <div className="flex items-center gap-2">
                     <Badge className={cn("capitalize", statusBadgeClass(invite.status))}>
                       {invite.status}
@@ -173,7 +173,7 @@ export default function GroupMembers({
                         className="text-[#211a14]/40 hover:text-red-600 transition-colors"
                         aria-label={`Cancel invite to ${invite.invited_student_id}`}
                       >
-                        <X size={14} />
+                        <X size={16} />
                       </button>
                     )}
                   </div>

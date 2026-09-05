@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Cpu, Layers, HardDrive } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DashboardStatsSkeleton } from "@/components/ui/PageSkeletons";
-import GroupMembers from "@/components/GroupMembers";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 
@@ -53,7 +52,7 @@ export default function GeneralDashboard({ user }: { user: any }) {
 
   if (error || !data) {
     return (
-      <div className="p-6 rounded-2xl bg-red-50 text-red-600 font-mono text-sm max-w-xl mx-auto border border-red-100 text-center mt-10">
+      <div className="p-6 rounded-2xl bg-red-50 text-red-600 font-mono text-base max-w-xl mx-auto border border-red-100 text-center mt-10">
         {error || "ไม่พบข้อมูล namespace"}
       </div>
     );
@@ -74,21 +73,21 @@ export default function GeneralDashboard({ user }: { user: any }) {
   return (
     <div className="flex flex-col gap-10 text-left font-mono animate-in fade-in duration-200">
 
-      <h1 className="text-4xl font-bold text-[#211a14]">Welcome back, {userName}</h1>
+      <h1 className="text-5xl font-bold text-[#211a14]">Welcome back, {userName}</h1>
 
       <div className="grid gap-6 sm:grid-cols-3">
 
         <div className="rounded-2xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between text-xs font-bold tracking-wider uppercase">
+            <div className="flex items-center justify-between text-sm font-bold tracking-wider uppercase">
               <span className="text-[#211a14]/50 flex items-center gap-1">
-                <Cpu size={14} className="text-[#BB6653]" /> CPU Usage
+                <Cpu size={16} className="text-[#BB6653]" /> CPU Usage
               </span>
               <span className={statusColor(cpuPercent).text}>{cpuPercent}%</span>
             </div>
-            <p className="mt-4 text-4xl font-bold text-[#211a14]">
+            <p className="mt-4 text-5xl font-bold text-[#211a14]">
               {cpuUsedCores.toFixed(1)}{" "}
-              <span className="text-xl font-medium text-[#211a14]/40">/ {cpuLimitCores} cores</span>
+              <span className="text-2xl font-medium text-[#211a14]/40">/ {cpuLimitCores} cores</span>
             </p>
           </div>
           <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-black/5">
@@ -101,15 +100,15 @@ export default function GeneralDashboard({ user }: { user: any }) {
 
         <div className="rounded-2xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between text-xs font-bold tracking-wider uppercase">
+            <div className="flex items-center justify-between text-sm font-bold tracking-wider uppercase">
               <span className="text-[#211a14]/50 flex items-center gap-1">
-                <Layers size={14} className="text-[#BB6653]" /> Memory
+                <Layers size={16} className="text-[#BB6653]" /> Memory
               </span>
               <span className={statusColor(ramPercent).text}>{ramPercent}%</span>
             </div>
-            <p className="mt-4 text-4xl font-bold text-[#211a14]">
+            <p className="mt-4 text-5xl font-bold text-[#211a14]">
               {ramUsedGB.toFixed(1)}{" "}
-              <span className="text-xl font-medium text-[#211a14]/40">/ {ramLimitGB} GB</span>
+              <span className="text-2xl font-medium text-[#211a14]/40">/ {ramLimitGB} GB</span>
             </p>
           </div>
           <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-black/5">
@@ -122,15 +121,15 @@ export default function GeneralDashboard({ user }: { user: any }) {
 
         <div className="rounded-2xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between text-xs font-bold tracking-wider uppercase">
+            <div className="flex items-center justify-between text-sm font-bold tracking-wider uppercase">
               <span className="text-[#211a14]/50 flex items-center gap-1">
-                <HardDrive size={14} className="text-[#BB6653]" /> Storage
+                <HardDrive size={16} className="text-[#BB6653]" /> Storage
               </span>
               <span className={statusColor(storagePercent).text}>{storagePercent}%</span>
             </div>
-            <p className="mt-4 text-4xl font-bold text-[#211a14]">
+            <p className="mt-4 text-5xl font-bold text-[#211a14]">
               {MOCK_STORAGE_USED_GB}{" "}
-              <span className="text-xl font-medium text-[#211a14]/40">/ {MOCK_STORAGE_LIMIT_GB} GB</span>
+              <span className="text-2xl font-medium text-[#211a14]/40">/ {MOCK_STORAGE_LIMIT_GB} GB</span>
             </p>
           </div>
           <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-black/5">
@@ -143,16 +142,14 @@ export default function GeneralDashboard({ user }: { user: any }) {
 
       </div>
 
-      <GroupMembers namespace={data} isOwner={user?.id === data.contributor_id} />
-
       <div className="w-full max-w-3xl mx-auto sm:mx-0 rounded-3xl bg-[#FFFDF6] p-6 border border-black/5 shadow-sm">
         <div className="flex items-center justify-between pb-2 border-b border-black/5">
-          <p className="text-sm font-bold tracking-wider text-[#BB6653] uppercase">
+          <p className="text-base font-bold tracking-wider text-[#BB6653] uppercase">
             Notifications
           </p>
           <button
             type="button"
-            className="text-xs font-bold text-[#BB6653] hover:text-[#F08B51] hover:underline transition-colors"
+            className="text-sm font-bold text-[#BB6653] hover:text-[#F08B51] hover:underline transition-colors"
           >
             View all →
           </button>
@@ -163,8 +160,8 @@ export default function GeneralDashboard({ user }: { user: any }) {
             <div key={item.id} className="flex items-start gap-4 rounded-xl bg-[#FFF8E8]/50 p-4 border border-black/[0.02]">
               <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", item.dotColor)} />
               <div className="space-y-0.5">
-                <p className="text-sm font-medium text-[#211a14]">{item.message}</p>
-                <p className="text-[11px] text-[#211a14]/40">{item.time}</p>
+                <p className="text-base font-medium text-[#211a14]">{item.message}</p>
+                <p className="text-base text-[#211a14]/40">{item.time}</p>
               </div>
             </div>
           ))}

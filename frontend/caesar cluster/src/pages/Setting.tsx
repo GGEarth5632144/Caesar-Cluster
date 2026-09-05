@@ -38,24 +38,24 @@ export default function Setting() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center gap-6 rounded-3xl bg-[#FFFDF6] p-8">
         <Avatar className="size-20">
-          <AvatarFallback className="bg-[#F08B51] text-2xl text-white">
+          <AvatarFallback className="bg-[#F08B51] text-3xl text-white">
             {initials}
           </AvatarFallback>
         </Avatar>
         <div>
-          <h1 className="text-2xl font-bold text-[#211a14]">
+          <h1 className="text-3xl font-bold text-[#211a14]">
             {user?.real_name || "User"}
           </h1>
-          <p className="mt-1 text-sm font-medium text-[#BB6653]">
+          <p className="mt-1 text-base font-medium text-[#BB6653]">
             {user?.student_id} · Year {user?.year_level ?? "-"} · {MOCK_MAJOR}
           </p>
-          <p className="mt-1 text-sm text-[#211a14]/50">{user?.gmail}</p>
+          <p className="mt-1 text-base text-[#211a14]/50">{user?.gmail}</p>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="rounded-3xl bg-[#FFFDF6] p-8">
-          <p className="text-sm font-semibold tracking-wide text-[#BB6653] uppercase">
+          <p className="text-base font-semibold tracking-wide text-[#BB6653] uppercase">
             Personal Information
           </p>
 
@@ -92,14 +92,14 @@ export default function Setting() {
         </div>
 
         <div className="rounded-3xl bg-[#FFFDF6] p-8">
-          <p className="text-sm font-semibold tracking-wide text-[#BB6653] uppercase">
+          <p className="text-base font-semibold tracking-wide text-[#BB6653] uppercase">
             Security
           </p>
 
           <div className="mt-5 flex items-start justify-between gap-3 border-b border-black/5 pb-5">
             <div>
               <p className="font-semibold text-[#211a14]">SSH Key</p>
-              <p className="mt-1 flex items-center gap-1.5 text-sm text-[#211a14]/60">
+              <p className="mt-1 flex items-center gap-1.5 text-base text-[#211a14]/60">
                 <span className="size-2 rounded-full bg-green-500" />
                 Uploaded · ed25519
               </p>
@@ -112,7 +112,7 @@ export default function Setting() {
           <div className="mt-5 flex items-start justify-between gap-3">
             <div>
               <p className="font-semibold text-[#211a14]">Password</p>
-              <p className="mt-1 text-sm text-[#211a14]/60">Last changed 3 months ago</p>
+              <p className="mt-1 text-base text-[#211a14]/60">Last changed 3 months ago</p>
             </div>
             <Button type="button" variant="outline" size="sm">
               Change
@@ -137,7 +137,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="text-sm text-[#211a14]/70">
+      <label className="text-base text-[#211a14]/70">
         {label}
         {readOnly && <span className="ml-1 text-[#BB6653]/70">· read only</span>}
       </label>

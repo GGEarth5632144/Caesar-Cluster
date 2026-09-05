@@ -114,24 +114,24 @@ export default function UserManagement() {
       
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#BB6653]">User Management</h2>
+          <h2 className="text-3xl font-bold text-[#BB6653]">User Management</h2>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => setShowEligibleList(true)}
-            className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] bg-transparent px-5 py-2 text-sm font-bold text-[#BB6653] shadow-sm hover:bg-[#BB6653]/10 transition-colors"
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] bg-transparent px-5 py-2 text-base font-bold text-[#BB6653] shadow-sm hover:bg-[#BB6653]/10 transition-colors"
           >
-            <Users size={18} />
+            <Users size={20} />
             ตรวจสอบรายชื่อผู้มีสิทธิ์
           </button>
           
           {/* ปุ่มเพิ่ม (ปุ่มหลัก สีทึบ) — พาไปหน้า Import Students เพื่ออัปโหลดไฟล์รายชื่อจากทะเบียน */}
           <button
             onClick={() => navigate(`/${PATHS.adminImportStudents}`)}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#F08B51] transition-colors"
+            className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-2.5 text-base font-bold text-white shadow-sm hover:bg-[#F08B51] transition-colors"
           >
-            <UserPlus size={18} />
+            <UserPlus size={20} />
             เพิ่มรายชื่อผู้มีสิทธิ์
           </button>
         </div>
@@ -145,7 +145,7 @@ export default function UserManagement() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "px-4 py-2 text-sm font-bold rounded-xl transition-colors",
+                  "px-4 py-2 text-base font-bold rounded-xl transition-colors",
                   activeTab === tab.id
                     ? "bg-[#BB6653] text-white"
                     : "bg-[#FFF8E8] text-[#211a14]/60 hover:bg-[#F08B51]/20"
@@ -158,20 +158,20 @@ export default function UserManagement() {
 
           <div className="relative w-full sm:w-64 shrink-0">
             <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-              <Search size={16} className="text-[#BB6653]/60" />
+              <Search size={18} className="text-[#BB6653]/60" />
             </div>
             <input
               type="text"
               placeholder="ค้นหา"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-xl border border-black/10 bg-[#FFFDF6] py-2 pl-9 pr-3 text-sm text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
+              className="w-full rounded-xl border border-black/10 bg-[#FFFDF6] py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
             />
           </div>
         </div>
 
         <div className="-mx-6 overflow-x-auto sm:mx-0">
-          <table className="w-full min-w-[800px] table-fixed text-left text-sm text-[#211a14]">
+          <table className="w-full min-w-[800px] table-fixed text-left text-base text-[#211a14]">
             <colgroup>
               <col className="w-[30%]" />
               <col className="w-[25%]" />
@@ -180,7 +180,7 @@ export default function UserManagement() {
               <col className="w-[10%]" />
             </colgroup>
             <thead>
-              <tr className="border-b border-black/10 text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+              <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
                 <th className="px-6 pb-4 sm:px-3">Student Info</th>
                 <th className="px-3 pb-4">Contact</th>
                 <th className="px-3 pb-4">Quota Limit</th>
@@ -194,7 +194,7 @@ export default function UserManagement() {
               ) : error ? (
                 <tr>
                   <td colSpan={5} className="py-10">
-                    <div className="p-4 mx-auto max-w-sm rounded-xl bg-red-50 text-center text-red-600 text-sm border border-red-100">
+                    <div className="p-4 mx-auto max-w-sm rounded-xl bg-red-50 text-center text-red-600 text-base border border-red-100">
                       {error}
                     </div>
                   </td>
@@ -223,7 +223,7 @@ export default function UserManagement() {
                       <td className="px-6 py-4 sm:px-3">
                         <div className="flex items-center gap-3">
                           <div className={cn(
-                            "flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white",
+                            "flex size-10 shrink-0 items-center justify-center rounded-full text-base font-bold text-white",
                             isAdmin ? "bg-red-500" : "bg-[#F08B51]"
                           )}>
                             {initials}
@@ -232,7 +232,7 @@ export default function UserManagement() {
                             <div className="truncate font-semibold text-[#211a14]" title={user.real_name}>
                               {user.real_name} {user.nick_name && <span className="text-[#211a14]/50">({user.nick_name})</span>}
                             </div>
-                            <div className="text-xs text-[#211a14]/60 mt-0.5">
+                            <div className="text-sm text-[#211a14]/60 mt-0.5">
                               {user.student_id}
                             </div>
                           </div>
@@ -245,26 +245,26 @@ export default function UserManagement() {
 
                       <td className="px-3 py-4 text-[#211a14]/70">
                         {user.namespace_id ? (
-                          <div className="flex flex-col gap-1 text-xs">
+                          <div className="flex flex-col gap-1 text-sm">
                             <span className="flex items-center gap-1.5">
-                              <Cpu size={13} className="text-[#BB6653]" /> {user.cpu_limit_milli / 1000} Core
+                              <Cpu size={15} className="text-[#BB6653]" /> {user.cpu_limit_milli / 1000} Core
                             </span>
                             <span className="flex items-center gap-1.5">
-                              <Layers size={13} className="text-[#BB6653]" /> {(user.ram_limit_mb / 1024).toFixed(1)} GB
+                              <Layers size={15} className="text-[#BB6653]" /> {(user.ram_limit_mb / 1024).toFixed(1)} GB
                             </span>
                           </div>
                         ) : (
-                          <span className="text-xs text-[#211a14]/40">ยังไม่มี space</span>
+                          <span className="text-sm text-[#211a14]/40">ยังไม่มี space</span>
                         )}
                       </td>
 
                       <td className="px-3 py-4 text-center">
                         {isAdmin ? (
-                          <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600">
+                          <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-sm font-bold text-red-600">
                             Admin
                           </span>
                         ) : (
-                          <span className="inline-flex rounded-full bg-[#FFF8E8] px-2.5 py-1 text-xs font-bold text-[#BB6653]">
+                          <span className="inline-flex rounded-full bg-[#FFF8E8] px-2.5 py-1 text-sm font-bold text-[#BB6653]">
                             Year {user.year_level}
                           </span>
                         )}
@@ -277,14 +277,14 @@ export default function UserManagement() {
                             title="Edit User"
                             onClick={() => setEditingUser(user)}
                           >
-                            <Edit2 size={16} />
+                            <Edit2 size={18} />
                           </button>
                           <button 
                             onClick={() => handleDelete(user.id, user.real_name)}
                             className="p-1.5 text-red-400 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50" 
                             title="Delete User"
                           >
-                            <Trash2 size={16} />
+                            <Trash2 size={18} />
                           </button>
                         </div>
                       </td>
@@ -362,8 +362,8 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
     }
   };
 
-  const inputClass = "w-full rounded-xl border border-black/10 bg-white px-4 py-2.5 text-sm text-[#211a14] outline-none focus:border-[#BB6653] focus:ring-1 focus:ring-[#BB6653]";
-  const labelClass = "mb-1.5 block text-xs font-bold uppercase tracking-wider text-[#BB6653]";
+  const inputClass = "w-full rounded-xl border border-black/10 bg-white px-4 py-2.5 text-base text-[#211a14] outline-none focus:border-[#BB6653] focus:ring-1 focus:ring-[#BB6653]";
+  const labelClass = "mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
@@ -371,8 +371,8 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
         
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-black/5 bg-[#FFF8E8] px-6 py-5">
           <div>
-            <h2 className="text-lg font-bold text-[#211a14]">Edit User</h2>
-            <p className="text-xs text-[#211a14]/50 mt-0.5">กำลังแก้ไขข้อมูลของ {user.real_name}</p>
+            <h2 className="text-xl font-bold text-[#211a14]">Edit User</h2>
+            <p className="text-sm text-[#211a14]/50 mt-0.5">กำลังแก้ไขข้อมูลของ {user.real_name}</p>
           </div>
           <button
             type="button"
@@ -380,7 +380,7 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
             disabled={isSubmitting}
             className="p-2 rounded-xl text-[#211a14]/50 hover:bg-black/5 transition-colors disabled:opacity-50"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
 
@@ -433,7 +433,7 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
             {/* โควตา (Quota) — ผูกกับ namespace แล้ว ไม่ใช่ user แก้ที่หน้าจัดการ namespace แทน */}
             <div className="sm:col-span-2">
               <label className={labelClass}>Quota Limit</label>
-              <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-sm text-[#211a14]/60">
+              <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/60">
                 {user.namespace_id
                   ? `${user.cpu_limit_milli / 1000} Core · ${(user.ram_limit_mb / 1024).toFixed(1)} GB — โควตาผูกกับ namespace ปรับได้ที่หน้าจัดการ Namespace`
                   : "ผู้ใช้ยังไม่มี namespace — โควตาจะแสดงเมื่อสร้าง/เข้าร่วม space แล้ว"}
@@ -447,16 +447,16 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="rounded-xl px-5 py-2.5 text-sm font-bold text-[#211a14]/60 hover:bg-black/5 transition-colors disabled:opacity-50"
+              className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 hover:bg-black/5 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+              className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
             >
-              {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : "Save Changes"}
+              {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Save Changes"}
             </button>
           </div>
         </form>
@@ -509,8 +509,8 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
       <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-[#FFF8E8] shadow-2xl">
         <div className="flex items-center justify-between border-b border-black/5 px-6 py-5">
           <div>
-            <h2 className="text-lg font-bold text-[#211a14]">รายชื่อผู้มีสิทธิ์</h2>
-            <p className="mt-0.5 text-xs text-[#211a14]/50">
+            <h2 className="text-xl font-bold text-[#211a14]">รายชื่อผู้มีสิทธิ์</h2>
+            <p className="mt-0.5 text-sm text-[#211a14]/50">
               ทั้งหมดในตาราง eligible_students ({students.length} คน) — คือรายชื่อที่ import เข้ามาแล้ว
               ไม่ว่าจะสมัครเข้าระบบจริงหรือยังก็ตาม
             </p>
@@ -520,21 +520,21 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
             onClick={onClose}
             className="rounded-xl p-2 text-[#211a14]/50 transition-colors hover:bg-black/5"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
 
         <div className="border-b border-black/5 px-6 py-4">
           <div className="relative w-full sm:w-72">
             <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-              <Search size={16} className="text-[#BB6653]/60" />
+              <Search size={18} className="text-[#BB6653]/60" />
             </div>
             <input
               type="text"
               placeholder="ค้นหารหัส/ชื่อ/สาขา"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-sm text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
+              className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
             />
           </div>
         </div>
@@ -543,7 +543,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
           {isLoading ? (
             <SimpleRowsSkeleton rows={7} cols={4} />
           ) : error ? (
-            <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-sm text-red-600">
+            <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-base text-red-600">
               {error}
             </div>
           ) : filtered.length === 0 ? (
@@ -552,9 +552,9 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
               <p>ไม่พบรายชื่อที่ค้นหา</p>
             </div>
           ) : (
-            <table className="w-full text-left text-sm text-[#211a14]">
+            <table className="w-full text-left text-base text-[#211a14]">
               <thead>
-                <tr className="border-b border-black/10 text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+                <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
                   <th className="pb-3 pr-3">รหัสประจำตัว</th>
                   <th className="pb-3 pr-3">ชื่อ-สกุล</th>
                   <th className="pb-3 pr-3">สาขาวิชา</th>
@@ -572,7 +572,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
                       <td className="py-3">
                         <span
                           className={cn(
-                            "inline-flex rounded-full px-2.5 py-1 text-xs font-bold",
+                            "inline-flex rounded-full px-2.5 py-1 text-sm font-bold",
                             isActive ? "bg-green-50 text-green-700" : "bg-black/5 text-[#211a14]/60"
                           )}
                         >

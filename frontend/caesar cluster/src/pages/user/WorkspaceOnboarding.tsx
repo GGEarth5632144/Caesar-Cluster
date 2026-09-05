@@ -103,16 +103,16 @@ export default function WorkspaceOnboarding() {
     return (
       <div className="flex min-h-full flex-col items-center justify-center gap-4 px-4 py-10 text-center font-mono">
         <div className="flex size-20 items-center justify-center rounded-2xl bg-[#FFF8E8] text-[#F08B51]">
-          <Clock size={34} />
+          <Clock size={36} />
         </div>
-        <h1 className="text-3xl font-bold text-[#211a14]">คำขอของคุณกำลังรอการอนุมัติ</h1>
-        <p className="max-w-xl text-base text-[#211a14]/60">
+        <h1 className="text-4xl font-bold text-[#211a14]">คำขอของคุณกำลังรอการอนุมัติ</h1>
+        <p className="max-w-xl text-lg text-[#211a14]/60">
           ทีมงานได้รับคำขอสร้าง Virtual Machine ของคุณแล้ว กรุณารอ Admin ตรวจสอบและอนุมัติ
         </p>
         <button
           type="button"
           onClick={() => navigate(`/${PATHS.requestResources}`)}
-          className="mt-2 rounded-xl bg-[#BB6653] px-6 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
+          className="mt-2 rounded-xl bg-[#BB6653] px-6 py-3 text-base font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
         >
           ดูสถานะคำขอ
         </button>
@@ -125,10 +125,10 @@ export default function WorkspaceOnboarding() {
     return (
       <div className="flex min-h-full flex-col items-center justify-center gap-4 px-4 py-10 text-center font-mono">
         <div className="flex size-20 items-center justify-center rounded-2xl bg-[#DEE8CE] text-[#5A8F5A]">
-          <Check size={34} />
+          <Check size={36} />
         </div>
-        <h1 className="text-3xl font-bold text-[#211a14]">Virtual Machine ของคุณพร้อมใช้งานแล้ว!</h1>
-        <p className="max-w-xl text-base text-[#211a14]/60">
+        <h1 className="text-4xl font-bold text-[#211a14]">Virtual Machine ของคุณพร้อมใช้งานแล้ว!</h1>
+        <p className="max-w-xl text-lg text-[#211a14]/60">
           กรุณาเข้าสู่ระบบใหม่อีกครั้งเพื่อโหลดข้อมูล Space ล่าสุดของคุณ
         </p>
       </div>
@@ -137,8 +137,8 @@ export default function WorkspaceOnboarding() {
 
   return (
     <div className="flex min-h-full flex-col items-center justify-center gap-3 px-4 py-10 text-center font-mono">
-      <h1 className="text-5xl font-bold text-[#211a14]">Welcome to Caesar Cluster</h1>
-      <p className="max-w-2xl text-lg text-[#211a14]/60">
+      <h1 className="text-6xl font-bold text-[#211a14]">Welcome to Caesar Cluster</h1>
+      <p className="max-w-2xl text-xl text-[#211a14]/60">
         You don't have any virtual machines yet. Create your first VM to get a
         namespace and start computing.
       </p>
@@ -152,17 +152,17 @@ export default function WorkspaceOnboarding() {
             className="group flex w-full flex-col items-center gap-4 rounded-2xl bg-[#BB6653] px-8 py-16 text-center shadow-lg shadow-[#BB6653]/25 transition-all hover:-translate-y-0.5 hover:bg-[#F08B51] hover:shadow-xl"
           >
             <div className="flex size-16 items-center justify-center rounded-2xl bg-white/15 text-white">
-              <Cpu size={30} />
+              <Cpu size={32} />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">Create VM</p>
-              <p className="mt-1.5 max-w-md text-base text-white/80">
+              <p className="text-3xl font-bold text-white">Create VM</p>
+              <p className="mt-1.5 max-w-md text-lg text-white/80">
                 Set up your workspace and pick a resource quota to get started.
               </p>
             </div>
-            <span className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-5 py-2.5 text-sm font-bold text-white transition-colors group-hover:bg-white/25">
+            <span className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-5 py-2.5 text-base font-bold text-white transition-colors group-hover:bg-white/25">
               Get Started
-              <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+              <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />
             </span>
           </button>
         )}
@@ -177,13 +177,13 @@ export default function WorkspaceOnboarding() {
                 className="p-2 hover:bg-black/5 rounded-xl text-[#211a14]/60 transition-colors disabled:opacity-50"
                 title="ย้อนกลับ"
               >
-                <ArrowLeft size={20} />
+                <ArrowLeft size={22} />
               </button>
               <div>
-                <h2 className="text-xl font-bold text-[#211a14]">
+                <h2 className="text-2xl font-bold text-[#211a14]">
                   Configure your VM
                 </h2>
-                <p className="text-sm text-[#211a14]/60">เลือกโควตาทรัพยากรที่ต้องการยื่นขอ</p>
+                <p className="text-base text-[#211a14]/60">เลือกโควตาทรัพยากรที่ต้องการยื่นขอ</p>
               </div>
             </div>
 
@@ -195,19 +195,19 @@ export default function WorkspaceOnboarding() {
             )}
 
             {error && (
-              <div className="p-4 rounded-xl bg-red-50 text-red-600 text-sm font-medium text-center border border-red-100">
+              <div className="p-4 rounded-xl bg-red-50 text-red-600 text-base font-medium text-center border border-red-100">
                 {error}
               </div>
             )}
 
             {!loading && !error && (
               <div className="space-y-3">
-                <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+                <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
                   1. Select Available Quota
                 </label>
 
                 {templates.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-6 text-center bg-black/[0.01] rounded-2xl border border-dashed border-black/10">
+                  <p className="text-base text-gray-400 py-6 text-center bg-black/[0.01] rounded-2xl border border-dashed border-black/10">
                     ไม่มีกลุ่มโควตาเปิดให้คุณใช้งานในขณะนี้
                   </p>
                 ) : (
@@ -232,41 +232,41 @@ export default function WorkspaceOnboarding() {
                           )}
                         >
                           {isSelected && (
-                            <div className="absolute top-0 right-0 bg-[#DEE8CE] text-[#BB6653] font-bold px-3 py-1 rounded-bl-xl text-[11px] flex items-center gap-0.5 shadow-sm">
-                              <Check size={12} strokeWidth={3} /> Selected
+                            <div className="absolute top-0 right-0 bg-[#DEE8CE] text-[#BB6653] font-bold px-3 py-1 rounded-bl-xl text-base flex items-center gap-0.5 shadow-sm">
+                              <Check size={14} strokeWidth={3} /> Selected
                             </div>
                           )}
 
                           <div>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10px] font-bold text-[#211a14]/40 uppercase tracking-wider block">
+                              <span className="text-sm font-bold text-[#211a14]/40 uppercase tracking-wider block">
                                 {template.option_name}
                               </span>
-                              <span className="text-[10px] font-semibold bg-black/5 px-2 py-0.5 rounded text-[#211a14]/60">
+                              <span className="text-sm font-semibold bg-black/5 px-2 py-0.5 rounded text-[#211a14]/60">
                                 {template.category}
                               </span>
                             </div>
 
-                            <h3 className="font-semibold text-[#211a14] mt-1 pr-16 text-sm sm:text-base line-clamp-1">
+                            <h3 className="font-semibold text-[#211a14] mt-1 pr-16 text-base sm:text-lg line-clamp-1">
                               {template.relate_subject}
                             </h3>
 
-                            <p className="text-xs text-[#211a14]/50 mt-1 mb-4 line-clamp-2 min-h-[2rem]">
+                            <p className="text-sm text-[#211a14]/50 mt-1 mb-4 line-clamp-2 min-h-[2rem]">
                               {template.description}
                             </p>
                           </div>
 
-                          <div className="grid grid-cols-3 gap-1 pt-2.5 border-t border-black/5 text-[11px] font-medium text-[#211a14]/60">
+                          <div className="grid grid-cols-3 gap-1 pt-2.5 border-t border-black/5 text-base font-medium text-[#211a14]/60">
                             <div className="flex items-center gap-1">
-                              <Cpu size={13} className="text-[#BB6653]" />
+                              <Cpu size={15} className="text-[#BB6653]" />
                               {coreDisplay} Cores
                             </div>
                             <div className="flex items-center gap-1">
-                              <Layers size={13} className="text-[#BB6653]" />
+                              <Layers size={15} className="text-[#BB6653]" />
                               {ramDisplay}
                             </div>
                             <div className="flex items-center gap-1">
-                              <HardDrive size={13} className="text-[#BB6653]" />
+                              <HardDrive size={15} className="text-[#BB6653]" />
                               {template.storage_gb} GB
                             </div>
                           </div>
@@ -280,7 +280,7 @@ export default function WorkspaceOnboarding() {
 
             {!loading && !error && (
               <div className="space-y-3">
-                <label className="text-xs font-bold uppercase tracking-wider text-[#BB6653]">
+                <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
                   2. Request Details
                 </label>
                 <textarea
@@ -289,7 +289,7 @@ export default function WorkspaceOnboarding() {
                   disabled={isSubmitting}
                   rows={4}
                   placeholder="อธิบายเหตุผลหรือรายละเอียดที่ต้องการขอ เช่น ใช้สำหรับวิชา... / โปรเจกต์... เพื่อให้ admin พิจารณา"
-                  className="w-full resize-none rounded-2xl border border-black/10 bg-[#FFFDF6] px-4 py-3 text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none transition-colors focus:border-[#BB6653] focus:ring-2 focus:ring-[#BB6653]/10 disabled:opacity-60"
+                  className="w-full resize-none rounded-2xl border border-black/10 bg-[#FFFDF6] px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none transition-colors focus:border-[#BB6653] focus:ring-2 focus:ring-[#BB6653]/10 disabled:opacity-60"
                 />
               </div>
             )}
@@ -300,13 +300,13 @@ export default function WorkspaceOnboarding() {
                 disabled={!canSubmit}
                 onClick={handleSubmitRequest}
                 className={cn(
-                  "rounded-xl px-6 py-3 text-sm font-bold text-white shadow-md transition-all flex items-center gap-2",
+                  "rounded-xl px-6 py-3 text-base font-bold text-white shadow-md transition-all flex items-center gap-2",
                   canSubmit
                     ? "bg-[#BB6653] hover:bg-[#F08B51]"
                     : "bg-[#211a14]/20 cursor-not-allowed shadow-none"
                 )}
               >
-                {isSubmitting && <Loader2 size={16} className="animate-spin" />}
+                {isSubmitting && <Loader2 size={18} className="animate-spin" />}
                 {isSubmitting ? "กำลังส่งคำขอ..." : "Submit Request"}
               </button>
             </div>

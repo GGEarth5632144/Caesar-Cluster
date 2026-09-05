@@ -74,8 +74,8 @@ export default function PendingInvites() {
   return (
     <div className="w-full rounded-3xl bg-[#FFFDF6] p-6 border border-[#F08B51]/20 shadow-sm font-mono">
       <div className="flex items-center gap-2 pb-2 border-b border-black/5">
-        <Mail size={16} className="text-[#F08B51]" />
-        <p className="text-sm font-bold tracking-wider text-[#BB6653] uppercase">
+        <Mail size={18} className="text-[#F08B51]" />
+        <p className="text-base font-bold tracking-wider text-[#BB6653] uppercase">
           Group Invitations
         </p>
       </div>
@@ -86,14 +86,14 @@ export default function PendingInvites() {
             key={invite.id}
             className="flex flex-col gap-2 rounded-xl bg-[#FFF8E8]/50 p-4 border border-black/[0.02] sm:flex-row sm:items-center sm:justify-between"
           >
-            <p className="text-sm text-[#211a14]">
+            <p className="text-base text-[#211a14]">
               <span className="font-semibold">{invite.invited_by_name}</span> invited you to join{" "}
               <span className="font-semibold">{invite.namespace_name}</span>
             </p>
 
             <div className="flex items-center gap-2">
               {rowError[invite.id] && (
-                <span className="text-xs text-red-600">{rowError[invite.id]}</span>
+                <span className="text-sm text-red-600">{rowError[invite.id]}</span>
               )}
               <Button
                 type="button"
@@ -102,7 +102,7 @@ export default function PendingInvites() {
                 disabled={busyId === invite.id}
                 onClick={() => handleAccept(invite)}
               >
-                {busyId === invite.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                {busyId === invite.id ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                 Accept
               </Button>
               <Button
@@ -112,7 +112,7 @@ export default function PendingInvites() {
                 disabled={busyId === invite.id}
                 onClick={() => handleDecline(invite)}
               >
-                <X size={14} />
+                <X size={16} />
                 Decline
               </Button>
             </div>

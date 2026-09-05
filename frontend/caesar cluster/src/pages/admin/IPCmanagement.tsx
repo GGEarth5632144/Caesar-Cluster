@@ -71,7 +71,7 @@ export default function IPCmanagement() {
     return (
       <div key={node.ID} className={`relative p-5 rounded-2xl border transition-all duration-300 ${cardBorder}`}>
         {isControlPlane && (
-          <div className="absolute -top-2.5 -right-2.5 bg-indigo-600 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-md z-10">
+          <div className="absolute -top-2.5 -right-2.5 bg-indigo-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow-md z-10">
             Control Plane
           </div>
         )}
@@ -79,7 +79,7 @@ export default function IPCmanagement() {
         <div className="flex justify-between items-center mb-4 border-b border-neutral-100 pb-3">
           <div className="flex items-center gap-2">
             {isOffline ? <ServerCrash className="h-5 w-5 text-red-500" /> : <Server className="h-5 w-5 text-neutral-600" />}
-            <span className={`font-bold text-base ${isOffline ? 'text-red-700' : 'text-neutral-800'}`}>
+            <span className={`font-bold text-lg ${isOffline ? 'text-red-700' : 'text-neutral-800'}`}>
               {node.NodeName}
             </span>
           </div>
@@ -97,18 +97,18 @@ export default function IPCmanagement() {
         </div>
 
         {isOffline ? (
-          <div className="py-6 text-center text-red-500 font-medium text-sm flex flex-col items-center gap-2">
+          <div className="py-6 text-center text-red-500 font-medium text-base flex flex-col items-center gap-2">
             <ServerCrash className="h-8 w-8 opacity-50" />
             Connection Lost
           </div>
         ) : (
-          <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-col gap-3 text-base">
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-1.5 text-neutral-500">
                 <Thermometer className="h-4 w-4" />
                 <span>Temp</span>
               </div>
-              <span className={`px-2 py-0.5 rounded-md text-xs font-mono ${tempColor} ${tempBg}`}>
+              <span className={`px-2 py-0.5 rounded-md text-sm font-mono ${tempColor} ${tempBg}`}>
                 {node.Temperature.toFixed(1)} °C
               </span>
             </div>
@@ -154,11 +154,11 @@ export default function IPCmanagement() {
       {/* ---------------- Header & Stats ---------------- */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl shadow-sm border border-neutral-200">
         <div>
-          <h1 className="text-xl font-bold text-neutral-800 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-neutral-800 flex items-center gap-2">
             <Server className="h-6 w-6 text-indigo-600" />
             Cluster Node Monitor
           </h1>
-          <p className="text-sm text-neutral-500 mt-1">
+          <p className="text-base text-neutral-500 mt-1">
             อัปเดตล่าสุด: {lastUpdate ? lastUpdate.toLocaleTimeString('th-TH') : "กำลังรอข้อมูล"}
           </p>
         </div>
@@ -168,15 +168,15 @@ export default function IPCmanagement() {
           <button
             onClick={fetchClusterData}
             disabled={loading}
-            className="flex items-center gap-2 rounded-lg bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-indigo-50 px-4 py-2 text-base font-medium text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             รีเฟรชข้อมูล
           </button>
 
           <div className="flex flex-col items-end">
-            <span className="text-sm font-medium text-neutral-500">สถานะ Worker Nodes</span>
-            <span className={`text-lg font-bold ${upWorkers === totalWorkers ? 'text-emerald-600' : 'text-amber-500'}`}>
+            <span className="text-base font-medium text-neutral-500">สถานะ Worker Nodes</span>
+            <span className={`text-xl font-bold ${upWorkers === totalWorkers ? 'text-emerald-600' : 'text-amber-500'}`}>
               {upWorkers} / {totalWorkers} Online
             </span>
           </div>
@@ -186,14 +186,14 @@ export default function IPCmanagement() {
       {error && (
         <div className="flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl">
           <AlertTriangle className="h-5 w-5 flex-shrink-0" />
-          <p className="text-sm font-medium">{error}</p>
+          <p className="text-base font-medium">{error}</p>
         </div>
       )}
 
       {/* ---------------- Control Plane Section ---------------- */}
       {controlPlane && (
         <div className="flex flex-col gap-3">
-          <h2 className="text-lg font-bold text-neutral-700 px-1">Control Plane</h2>
+          <h2 className="text-xl font-bold text-neutral-700 px-1">Control Plane</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
             {renderNodeCard(controlPlane, true)}
           </div>
@@ -204,7 +204,7 @@ export default function IPCmanagement() {
 
       {/* ---------------- Worker Nodes Section ---------------- */}
       <div className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-neutral-700 px-1">Worker Nodes</h2>
+        <h2 className="text-xl font-bold text-neutral-700 px-1">Worker Nodes</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
           {workerNodes.map((node) => renderNodeCard(node))}
         </div>

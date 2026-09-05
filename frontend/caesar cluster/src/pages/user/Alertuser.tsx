@@ -154,8 +154,8 @@ export default function Alertuser() {
     <div className="flex flex-col gap-6 text-left font-mono animate-in fade-in duration-200">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-4xl font-bold text-[#211a14]">Alerts</h1>
-          <p className="mt-1 text-sm text-[#211a14]/50">
+          <h1 className="text-5xl font-bold text-[#211a14]">Alerts</h1>
+          <p className="mt-1 text-base text-[#211a14]/50">
             {loading
               ? "Loading..."
               : `${alerts.length} total · ${unreadCount} unread · ${criticalCount} error`}
@@ -167,25 +167,25 @@ export default function Alertuser() {
             type="button"
             onClick={() => void load(true)}
             disabled={refreshing}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653] disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653] disabled:opacity-60"
           >
-            <RefreshCw size={13} className={cn(refreshing && "animate-spin")} /> Refresh
+            <RefreshCw size={15} className={cn(refreshing && "animate-spin")} /> Refresh
           </button>
           <button
             type="button"
             onClick={handleMarkAllRead}
             disabled={unreadCount === 0}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653] disabled:opacity-40 disabled:hover:border-black/10 disabled:hover:bg-transparent disabled:hover:text-[#211a14]/60"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653] disabled:opacity-40 disabled:hover:border-black/10 disabled:hover:bg-transparent disabled:hover:text-[#211a14]/60"
           >
-            <CheckCheck size={13} /> Mark all read
+            <CheckCheck size={15} /> Mark all read
           </button>
           <button
             type="button"
             onClick={handleClearRead}
             disabled={alerts.length - unreadCount === 0}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:hover:border-black/10 disabled:hover:bg-transparent disabled:hover:text-[#211a14]/60"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:hover:border-black/10 disabled:hover:bg-transparent disabled:hover:text-[#211a14]/60"
           >
-            <Trash2 size={13} /> Clear read
+            <Trash2 size={15} /> Clear read
           </button>
         </div>
       </div>
@@ -201,7 +201,7 @@ export default function Alertuser() {
             type="button"
             onClick={() => setFilter(key)}
             className={cn(
-              "rounded-full px-4 py-1.5 text-xs font-bold transition-colors",
+              "rounded-full px-4 py-1.5 text-sm font-bold transition-colors",
               filter === key
                 ? "bg-[#BB6653] text-white"
                 : "border border-black/10 text-[#211a14]/55 hover:bg-black/[0.03]",
@@ -213,7 +213,7 @@ export default function Alertuser() {
       </div>
 
       {error && (
-        <div className="max-w-3xl rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
+        <div className="max-w-3xl rounded-xl border border-red-100 bg-red-50 p-4 text-base text-red-600">
           {error}
         </div>
       )}
@@ -227,12 +227,12 @@ export default function Alertuser() {
       ) : visible.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-black/5 bg-[#FFFDF6] px-6 py-20 text-center">
           <div className="flex size-14 items-center justify-center rounded-2xl bg-[#FBDFDA] text-[#BB6653]">
-            <BellOff size={24} />
+            <BellOff size={26} />
           </div>
           <p className="font-semibold text-[#211a14]">
             {filter === "all" ? "ยังไม่มีแจ้งเตือน" : "ไม่มีรายการในตัวกรองนี้"}
           </p>
-          <p className="max-w-md text-xs leading-relaxed text-[#211a14]/45">
+          <p className="max-w-md text-sm leading-relaxed text-[#211a14]/45">
             ระบบจะอ่าน log ของ service ที่กำลังรันอยู่เป็นรอบๆ ถ้าเจอบรรทัดที่เป็น error
             จะสรุปมาแจ้งที่หน้านี้ให้เอง — ไม่มีอะไรขึ้นแปลว่า service ทำงานปกติดี
           </p>
@@ -258,29 +258,29 @@ export default function Alertuser() {
                 )}
 
                 <div className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl", style.iconWrap)}>
-                  <Icon size={20} />
+                  <Icon size={22} />
                 </div>
 
                 <div className="flex min-w-0 flex-1 flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px] font-bold", style.chip)}>
+                    <span className={cn("rounded-full border px-2.5 py-0.5 text-base font-bold", style.chip)}>
                       {style.label}
                     </span>
                     {alert.count > 1 && (
                       <span
-                        className="rounded-full bg-[#211a14]/5 px-2.5 py-0.5 text-[11px] font-bold text-[#211a14]/55"
+                        className="rounded-full bg-[#211a14]/5 px-2.5 py-0.5 text-base font-bold text-[#211a14]/55"
                         title="จำนวนครั้งที่ error เรื่องเดียวกันนี้เกิดขึ้น"
                       >
                         ×{alert.count}
                       </span>
                     )}
                     {!alert.is_read && (
-                      <span className="rounded-full bg-[#BB6653] px-2.5 py-0.5 text-[11px] font-bold text-white">
+                      <span className="rounded-full bg-[#BB6653] px-2.5 py-0.5 text-base font-bold text-white">
                         New
                       </span>
                     )}
                     <span
-                      className="text-[11px] text-[#211a14]/40"
+                      className="text-base text-[#211a14]/40"
                       title={new Date(alert.last_seen_at).toLocaleString()}
                     >
                       {relativeTime(alert.last_seen_at)}
@@ -291,13 +291,13 @@ export default function Alertuser() {
 
                   {/* ข้อความ log ดิบ — โชว์ในกล่องสีเข้มแบบเดียวกับหน้า Logs เพื่อให้เห็นทันทีว่า
                       นี่คือสิ่งที่ container พิมพ์ออกมาจริงๆ ไม่ใช่ข้อความที่ระบบเขียนเอง */}
-                  <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-[#1a1714] px-3 py-2 text-[11px] leading-relaxed text-[#e6ddd1]">
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-[#1a1714] px-3 py-2 text-base leading-relaxed text-[#e6ddd1]">
                     {alert.message}
                   </pre>
 
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     {alert.source_name && (
-                      <span className="text-[11px] text-[#211a14]/45">
+                      <span className="text-base text-[#211a14]/45">
                         service: <span className="font-semibold text-[#211a14]/70">{alert.source_name}</span>
                       </span>
                     )}
@@ -305,9 +305,9 @@ export default function Alertuser() {
                       <button
                         type="button"
                         onClick={() => navigate(`/${PATHS.serviceLogs}/${alert.service_id}`)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-2.5 py-1 text-[11px] font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653]"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-2.5 py-1 text-base font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653]"
                       >
-                        <Terminal size={12} /> ดู log
+                        <Terminal size={14} /> ดู log
                       </button>
                     )}
                   </div>
@@ -321,7 +321,7 @@ export default function Alertuser() {
                       title="ทำเครื่องหมายว่าอ่านแล้ว"
                       className="rounded-lg p-1.5 text-[#211a14]/35 transition-colors hover:bg-black/[0.04] hover:text-[#BB6653]"
                     >
-                      <CheckCheck size={16} />
+                      <CheckCheck size={18} />
                     </button>
                   )}
                   <button
@@ -331,7 +331,7 @@ export default function Alertuser() {
                     title="ลบแจ้งเตือนนี้"
                     className="rounded-lg p-1.5 text-[#211a14]/35 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
                   >
-                    {busyId === alert.id ? <Loader2 size={16} className="animate-spin" /> : <X size={16} />}
+                    {busyId === alert.id ? <Loader2 size={18} className="animate-spin" /> : <X size={18} />}
                   </button>
                 </div>
               </div>
