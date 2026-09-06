@@ -26,6 +26,10 @@ type Request struct {
 	Description       string `gorm:"column:description;type:text" json:"description"`
 	UserID            int    `gorm:"column:user_id;type:integer;not null;index:idx_requests_user" json:"user_id"`
 	Status            string `gorm:"column:status;type:varchar(10);not null;default:pending;check:status IN ('pending','approved','denied')" json:"status"`
+	// DenyReason = ข้อความที่ admin เขียนอธิบายว่าทำไมถึงปฏิเสธคำขอนี้ (ว่างถ้ายัง pending หรือถูก approve)
+	// AdminController.Deny เก็บค่านี้พร้อมพลิกสถานะ แล้วยิงเป็น UserAlert ไปหาผู้ยื่นให้เห็นเหตุผลด้วย
+	// เก็บไว้กับ request เองด้วย (ไม่พึ่งแค่ alert) เพื่อให้หน้า "คำขอของฉัน" ย้อนดูเหตุผลได้แม้ลบแจ้งเตือนไปแล้ว
+	DenyReason        string `gorm:"column:deny_reason;type:text;not null;default:''" json:"deny_reason"`
 	NamespaceName     string `gorm:"column:namespace_name;type:varchar(50);not null" json:"namespace_name"`
 	RequestTemplateID *int   `gorm:"column:request_template_id;type:integer" json:"request_template_id"`
 	CPULimitMilli     int    `gorm:"column:cpu_limit_milli;type:integer;not null;check:cpu_limit_milli > 0" json:"cpu_limit_milli"`

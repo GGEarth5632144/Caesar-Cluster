@@ -74,10 +74,10 @@ export default function AdminRequestQueue() {
     }
   };
 
-  const handleDeny = async (id: number) => {
+  const handleDeny = async (id: number, reason: string) => {
     setActioningId(id);
     try {
-      await adminVmRequestApi.deny(id);
+      await adminVmRequestApi.deny(id, reason);
       await fetchRequests();
       setDetailId(null);
     } catch (err) {
@@ -308,14 +308,15 @@ export default function AdminRequestQueue() {
         )}
       </div>
 
-      {/* Modal จัดการคำขอ (เหมือนเดิม) */}
+      {/* Modal จัดการคำขอ — Approve เลย หรือ Reject พร้อมพิมพ์เหตุผลตอบกลับผู้ยื่น */}
       {detailRequest && (
         <RequestDetailModal
+          key={detailRequest.id}
           request={detailRequest}
           isActioning={actioningId === detailRequest.id}
           onClose={() => setDetailId(null)}
           onApprove={() => handleApprove(detailRequest.id)}
-          onDeny={() => handleDeny(detailRequest.id)}
+          onDeny={(reason) => handleDeny(detailRequest.id, reason)}
         />
       )}
     </div>
@@ -330,13 +331,18 @@ interface RequestDetailModalProps {
   isActioning: boolean;
   onClose: () => void;
   onApprove: () => void;
-  onDeny: () => void;
+  onDeny: (reason: string) => void;
 }
 
 function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }: RequestDetailModalProps) {
   const isPending = request.status === "pending";
   const badge = statusBadge(request.status);
   const BadgeIcon = badge.icon;
+
+  // ระหว่างกด Reject จะสลับ footer มาเป็นช่องพิมพ์เหตุผล — ต้องมีข้อความก่อนถึงยืนยันได้
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const trimmedReason = reason.trim();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
@@ -374,6 +380,15 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
             </p>
           </div>
 
+          {request.status === "denied" && request.deny_reason && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-bold uppercase tracking-wider text-red-500">Rejection reason</label>
+              <p className="whitespace-pre-wrap text-base text-[#211a14]/80 bg-red-50 p-3 rounded-xl border border-red-100">
+                {request.deny_reason}
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">Time Submitted</label>
             <p className="text-base text-[#211a14]">{formatDateTime(request.created_at)}</p>
@@ -402,28 +417,69 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-black/5 bg-white/50 rounded-b-3xl">
+        <div className="flex flex-col gap-3 px-6 py-4 border-t border-black/5 bg-white/50 rounded-b-3xl">
           {isPending ? (
-            <>
-              <button
-                type="button"
-                onClick={onDeny}
-                disabled={isActioning}
-                className="inline-flex items-center gap-2 rounded-xl border border-red-500 px-5 py-2.5 text-base font-bold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-              >
-                {isActioning && <Loader2 size={16} className="animate-spin" />}
-                <X size={17} /> Reject
-              </button>
-              <button
-                type="button"
-                onClick={onApprove}
-                disabled={isActioning}
-                className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50 shadow-md"
-              >
-                {isActioning && <Loader2 size={16} className="animate-spin" />}
-                <CheckCircle2 size={17} /> Approve request
-              </button>
-            </>
+            rejecting ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-bold uppercase tracking-wider text-red-500">
+                    เหตุผลที่ปฏิเสธ — ผู้ยื่นจะเห็นข้อความนี้ในหน้า Alerts
+                  </label>
+                  <textarea
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    disabled={isActioning}
+                    rows={3}
+                    autoFocus
+                    maxLength={1000}
+                    placeholder="เช่น ขอทรัพยากรเกินความจำเป็นสำหรับรายวิชานี้ กรุณายื่นใหม่โดยลด CPU เหลือ 1 core"
+                    className="w-full resize-none rounded-xl border border-red-200 bg-white p-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-50"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRejecting(false);
+                      setReason("");
+                    }}
+                    disabled={isActioning}
+                    className="rounded-xl border border-black/20 px-5 py-2.5 text-base font-bold text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeny(trimmedReason)}
+                    disabled={isActioning || trimmedReason.length === 0}
+                    className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-base font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-50"
+                  >
+                    {isActioning && <Loader2 size={16} className="animate-spin" />}
+                    <X size={17} /> Confirm reject
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRejecting(true)}
+                  disabled={isActioning}
+                  className="inline-flex items-center gap-2 rounded-xl border border-red-500 px-5 py-2.5 text-base font-bold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  <X size={17} /> Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={onApprove}
+                  disabled={isActioning}
+                  className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50 shadow-md"
+                >
+                  {isActioning && <Loader2 size={16} className="animate-spin" />}
+                  <CheckCircle2 size={17} /> Approve request
+                </button>
+              </div>
+            )
           ) : (
             <p className="text-base text-[#211a14]/50 w-full text-center">
               This request has already been <span className={cn("font-bold capitalize", badge.className.split(' ')[1])}>{request.status}</span>.

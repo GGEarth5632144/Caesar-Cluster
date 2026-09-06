@@ -10,6 +10,7 @@ export interface VmRequest {
   cpu_limit_milli: number;
   ram_limit_mb: number;
   storage_gb: number; // snapshot จาก template ตอนยื่นคำขอ — 0 ถ้าไม่ได้อ้างอิง template ไหนเลย
+  deny_reason: string; // เหตุผลที่ admin เขียนตอนกด Reject — ว่างถ้ายังไม่ถูกปฏิเสธ
   created_at: string;
 }
 
@@ -56,8 +57,12 @@ export const adminVmRequestApi = {
     return response.data.data;
   },
 
-  deny: async (id: number) => {
-    const response = await axiosClient.patch<ApiResponse<{ id: number; status: string }>>(`/admin/requests/${id}/deny`);
+  // reason บังคับ — backend เก็บไว้กับคำขอและยิงเป็นแจ้งเตือนไปหาผู้ยื่น (หน้า Alerts ของเขา)
+  deny: async (id: number, reason: string) => {
+    const response = await axiosClient.patch<ApiResponse<{ id: number; status: string; deny_reason: string }>>(
+      `/admin/requests/${id}/deny`,
+      { reason },
+    );
     return response.data.data;
   },
 };

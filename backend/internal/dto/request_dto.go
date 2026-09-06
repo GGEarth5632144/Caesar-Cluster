@@ -16,6 +16,13 @@ type CreateRequestRequest struct {
 	RAMLimitMB        int    `json:"ram_limit_mb" binding:"required,gt=0"`
 }
 
+// DenyRequestRequest = body ของ PATCH /api/admin/requests/:id/deny (admin เท่านั้น)
+// reason บังคับ — ผู้ยื่นต้องได้รู้ว่าคำขอถูกปฏิเสธเพราะอะไร ข้อความนี้ถูกเก็บไว้กับคำขอ
+// และถูกยิงเป็นแจ้งเตือน (UserAlert) ไปโผล่ในหน้า Alerts ของผู้ยื่นตามที่ admin เขียนไว้
+type DenyRequestRequest struct {
+	Reason string `json:"reason" binding:"required,min=1,max=1000"`
+}
+
 // RequestWithRequester = entity.Request + ข้อมูลผู้ยื่นแบบย่อ ให้หน้า admin โชว์ชื่อ/รหัส นศ.
 // แทนที่จะมีแค่ user_id เฉยๆ — enrich ทีเดียวตอน list แทนที่จะ join ใน query (ดู AdminController.ListAllRequests)
 type RequestWithRequester struct {
