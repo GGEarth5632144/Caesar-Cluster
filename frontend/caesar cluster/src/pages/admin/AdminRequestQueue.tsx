@@ -423,7 +423,7 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-bold uppercase tracking-wider text-red-500">
-                    เหตุผลที่ปฏิเสธ — ผู้ยื่นจะเห็นข้อความนี้ในหน้า Alerts
+                    เหตุผลที่ปฏิเสธ
                   </label>
                   <textarea
                     value={reason}
