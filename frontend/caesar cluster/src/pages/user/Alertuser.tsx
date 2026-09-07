@@ -289,16 +289,25 @@ export default function Alertuser() {
 
                   <p className="truncate font-semibold text-[#211a14]">{alert.title}</p>
 
-                  {/* ข้อความ log ดิบ — โชว์ในกล่องสีเข้มแบบเดียวกับหน้า Logs เพื่อให้เห็นทันทีว่า
-                      นี่คือสิ่งที่ container พิมพ์ออกมาจริงๆ ไม่ใช่ข้อความที่ระบบเขียนเอง */}
-                  <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-[#1a1714] px-3 py-2 text-base leading-relaxed text-[#e6ddd1]">
-                    {alert.message}
-                  </pre>
+                  {alert.source_type === "service_log" ? (
+                    /* ข้อความ log ดิบ — โชว์ในกล่องสีเข้มแบบเดียวกับหน้า Logs เพื่อให้เห็นทันทีว่า
+                       นี่คือสิ่งที่ container พิมพ์ออกมาจริงๆ ไม่ใช่ข้อความที่ระบบเขียนเอง */
+                    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-[#1a1714] px-3 py-2 text-base leading-relaxed text-[#e6ddd1]">
+                      {alert.message}
+                    </pre>
+                  ) : (
+                    /* แจ้งเตือนจากระบบ (เช่น คำขอถูกปฏิเสธพร้อมเหตุผลจากแอดมิน) — เป็นข้อความที่คนเขียน
+                       ไม่ใช่ log ดิบ จึงโชว์เป็นข้อความปกติให้อ่านง่าย */
+                    <p className="whitespace-pre-wrap break-words text-base leading-relaxed text-[#211a14]/75">
+                      {alert.message}
+                    </p>
+                  )}
 
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     {alert.source_name && (
                       <span className="text-base text-[#211a14]/45">
-                        service: <span className="font-semibold text-[#211a14]/70">{alert.source_name}</span>
+                        {alert.source_type === "service_log" ? "service: " : "อ้างอิง: "}
+                        <span className="font-semibold text-[#211a14]/70">{alert.source_name}</span>
                       </span>
                     )}
                     {canOpenLogs && (

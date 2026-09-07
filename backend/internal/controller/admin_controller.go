@@ -36,15 +36,17 @@ var errRequestNotPending = errors.New("request ถูกดำเนินกา
 // ทุก route ที่ผูกกับ controller นี้ผ่าน middleware AdminOnly มาแล้ว
 // svc ใช้เฉพาะตอน DeleteUser — ต้องถอน service ที่ user ทิ้งไว้ใน space ของคนอื่นออกจากคลัสเตอร์
 // ก่อนที่ FK จะลบแถวมันหายไปเงียบๆ (ดูเหตุผลเต็มใน DeleteUser)
+// alerts ใช้ตอน Deny — ยิงแจ้งเตือนไปหาผู้ยื่นว่าคำขอถูกปฏิเสธเพราะอะไร (ดู Deny)
 type AdminController struct {
-	db  *gorm.DB
-	ns  *services.NamespaceManager
-	svc *services.ServiceManager
+	db     *gorm.DB
+	ns     *services.NamespaceManager
+	svc    *services.ServiceManager
+	alerts *services.AlertManager
 }
 
 // NewAdminController ประกอบ controller — ถูกเรียกจาก router.Setup
-func NewAdminController(db *gorm.DB, ns *services.NamespaceManager, svc *services.ServiceManager) *AdminController {
-	return &AdminController{db: db, ns: ns, svc: svc}
+func NewAdminController(db *gorm.DB, ns *services.NamespaceManager, svc *services.ServiceManager, alerts *services.AlertManager) *AdminController {
+	return &AdminController{db: db, ns: ns, svc: svc, alerts: alerts}
 }
 
 // ListEligibleStudents คืนรายชื่อ นศ. ที่มีสิทธิ์ทั้งหมด (ตาราง "match") ให้ admin ตรวจสอบ
@@ -730,7 +732,16 @@ func (h *AdminController) Approve(c *gin.Context) {
 	utils.OK(c, http.StatusOK, gin.H{"request": req, "namespace": ns})
 }
 
-// Deny ปฏิเสธคำขอ — แค่พลิกสถานะแบบ atomic (WHERE status = pending กันชนกับ Approve ที่วิ่งพร้อมกัน)
+// Deny ปฏิเสธคำขอ — พลิกสถานะเป็น denied พร้อมเก็บเหตุผลที่ admin เขียน แล้วแจ้งเตือนผู้ยื่น
+//
+// data flow: อ่าน id จาก path + JSON body → bind DenyRequestRequest (reason บังคับ)
+// → ล็อกแถว requests ด้วย FOR UPDATE (กันชนกับ Approve/Deny ที่วิ่งพร้อมกัน) → เช็คว่ายัง pending
+// → บันทึก status = denied + deny_reason ในทรานแซกชันเดียว
+// → AlertManager.Raise สร้าง UserAlert ให้ผู้ยื่น (โผล่ในหน้า Alerts ของเขา)
+//
+// โครงเดียวกับ Approve ด้านบน — ใช้ transaction+lock แล้ว First โหลดแถวจริงมา เพื่อได้ user_id
+// ไปยิงแจ้งเตือน แจ้งเตือนไม่ขึ้นไม่ถือว่า action ล้มเหลว: คำขอถูกปฏิเสธไปแล้วจริงและเหตุผลถูกเก็บ
+// กับคำขอแล้ว (หน้า "คำขอของฉัน" ยังอ่านเหตุผลได้) แค่ log ไว้ให้ตามต่อได้
 func (h *AdminController) Deny(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -738,20 +749,57 @@ func (h *AdminController) Deny(c *gin.Context) {
 		return
 	}
 
-	res := h.db.WithContext(c.Request.Context()).
-		Model(&entity.Request{}).
-		Where("id = ? AND status = ?", id, entity.RequestPending).
-		Update("status", entity.RequestDenied)
-	if res.Error != nil {
-		log.Printf("deny request error: %v", res.Error)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+	var body dto.DenyRequestRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
-	if res.RowsAffected == 0 {
-		utils.Error(c, http.StatusConflict, "NOT_PENDING", "ไม่พบคำขอนี้ หรือถูกดำเนินการไปแล้ว")
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณาระบุเหตุผลในการปฏิเสธคำขอ")
 		return
 	}
-	utils.OK(c, http.StatusOK, gin.H{"id": id, "status": entity.RequestDenied})
+
+	ctx := c.Request.Context()
+
+	var req entity.Request
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&req, id).Error; err != nil {
+			return err
+		}
+		if req.Status != entity.RequestPending {
+			return errRequestNotPending
+		}
+		req.Status = entity.RequestDenied
+		req.DenyReason = reason
+		return tx.Save(&req).Error
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบคำขอนี้")
+		case errors.Is(err, errRequestNotPending):
+			utils.Error(c, http.StatusConflict, "NOT_PENDING", "คำขอนี้ถูกดำเนินการไปแล้ว")
+		default:
+			log.Printf("deny request error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+		}
+		return
+	}
+
+	// แจ้งเตือนผู้ยื่นว่าคำขอถูกปฏิเสธ พร้อมเหตุผลที่ admin เขียนไว้ตรงๆ
+	if err := h.alerts.Raise(ctx, services.RaiseParams{
+		UserIDs:    []int{req.UserID},
+		Severity:   entity.SeverityWarning,
+		Title:      "คำขอทรัพยากรถูกปฏิเสธ",
+		Message:    reason,
+		SourceType: entity.AlertSourceSystem,
+		SourceName: fmt.Sprintf("REQ-%d", id),
+	}); err != nil {
+		log.Printf("deny request %d: raise alert error: %v", id, err)
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"id": id, "status": entity.RequestDenied, "deny_reason": reason})
 }
 
 // ListUsers คืนผู้ใช้งานทั้งหมด พร้อมชั้นปีที่คำนวณสดจาก student_id (ไม่ใช่ค่า User.EntryYear ที่เก็บดิบๆ)

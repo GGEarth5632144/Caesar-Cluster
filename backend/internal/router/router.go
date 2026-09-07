@@ -39,7 +39,7 @@ func Setup(
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
 	svcCtl := controller.NewServiceController(db, svcMgr)
 	tmplCtl := controller.NewRequestTemplateController(db)
-	adminCtl := controller.NewAdminController(db, nsMgr, svcMgr)
+	adminCtl := controller.NewAdminController(db, nsMgr, svcMgr, alertMgr)
 	reqCtl := controller.NewRequestController(db)
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 	inviteCtl := controller.NewInviteController(inviteMgr)

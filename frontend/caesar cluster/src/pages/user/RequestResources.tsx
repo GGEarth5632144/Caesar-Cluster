@@ -193,6 +193,17 @@ export default function RequestResources() {
                   )}
                 </div>
 
+                {isDenied && req.deny_reason && (
+                  <div className="mt-4 rounded-xl border border-red-100 bg-red-50/60 px-5 py-4">
+                    <p className="text-sm font-bold uppercase tracking-wider text-red-500">
+                      เหตุผลที่ถูกปฏิเสธ
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-base text-[#211a14]/80">
+                      {req.deny_reason}
+                    </p>
+                  </div>
+                )}
+
               </div>
             );
           })}
