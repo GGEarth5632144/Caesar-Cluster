@@ -823,12 +823,12 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               {envVars.map((pair, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input
-                    placeholder="KEY"
+                    placeholder="key"
                     value={pair.key}
                     onChange={(e) => updateEnvRow(i, "key", e.target.value)}
                     onPaste={(e) => handleEnvPaste(i, e)}
                     disabled={submitting}
-                    className="flex-1 rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono uppercase tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
+                    className="flex-1 rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                   />
                   <span className="text-[#211a14]/25 text-sm select-none">=</span>
                   <input
@@ -851,8 +851,8 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
             </div>
             {envNotice && <p className="text-sm text-[#BB6653]">{envNotice}</p>}
             <p className="text-xs text-[#211a14]/35">
-              วางข้อความ KEY=value หลายบรรทัดลงในช่อง KEY แล้วระบบจะแตกเป็นแถวให้เอง หรือกด Upload .env
-              เพื่อดึงทั้งไฟล์ — ค่าเหล่านี้จะถูกใส่ให้ service ตอน deploy
+              วางข้อความ key=value หลายบรรทัดลงในช่อง key แล้วระบบจะแตกเป็นแถวให้เอง หรือกด Upload .env
+              เพื่อดึงทั้งไฟล์ — ค่าเหล่านี้จะถูกใส่ให้ service ตอน deploy (ชื่อ key จะเป็นตัวเล็กหรือตัวใหญ่ก็ได้)
             </p>
           </div>
         </div>
