@@ -2,10 +2,24 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"backend/internal/entity"
 )
+
+// K8sNamespaceName แปลง id ของ entity.Namespace เป็นชื่อ namespace จริงบนคลัสเตอร์
+//
+// ใช้ id ไม่ใช่คอลัมน์ namespaces.name เพราะชื่อในตารางเป็นชื่อที่ผู้ใช้พิมพ์เอง
+// (NamespaceController.Create รับ name จาก body ตรงๆ) จึงมีเว้นวรรค ตัวพิมพ์ใหญ่ หรือภาษาไทยได้
+// ซึ่ง k8s ไม่รับ — ชื่อ namespace ต้องเป็น RFC 1123 label (a-z, 0-9, '-' ยาวไม่เกิน 63 ตัว)
+// ส่วน id เป็น serial จึงถูกกติกาและไม่ซ้ำเสมอ โดยไม่ต้องไป validate/แปลงชื่อของผู้ใช้เลย
+//
+// ชื่อที่ผู้ใช้ตั้งไม่ได้หายไปไหน — EnsureNamespace เก็บไว้เป็น annotation บน namespace
+// ให้ยังมองจากฝั่งคลัสเตอร์ออกว่า ns-7 คือ space ชื่ออะไรของใคร
+//
+// ทุก method ของ Provisioner ที่รับ nsName คาดหวังค่าที่ผ่านฟังก์ชันนี้มาแล้ว ไม่ใช่ ns.Name ดิบๆ
+func K8sNamespaceName(id int) string { return fmt.Sprintf("ns-%d", id) }
 
 // LogOptions คุมว่าจะดึง log กลับมาแบบไหน — ตรงกับตัวเลือกที่หน้า log viewer ให้ผู้ใช้ปรับได้
 // (คล้ายแผง log ของ Cloud Run: จำนวนบรรทัดย้อนหลัง, ช่วงเวลา, และโหมด "ไหลสด" หรือไม่)
@@ -29,6 +43,9 @@ type Provisioner interface {
 	EnsureNamespace(ctx context.Context, ns *entity.Namespace) error
 
 	// DeleteNamespace ลบ namespace ทิ้งทั้งก้อน (workload ข้างในหายตามหมด)
+	//
+	// nsName ที่ method นี้และทุก method ด้านล่างรับ คือชื่อบนคลัสเตอร์ที่ได้จาก
+	// K8sNamespaceName(ns.ID) ไม่ใช่ ns.Name (ดูเหตุผลที่ K8sNamespaceName)
 	//
 	// ต้อง idempotent: ถ้า namespace ไม่มีอยู่บนคลัสเตอร์แล้ว ให้คืน nil ไม่ใช่ error
 	// เพราะ NamespaceManager.Delete ถอนของบนคลัสเตอร์ก่อนแล้วค่อยลบแถวใน DB — ถ้าล้มกลางคัน

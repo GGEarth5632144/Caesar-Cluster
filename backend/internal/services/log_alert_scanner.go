@@ -249,7 +249,7 @@ func (s *LogAlertScanner) scanService(ctx context.Context, row serviceRow) error
 		since = 1
 	}
 
-	stream, err := s.prov.Logs(ctx, row.NamespaceName, row.Name, LogOptions{
+	stream, err := s.prov.Logs(ctx, K8sNamespaceName(row.NamespaceID), row.Name, LogOptions{
 		Timestamps:   true,
 		SinceSeconds: since,
 		TailLines:    s.cfg.MaxLinesPerScan,

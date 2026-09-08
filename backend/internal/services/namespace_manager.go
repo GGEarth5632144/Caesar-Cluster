@@ -310,7 +310,7 @@ func (m *NamespaceManager) Delete(ctx context.Context, namespaceID int) error {
 		return err
 	}
 
-	if err := m.prov.DeleteNamespace(ctx, ns.Name); err != nil {
+	if err := m.prov.DeleteNamespace(ctx, K8sNamespaceName(ns.ID)); err != nil {
 		return fmt.Errorf("ลบ namespace บนคลัสเตอร์ไม่สำเร็จ: %w", err)
 	}
 
