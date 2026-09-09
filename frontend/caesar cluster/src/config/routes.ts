@@ -12,7 +12,6 @@ export const PATHS = {
   services: "services",
 
   requestResources: "request-resources",
-  alertuser: "alertuser",
   myService: "my-service",
   createService: "create-service",
 
@@ -25,7 +24,6 @@ export const PATHS = {
   adminRequest: "admin-request",
   adminApprovals: "admin-approvals",
   userManagement: "user-management",
-  alertadmin: "alertadmin",
   ipcManagement: "ipc-management",
   auditLog: "audit-log",
   adminImportStudents: "admin-import-students",

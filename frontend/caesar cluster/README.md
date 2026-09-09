@@ -51,7 +51,6 @@
 - Audit Log
 - IPC Management
 - Service overview (admin view)
-- Alert admin
 
 ### Multi-Agent Pipeline (Cluster AI)
 - **Router** — Triage: วิเคราะห์ error log เลือก expert ที่เหมาะสม
@@ -78,7 +77,6 @@ $env:MOCK_AI="true"; go run ./cmd/server  # PowerShell
 | ส่วน | สถานะ | รอใคร |
 |------|--------|--------|
 | Dashboard (advanced metrics) | รอ | Infra team วาง K8s metrics endpoint |
-| Alert system (real-time) | รอ | Infra team ติดตั้ง alert webhook |
 | Cluster AI บน AGX Orin | รอ | Infra team ติดตั้ง NUC Cluster |
 | Python AI Engine (DeepSeek-R1) | รอ | Infra team ติดตั้ง model บน AGX Orin |
 

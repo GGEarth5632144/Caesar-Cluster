@@ -27,7 +27,6 @@ func Setup(
 	svcMgr *services.ServiceManager,
 	inviteMgr *services.InviteManager,
 	telemetrySvc *services.TelemetryService,
-	alertMgr *services.AlertManager,
 	powerService *services.PowerService,
 ) *gin.Engine {
 	// โหมด release ตอน production: ปิด route dump ตอน start และ debug log ราย request
@@ -40,12 +39,11 @@ func Setup(
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
 	svcCtl := controller.NewServiceController(db, svcMgr)
 	tmplCtl := controller.NewRequestTemplateController(db)
-	adminCtl := controller.NewAdminController(db, nsMgr, svcMgr, alertMgr)
+	adminCtl := controller.NewAdminController(db, nsMgr, svcMgr)
 	reqCtl := controller.NewRequestController(db)
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 	inviteCtl := controller.NewInviteController(inviteMgr)
 	telemetryCtrl := controller.NewTelemetryController(telemetrySvc)
-	alertCtl := controller.NewAlertController(alertMgr)
 	powerController := controller.NewPowerController(powerService)
 
 	r := gin.Default()
@@ -115,13 +113,6 @@ func Setup(
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
 
-			// /unread-count แยกเป็น endpoint เบาๆ ที่ตอบแค่ตัวเลข เพราะหน้าเว็บ poll ถี่ที่สุดในกลุ่มนี้
-			// DELETE /alerts/read ประกาศก่อน /alerts/:id ให้เห็นชัดว่าตั้งใจ (gin จับ static ก่อน wildcard อยู่แล้ว)
-			protected.GET("/alerts", alertCtl.List)
-			protected.GET("/alerts/unread-count", alertCtl.UnreadCount)
-			protected.PATCH("/alerts/read", alertCtl.MarkRead)
-			protected.DELETE("/alerts/read", alertCtl.DeleteRead)
-			protected.DELETE("/alerts/:id", alertCtl.Delete)
 
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
