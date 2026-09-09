@@ -28,6 +28,7 @@ func Setup(
 	inviteMgr *services.InviteManager,
 	telemetrySvc *services.TelemetryService,
 	alertMgr *services.AlertManager,
+	powerService *services.PowerService,
 ) *gin.Engine {
 	// โหมด release ตอน production: ปิด route dump ตอน start และ debug log ราย request
 	// ที่ไม่ควรอยู่บนเครื่องจริง (ตรงกับที่ backend/.env.example บอกไว้เรื่อง APP_ENV)
@@ -45,6 +46,7 @@ func Setup(
 	inviteCtl := controller.NewInviteController(inviteMgr)
 	telemetryCtrl := controller.NewTelemetryController(telemetrySvc)
 	alertCtl := controller.NewAlertController(alertMgr)
+	powerController := controller.NewPowerController(powerService)
 
 	r := gin.Default()
 
@@ -85,7 +87,8 @@ func Setup(
 		api.POST("/reset-password", authCtl.ResetPassword)
 		api.GET("/telemetry", telemetryCtrl.GetTelemetry)
 		api.GET("/telemetry/history", telemetryCtrl.GetTelemetryHistory)
-
+		api.GET("/power", powerController.GetPower)
+		api.GET("/power/history", powerController.GetPowerHistory)
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db))
 		{
 			protected.GET("/me", authCtl.Me)

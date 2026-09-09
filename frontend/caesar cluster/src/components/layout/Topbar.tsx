@@ -32,24 +32,6 @@ export default function Topbar({ title, userName }: TopbarProps) {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-5">
-        {isUser && (
-          <Link
-          to={PATHS.alertuser}
-          className="cursor-pointer text-white/90 hover:text-white transition-colors"
-          aria-label="การแจ้งเตือน"
-          >
-            <Bell size={22} />
-          </Link>
-        )}
-        {isAdmin && (
-          <Link
-          to={PATHS.alertadmin}
-          className="cursor-pointer text-white/90 hover:text-white transition-colors"
-          aria-label="การแจ้งเตือน"
-          >
-            <Bell size={22} />
-          </Link>
-        )}
         <Link to={PATHS.settings}>
           <Avatar>
             <AvatarFallback className="bg-[#F08B51] text-white">

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Server,
   ServerCrash,
@@ -8,6 +8,10 @@ import {
   RefreshCw,
   HardDrive,
   Clock,
+  Zap,
+  PlugZap,
+  ZapOff,
+  PowerOff
 } from "lucide-react";
 import {
   LineChart,
@@ -19,9 +23,20 @@ import {
   ResponsiveContainer,
   Area,
   AreaChart,
+  BarChart,
+  Bar,
+  ComposedChart,
+  Legend,
 } from "recharts";
 
-import { nodetelemetry, type NodeTelemetry, type ClusterHistoryData } from "@/api/mornitorequest";
+// นำเข้า API และ Interface ที่เพิ่มเข้ามาใหม่ (powerApi และ PowerHistoryData)
+import { 
+  nodetelemetry, 
+  type NodeTelemetry, 
+  type ClusterHistoryData, 
+  type PowerNode, 
+  type PowerHistoryData 
+} from "@/api/mornitorequest";
 
 // --- Constants ---
 const REFRESH_INTERVALS = [
@@ -61,13 +76,17 @@ const StatCard = ({ title, value, unit, data, color, type = "line" }: any) => {
           {type === "area" ? (
             <AreaChart data={data}>
               <defs>
-                <linearGradient id={`color-${title}`} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={`color-${title.replace(/\s+/g, '-')}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={color} stopOpacity={0.2} />
                   <stop offset="95%" stopColor={color} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <Area type="monotone" dataKey="value" stroke={color} fillOpacity={1} fill={`url(#color-${title})`} strokeWidth={2} />
+              <Area type="monotone" dataKey="value" stroke={color} fillOpacity={1} fill={`url(#color-${title.replace(/\s+/g, '-')})`} strokeWidth={2} />
             </AreaChart>
+          ) : type === "bar" ? (
+            <BarChart data={data}>
+              <Bar dataKey="value" fill={color} radius={[2, 2, 0, 0]} />
+            </BarChart>
           ) : (
             <LineChart data={data}>
               <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -87,7 +106,6 @@ const NodeGridItem = ({ node }: { node: NodeTelemetry }) => {
 
   return (
     <div className={`flex flex-col p-4 border rounded-xl ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}>
-      {/* บรรทัดที่ 1: ไฟสถานะ + ชื่อ Node */}
       <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
         <div className="relative flex h-2.5 w-2.5 shrink-0">
           {!isOffline && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />}
@@ -98,22 +116,18 @@ const NodeGridItem = ({ node }: { node: NodeTelemetry }) => {
         </span>
       </div>
 
-      {/* บรรทัดต่อๆ มา: ข้อมูลที่เรียงซ้อนกัน */}
       {isOffline ? (
         <div className="flex items-center justify-center py-2">
           <span className="text-xs text-red-500 font-bold uppercase tracking-widest">Offline</span>
         </div>
       ) : (
         <div className="flex flex-col gap-2 font-mono">
-          {/* บรรทัดที่ 2: อุณหภูมิ */}
           <div className="flex items-center justify-between">
             <span className="text-xs font-sans font-semibold text-gray-400">Temp</span>
             <span className={`text-sm font-bold ${isHot ? "text-red-500 animate-pulse" : "text-orange-500"}`}>
               {node.Temperature.toFixed(1)} °C
             </span>
           </div>
-          
-          {/* บรรทัดที่ 3: RAM */}
           <div className="flex items-center justify-between">
             <span className="text-xs font-sans font-semibold text-gray-400">RAM</span>
             <span className="text-sm font-bold text-gray-700">
@@ -126,70 +140,149 @@ const NodeGridItem = ({ node }: { node: NodeTelemetry }) => {
   );
 };
 
+const PowerGridItem = ({ power }: { power: PowerNode }) => {
+  const isOffline = power.Status !== "On";
+  const isIdle = !isOffline && power.Watt === 0; // ถ้า On แต่กระแสเป็น 0 แสดงว่า Standby
+
+  let statusColor = "bg-amber-500";
+  let rowBg = "bg-white border-amber-200";
+  let textColor = "text-amber-700";
+  let icon = <PlugZap className="h-4 w-4" />;
+
+  if (isOffline) {
+    statusColor = "bg-gray-400";
+    rowBg = "bg-gray-50 border-gray-200 opacity-70";
+    textColor = "text-gray-500";
+    icon = <ZapOff className="h-4 w-4" />;
+  } else if (isIdle) {
+    statusColor = "bg-blue-400";
+    rowBg = "bg-blue-50/50 border-blue-200";
+    textColor = "text-blue-700";
+    icon = <PowerOff className="h-4 w-4" />;
+  }
+
+  return (
+    <div className={`flex flex-col p-4 border rounded-xl ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}>
+      <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
+        <div className="relative flex h-2.5 w-2.5 shrink-0">
+          {!isOffline && !isIdle && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />}
+          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor}`} />
+        </div>
+        <span className={`flex items-center gap-1.5 text-sm font-extrabold truncate ${textColor}`}>
+          {icon} Modbus {power.ModbusID}
+        </span>
+      </div>
+
+      {isOffline ? (
+        <div className="flex items-center justify-center py-2 gap-2 text-gray-400">
+          <span className="text-xs font-bold uppercase tracking-widest">Power Off</span>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 font-mono">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-semibold text-gray-400">Power</span>
+            <span className={`text-sm font-bold ${isIdle ? 'text-blue-600' : 'text-amber-600'}`}>
+              {power.Watt.toFixed(2)} W
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-semibold text-gray-400">Current</span>
+            <span className="text-sm font-bold text-gray-700">
+              {power.Amp.toFixed(3)} A
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-semibold text-gray-400">Voltage</span>
+            <span className="text-sm font-bold text-gray-700">
+              {power.Volt.toFixed(1)} V
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // --- Main Component ---
 export default function IPCmanagement() {
   const [nodes, setNodes] = useState<NodeTelemetry[]>([]);
   const [historyData, setHistoryData] = useState<ClusterHistoryData[]>([]);
+  const [powers, setPowers] = useState<PowerNode[]>([]);
+  
+  // ใช้ State สำหรับเก็บข้อมูลประวัติจาก Backend
+  const [powerHistory, setPowerHistory] = useState<PowerHistoryData[]>([]);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   const [timeRange, setTimeRange] = useState("1h");
-  const [refreshInterval, setRefreshInterval] = useState(5000);
+  const [refreshInterval, setRefreshInterval] = useState(60000);
 
-  const fetchClusterData = async () => {
+  const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [snapshotData, historyDataRes] = await Promise.all([
+      // ดึงข้อมูล 4 เส้นพร้อมกัน รวมถึง History ของ Power ด้วย
+      const [snapshotData, historyDataRes, powerDataRes, powerHistoryRes] = await Promise.all([
         nodetelemetry.getAll(),
-        nodetelemetry.getHistory(timeRange)
+        nodetelemetry.getHistory(timeRange),
+        nodetelemetry.getAllPower(),
+        nodetelemetry.getPowerHistory(timeRange)
       ]);
 
       setNodes(snapshotData.sort((a, b) => a.NodeName.localeCompare(b.NodeName)));
       setHistoryData(historyDataRes);
+      setPowers(powerDataRes.sort((a, b) => a.ModbusID - b.ModbusID));
+      setPowerHistory(powerHistoryRes);
 
       setLastUpdate(new Date());
       setError(null);
     } catch (err) {
       console.error("Fetch Data Error:", err);
-      setError("ไม่สามารถดึงข้อมูลคลัสเตอร์ได้"); 
+      setError("ไม่สามารถดึงข้อมูลระบบได้ กรุณาตรวจสอบการเชื่อมต่อ"); 
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchClusterData();
+    fetchDashboardData();
 
     if (refreshInterval === 0) return;
 
     const intervalId = setInterval(() => {
-      fetchClusterData();
+      fetchDashboardData();
     }, refreshInterval);
 
     return () => clearInterval(intervalId);
   }, [refreshInterval, timeRange]);
 
+  // --- Derived Metrics ---
   const totalNodes = nodes.length;
   const onlineNodes = nodes.filter((n) => n.IsUp === 1);
-  const offlineCount = totalNodes - onlineNodes.length;
   const avgTemp = onlineNodes.length > 0 ? onlineNodes.reduce((s, n) => s + n.Temperature, 0) / onlineNodes.length : 0;
   
   const controlPlane = nodes.find((n) => n.NodeName === "intelnuc");
   const workerNodes = nodes.filter((n) => n.NodeName !== "intelnuc");
+
+  const totalWatt = powers.reduce((sum, p) => sum + p.Watt, 0);
+  const avgVolt = powers.length > 0 ? powers.reduce((sum, p) => sum + p.Volt, 0) / powers.length : 0;
+  
+  // นับเฉพาะตัวที่มีโหลดไฟจริงๆ (ไม่ใช่แค่ On เฉยๆ)
+  const activePowerNodes = powers.filter(p => p.Watt > 0).length;
 
   return (
     <div className="min-h-screen bg-transparent text-gray-800 font-sans p-4 md:p-6">
       <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
         
         {/* --- Top Navbar --- */}
-        <div className="flex flex-col md:flex-row items-center justify-between bg-white border border-gray-200 rounded-2xl shadow-sm p-4 gap-4">
+        <div className="flex flex-col md:flex-row items-center justify-between bg-white border border-gray-200 rounded-2xl shadow-sm p-4 gap-4 sticky top-2 z-[100] bg-white/80 backdrop-blur-xl">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-orange-50 rounded-lg">
-              <Cpu className="h-6 w-6 text-orange-500" />
+            <div className="p-2 bg-indigo-50 rounded-lg">
+              <Server className="h-6 w-6 text-indigo-600" />
             </div>
             <div>
-              <h1 className="text-xl font-extrabold text-gray-800 tracking-wide">Cluster Telemetry</h1>
+              <h1 className="text-xl font-extrabold text-gray-800 tracking-wide">Unified Cluster Monitor</h1>
               <p className="text-xs font-semibold text-gray-400 mt-0.5">
                 {lastUpdate ? `Updated at ${lastUpdate.toLocaleTimeString("th-TH")}` : "Waiting for data..."}
               </p>
@@ -197,7 +290,6 @@ export default function IPCmanagement() {
           </div>
 
           <div className="flex items-center gap-3 text-sm">
-            {/* Time Range Selector */}
             <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl overflow-hidden px-2 hover:bg-gray-100 transition-colors">
               <Clock className="h-4 w-4 text-gray-400" />
               <select 
@@ -209,15 +301,14 @@ export default function IPCmanagement() {
               </select>
             </div>
 
-            {/* Refresh Interval Selector */}
             <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl px-1">
               <button 
-                onClick={fetchClusterData}
+                onClick={fetchDashboardData}
                 disabled={loading}
                 className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
                 title="Refresh now"
               >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-orange-500' : 'text-gray-500'}`} />
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-indigo-600' : 'text-gray-500'}`} />
               </button>
               <div className="w-px h-5 bg-gray-300 mx-1"></div>
               <select 
@@ -239,7 +330,7 @@ export default function IPCmanagement() {
         )}
 
         {/* --- Overview Stat Cards --- */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard 
             title="Online Nodes" 
             value={onlineNodes.length} 
@@ -249,44 +340,74 @@ export default function IPCmanagement() {
             type="area"
           />
           <StatCard 
-            title="Offline Nodes" 
-            value={offlineCount} 
-            unit="nodes"
-            color="#ef4444"
-            data={historyData.map(d => ({ value: totalNodes - d.onlineNodes }))} 
-          />
-          <StatCard 
-            title="Cluster Avg Temp" 
+            title="Avg Temp" 
             value={avgTemp.toFixed(1)} 
             unit="°C"
             color={avgTemp > 75 ? "#ef4444" : "#f97316"}
             data={historyData.map(d => ({ value: d.avgTemp }))} 
           />
           <StatCard 
-            title="Control Plane Load" 
-            value={controlPlane ? (controlPlane.Procs).toString() : "N/A"} 
-            unit="procs"
+            title="CP Procs" 
+            value={controlPlane ? controlPlane.Procs : 0} 
+            unit="tasks"
             color="#3b82f6"
             data={historyData.map(() => ({ value: controlPlane ? controlPlane.Procs : 0 }))} 
             type="area"
           />
+          <StatCard 
+            title="Total Power" 
+            value={totalWatt.toFixed(1)} 
+            unit="W"
+            color="#f59e0b"
+            data={powerHistory.map(p => ({ value: p.totalWatt }))} 
+            type="area"
+          />
+          <StatCard 
+            title="Avg Voltage" 
+            value={avgVolt.toFixed(1)} 
+            unit="V"
+            color="#8b5cf6"
+            data={powerHistory.map(p => ({ value: p.avgVolt }))} 
+          />
+          <StatCard 
+            title="Active Load" 
+            value={activePowerNodes} 
+            unit={`/ ${powers.length}`}
+            color="#06b6d4"
+            data={powerHistory.map(p => ({ value: activePowerNodes }))} 
+            type="bar"
+          />
         </div>
 
-        {/* --- Main Charts Area (ขยายความสูงเป็น 450px) --- */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[450px]">
-          
+        {/* --- Main Charts Area (Row 1: Telemetry) --- */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
           {/* Temperature Trend */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col">
             <div className="flex items-center gap-2 mb-6">
               <Activity className="h-5 w-5 text-orange-500" />
-              <h2 className="text-base font-extrabold text-gray-800">Average Temperature Trend</h2>
+              <h2 className="text-base font-extrabold text-gray-800">
+                Average Temperature 
+                <span className="ml-2 text-sm font-medium text-orange-500 bg-orange-50 px-2 py-0.5 rounded-md">
+                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                </span>
+              </h2>
             </div>
             <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={historyData} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" vertical={false} />
-                  <XAxis dataKey="time" stroke="#9ca3af" tick={{ fill: '#6b7280', fontSize: 12 }} tickMargin={10} axisLine={false} tickLine={false} />
-                  {/* กำหนด tickFormatter ให้เติมคำว่า °C */}
+                  <XAxis 
+                    dataKey="time" 
+                    stroke="#9ca3af" 
+                    tick={{ fill: '#6b7280', fontSize: 12 }} 
+                    tickMargin={10} 
+                    axisLine={false} 
+                    tickLine={false}
+                    tickFormatter={(val) => {
+                      const date = new Date(val);
+                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                    }}
+                  />
                   <YAxis 
                     stroke="#9ca3af" 
                     tick={{ fill: '#6b7280', fontSize: 12, fontWeight: 500 }} 
@@ -298,6 +419,7 @@ export default function IPCmanagement() {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ color: '#f97316', fontWeight: 'bold' }}
+                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
                     formatter={(value: any) => [Number(value).toFixed(1), "Avg Temp (°C)"]} 
                   />
                   <Line type="monotone" dataKey="avgTemp" name="Avg Temp (°C)" stroke="#f97316" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0 }} />
@@ -310,14 +432,29 @@ export default function IPCmanagement() {
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col">
             <div className="flex items-center gap-2 mb-6">
               <HardDrive className="h-5 w-5 text-blue-500" />
-              <h2 className="text-base font-extrabold text-gray-800">Memory Allocation Trend</h2>
+              <h2 className="text-base font-extrabold text-gray-800">
+                Memory Allocation 
+                <span className="ml-2 text-sm font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-md">
+                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                </span>
+              </h2>
             </div>
             <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={historyData} margin={{ left: -5, right: 10, top: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" vertical={false} />
-                  <XAxis dataKey="time" stroke="#9ca3af" tick={{ fill: '#6b7280', fontSize: 12 }} tickMargin={10} axisLine={false} tickLine={false} />
-                  {/* กำหนด tickFormatter ให้หารด้วย 1024 และเติมคำว่า GB */}
+                  <XAxis 
+                    dataKey="time" 
+                    stroke="#9ca3af" 
+                    tick={{ fill: '#6b7280', fontSize: 12 }} 
+                    tickMargin={10} 
+                    axisLine={false} 
+                    tickLine={false}
+                    tickFormatter={(val) => {
+                      const date = new Date(val);
+                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                    }}
+                  />
                   <YAxis 
                     stroke="#9ca3af" 
                     tick={{ fill: '#6b7280', fontSize: 12, fontWeight: 500 }} 
@@ -328,6 +465,7 @@ export default function IPCmanagement() {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
+                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
                     formatter={(value: any) => [(Number(value) / 1024).toFixed(2), "RAM Used (GB)"]} 
                   />
                   <defs>
@@ -343,23 +481,131 @@ export default function IPCmanagement() {
           </div>
         </div>
 
+        {/* --- Main Charts Area (Row 2: Power Metrics History) --- */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
+          {/* Total Power Trend */}
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col">
+            <div className="flex items-center gap-2 mb-6">
+              <Zap className="h-5 w-5 text-amber-500" />
+              <h2 className="text-base font-extrabold text-gray-800">
+                Total Power Consumption
+                <span className="ml-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-100 px-2.5 py-0.5 rounded-md">
+                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                </span>
+              </h2>
+            </div>
+            <div className="flex-1 w-full min-h-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={powerHistory} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorPower" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                  <XAxis 
+                    dataKey="time" 
+                    stroke="#9ca3af" 
+                    tick={{ fill: '#6b7280', fontSize: 12 }} 
+                    tickMargin={10} 
+                    axisLine={false} 
+                    tickLine={false}
+                    tickFormatter={(val) => {
+                      const date = new Date(val);
+                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                    }}
+                  />
+                  <YAxis stroke="#9ca3af" tick={{ fill: '#6b7280', fontSize: 12 }} tickFormatter={(val) => `${val}W`} axisLine={false} tickLine={false} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    itemStyle={{ color: '#b45309', fontWeight: 'bold' }}
+                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                  />
+                  <Area type="monotone" dataKey="totalWatt" name="Total Power (W)" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorPower)" isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Current & Voltage Aggregate */}
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col">
+            <div className="flex items-center gap-2 mb-6">
+              <PlugZap className="h-5 w-5 text-indigo-500" />
+              <h2 className="text-base font-extrabold text-gray-800">
+                Current & Avg Voltage
+                <span className="ml-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md">
+                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                </span>
+              </h2>
+            </div>
+            <div className="flex-1 w-full min-h-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={powerHistory} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                  <XAxis 
+                    dataKey="time" 
+                    stroke="#9ca3af" 
+                    tick={{ fill: '#6b7280', fontSize: 12 }} 
+                    tickMargin={10} 
+                    axisLine={false} 
+                    tickLine={false}
+                    tickFormatter={(val) => {
+                      const date = new Date(val);
+                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                    }}
+                  />
+                  <YAxis yAxisId="left" stroke="#9ca3af" tick={{ fill: '#6b7280', fontSize: 12 }} tickFormatter={(val) => `${val}A`} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#9ca3af" domain={['dataMin - 1', 'dataMax + 1']} tick={{ fill: '#6b7280', fontSize: 12 }} tickFormatter={(val) => `${val}V`} axisLine={false} tickLine={false} />
+                  
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '13px' }} />
+                  <Bar yAxisId="left" dataKey="totalAmp" name="Total Current (A)" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} isAnimationActive={false} />
+                  <Line yAxisId="right" type="monotone" dataKey="avgVolt" name="Avg Voltage (V)" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
         {/* --- Node Details Grid --- */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col mt-2">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <Server className="h-5 w-5 text-gray-500" />
-              <h2 className="text-base font-extrabold text-gray-800">Node Status</h2>
+              <h2 className="text-base font-extrabold text-gray-800">Node Cluster Status</h2>
             </div>
             <span className="text-xs font-bold bg-gray-100 text-gray-600 px-3 py-1 rounded-full">
               {onlineNodes.length} / {totalNodes} Online
             </span>
           </div>
           
-          {/* ลบ 2xl:grid-cols-5 ทิ้งไป และปรับ gap-3 เป็น gap-4 หรือ 5 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {controlPlane && <NodeGridItem key={controlPlane.ID} node={controlPlane} />}
+            {controlPlane && <NodeGridItem key={`n-${controlPlane.ID}`} node={controlPlane} />}
             {workerNodes.map(node => (
-              <NodeGridItem key={node.ID} node={node} />
+              <NodeGridItem key={`n-${node.ID}`} node={node} />
+            ))}
+          </div>
+        </div>
+
+        {/* --- Power Details Grid --- */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col mb-10">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <Zap className="h-5 w-5 text-amber-500" />
+              <h2 className="text-base font-extrabold text-gray-800">Power Relays (KWS-303L)</h2>
+            </div>
+            <span className="text-xs font-bold bg-amber-50 text-amber-600 px-3 py-1 rounded-full border border-amber-200">
+              Total Active Load: {totalWatt.toFixed(1)} W
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            {powers.map(power => (
+              <PowerGridItem key={`p-${power.ModbusID}`} power={power} />
             ))}
           </div>
         </div>
