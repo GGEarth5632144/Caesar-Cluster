@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -18,7 +19,7 @@ import (
 	"backend/internal/entity"
 )
 
-// ป้ายกำกับที่เราแปะไว้บน namespace ทุกอันที่ระบบนี้สร้าง
+// ป้ายกำกับที่เราแปะไว้บนทุก object ที่ระบบนี้สร้าง
 //
 // แยกเป็น label กับ annotation ตามข้อจำกัดของ k8s: ค่าของ label ต้องเป็น [a-zA-Z0-9._-]
 // ยาวไม่เกิน 63 ตัว จึงใส่ได้แค่ค่าที่เรารู้รูปแบบแน่ (id, ชื่อระบบ) ส่วนชื่อที่ผู้ใช้พิมพ์เอง
@@ -33,15 +34,32 @@ const (
 	managedByCaesar = "caesar-cluster"
 )
 
+// ชื่อ object ที่เราสร้างไว้ใน namespace ของผู้ใช้ — ตั้งตายตัวเพราะมีอันเดียวต่อ namespace
+// (ไม่ได้ตั้งตาม id เพราะมันอยู่ใน namespace ของตัวเองอยู่แล้ว ไม่มีทางชนกับของ namespace อื่น)
+const (
+	quotaObjectName  = "caesar-quota"
+	limitsObjectName = "caesar-limits"
+)
+
+// ค่า default ที่ LimitRange เติมให้ container ที่ไม่ได้ระบุ resource มาเอง
+//
+// ตัวเลขตรงกับค่าต่ำสุดที่ dto.CreateServiceRequest ยอมรับ (cpu_milli min=100, ram_mb min=128)
+// เพื่อให้ "ก้อนที่เล็กที่สุดที่ผู้ใช้ขอผ่าน API ได้" กับ "ก้อนที่คลัสเตอร์แจกให้ฟรีเมื่อไม่ระบุ"
+// เป็นขนาดเดียวกัน — ไม่มีทางที่ pod ซึ่ง backend ยอมให้เกิด จะโดน LimitRange ตีกลับ
+const (
+	defaultContainerCPUMilli = 100
+	defaultContainerRAMMB    = 128
+)
+
 // KubernetesProvisioner = provisioner ของจริงที่คุยกับ Kubernetes API ผ่าน client-go
 // ถูกเลือกใช้ใน main เมื่อ PROVISIONER=kubernetes
 //
-// โครงที่ต้องมีต่อ namespace 1 อัน (ทำไปแล้ว = ✓):
+// โครงที่มีต่อ namespace 1 อัน (ทำไปแล้ว = ✓):
 //  1. Namespace ✓
-//  2. ResourceQuota — requests.cpu / requests.memory / count(pods) ตาม limit ของ entity.Namespace
+//  2. ResourceQuota ✓ — requests/limits ของ cpu กับ memory ตาม limit ของ entity.Namespace
 //     (นี่คือตัวบังคับโควตาชั้นสุดท้าย ต่อให้ backend เราพลาด k8s ก็ยังไม่ให้เกิน)
-//  3. LimitRange — กันไม่ให้ container ที่ไม่ได้ระบุ resource แอบกินเกิน
-//  4. NetworkPolicy default-deny — กัน traffic ข้าม namespace (ข้อกำหนดเรื่องแยก network)
+//  3. LimitRange ✓ — กันไม่ให้ container ที่ไม่ได้ระบุ resource แอบกินเกิน
+//  4. NetworkPolicy default-deny — กัน traffic ข้าม namespace (ข้อกำหนดเรื่องแยก network) ยังไม่ทำ
 type KubernetesProvisioner struct {
 	kubeConfig string // path ของ kubeconfig; ว่าง = in-cluster
 
@@ -94,26 +112,69 @@ func (k *KubernetesProvisioner) client() (kubernetes.Interface, error) {
 	return k.clientset, k.clientErr
 }
 
-// EnsureNamespace สร้าง namespace บนคลัสเตอร์ให้ตรงกับแถวใน DB — ตอนนี้ทำแค่ตัว Namespace เอง
-// (ResourceQuota / LimitRange / NetworkPolicy ยังไม่ได้ทำ ดู TODO ท้าย method)
+// EnsureNamespace สร้าง/ปรับ namespace บนคลัสเตอร์ให้ตรงกับแถวใน DB
 //
 // data flow: NamespaceManager.Create (หรือ SetQuota) ส่ง entity.Namespace ที่เพิ่งบันทึกลง DB มา
-// → แปลง ns.ID เป็นชื่อบนคลัสเตอร์ด้วย K8sNamespaceName → Create เข้า cluster
+// → แปลง ns.ID เป็นชื่อบนคลัสเตอร์ด้วย K8sNamespaceName → สร้าง 3 อย่างตามลำดับ:
+// Namespace → ResourceQuota (โควตารวมของทั้ง space) → LimitRange (ค่า default/เพดานต่อ container)
 //
-// ต้อง idempotent เพราะถูกเรียกซ้ำได้จริง: SetQuota เรียกทุกครั้งที่แอดมินปรับโควตาของ space เดิม
-// เจอของเดิมอยู่แล้วจึงไม่ใช่ error — แค่ sync metadata (ชื่อที่ผู้ใช้ตั้ง/เจ้าของ) ให้ตรงกับ DB
-//
-// กรณีที่ต้องแยกให้ออกคือ namespace เดิมยังอยู่ในสถานะ Terminating (การลบ namespace ของ k8s
-// เป็น async ใช้เวลาเก็บของข้างในสักพัก) — อันนี้ "รอแล้วลองใหม่ได้" ไม่ใช่ชื่อซ้ำถาวร
-// จึงคืน ErrNamespaceTerminating ให้ controller แปลงเป็น 409 พร้อมข้อความว่าให้รอ
-// (ดู NamespaceManager.Create ที่ส่ง error ตัวนี้ต่อแบบไม่ห่อทับ)
+// ต้อง idempotent ทั้งก้อนเพราะถูกเรียกซ้ำได้จริง: SetQuota เรียก method นี้ทุกครั้งที่แอดมิน
+// ปรับโควตาของ space เดิม เจอของเดิมอยู่แล้วจึงไม่ใช่ error — ให้ทับค่าใหม่ลงไปแทน
 func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.Namespace) error {
 	cs, err := k.client()
 	if err != nil {
 		return err
 	}
-
 	name := K8sNamespaceName(ns.ID)
+
+	created, err := k.ensureNamespaceObject(ctx, cs, name, ns)
+	if err != nil {
+		return err
+	}
+
+	// ตั้งโควตาต่อ — พลาดตรงนี้แล้ว namespace จะ "มีอยู่แต่ไม่มีเพดาน" ซึ่งอันตรายกว่าไม่มีเลย
+	// (ผู้ใช้ deploy ได้ไม่จำกัดจนกินทั้งคลัสเตอร์) จึงต้องเก็บกวาดให้เรียบร้อยก่อนคืน error
+	if err := k.ensureResourceQuota(ctx, cs, name, ns); err != nil {
+		k.rollbackFreshNamespace(ctx, cs, name, created, err)
+		return err
+	}
+	if err := k.ensureLimitRange(ctx, cs, name); err != nil {
+		k.rollbackFreshNamespace(ctx, cs, name, created, err)
+		return err
+	}
+	return nil
+}
+
+// rollbackFreshNamespace ลบ namespace ที่ "เราเพิ่งสร้างในการเรียกครั้งนี้" ทิ้ง เมื่อขั้นตอนถัดไปพัง
+//
+// เงื่อนไข created สำคัญมาก: EnsureNamespace ถูกเรียกซ้ำจาก SetQuota กับ namespace ที่มี service
+// ของผู้ใช้รันอยู่จริง ถ้าเผลอลบเพราะแค่ตั้ง ResourceQuota พลาด งานของทั้งกลุ่มหายทันที
+// ลบได้เฉพาะตอนที่มันเพิ่งเกิดจากการเรียกครั้งนี้เท่านั้น (ยังไม่มีอะไรอยู่ข้างในแน่นอน)
+//
+// WithoutCancel ด้วยเหตุผลเดียวกับ NamespaceManager.Create: ถ้าที่พังคือ ctx ถูก cancel
+// (ผู้ใช้ปิดหน้าเว็บ) การลบด้วย ctx ตัวเดิมจะล้มตามทันที แล้ว namespace เปล่าค้างบนคลัสเตอร์ถาวร
+func (k *KubernetesProvisioner) rollbackFreshNamespace(
+	ctx context.Context, cs kubernetes.Interface, name string, created bool, cause error,
+) {
+	if !created {
+		return
+	}
+	err := cs.CoreV1().Namespaces().Delete(context.WithoutCancel(ctx), name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		log.Printf("!! ตั้งค่า namespace '%s' ไม่สำเร็จ (%v) และลบตัวที่เพิ่งสร้างทิ้งไม่สำเร็จด้วย: %v "+
+			"— เหลือ namespace เปล่าที่ไม่มีเพดานค้างบนคลัสเตอร์ ต้องลบมือ", name, cause, err)
+	}
+}
+
+// ensureNamespaceObject สร้างตัว Namespace เอง — คืน created=true เมื่อเป็นการสร้างใหม่จริงในรอบนี้
+//
+// กรณีที่ต้องแยกให้ออกคือ namespace เดิมยังอยู่ในสถานะ Terminating (การลบ namespace ของ k8s
+// เป็น async ใช้เวลาเก็บของข้างในสักพัก) — อันนี้ "รอแล้วลองใหม่ได้" ไม่ใช่ชื่อซ้ำถาวร
+// จึงคืน ErrNamespaceTerminating ให้ controller แปลงเป็น 409 พร้อมข้อความว่าให้รอ
+// (ดู NamespaceManager.Create ที่ส่ง error ตัวนี้ต่อแบบไม่ห่อทับ)
+func (k *KubernetesProvisioner) ensureNamespaceObject(
+	ctx context.Context, cs kubernetes.Interface, name string, ns *entity.Namespace,
+) (bool, error) {
 	labels := map[string]string{
 		labelManagedBy:   managedByCaesar,
 		labelNamespaceID: strconv.Itoa(ns.ID),
@@ -123,7 +184,7 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 		annContributorID: strconv.Itoa(ns.ContributorID),
 	}
 
-	_, err = cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+	_, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Labels:      labels,
@@ -133,10 +194,10 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 	if err == nil {
 		log.Printf("[k8s] สร้าง namespace '%s' (space '%s' ของ user id=%d) แล้ว",
 			name, ns.Name, ns.ContributorID)
-		return nil
+		return true, nil
 	}
 	if !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("สร้าง namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", name, err)
+		return false, fmt.Errorf("สร้าง namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", name, err)
 	}
 
 	// มีอยู่แล้ว — เป็นได้ทั้ง "เรียกซ้ำตามปกติ" และ "ตัวเดิมยังลบไม่เสร็จ" ต้องอ่านมาดูก่อนว่าอันไหน
@@ -144,12 +205,12 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// หายไประหว่าง Create กับ Get พอดี = ตัวเดิมเพิ่งลบเสร็จ สั่งใหม่อีกรอบได้เลย
-			return fmt.Errorf("%w (namespace '%s')", ErrNamespaceTerminating, name)
+			return false, fmt.Errorf("%w (namespace '%s')", ErrNamespaceTerminating, name)
 		}
-		return fmt.Errorf("อ่าน namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", name, err)
+		return false, fmt.Errorf("อ่าน namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", name, err)
 	}
 	if existing.Status.Phase == corev1.NamespaceTerminating || existing.DeletionTimestamp != nil {
-		return fmt.Errorf("%w (namespace '%s')", ErrNamespaceTerminating, name)
+		return false, fmt.Errorf("%w (namespace '%s')", ErrNamespaceTerminating, name)
 	}
 
 	// ของเดิมใช้ได้ — เหลือแค่ดัน metadata ให้ตรงกับ DB (ผู้ใช้อาจเปลี่ยนชื่อ space ทีหลัง)
@@ -173,7 +234,7 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 		}
 	}
 	if !changed {
-		return nil
+		return false, nil
 	}
 
 	if _, err := cs.CoreV1().Namespaces().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
@@ -182,11 +243,142 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 		// จะถอยไปลบแถวใน DB ทิ้งทั้งที่ namespace ใช้งานได้ปกติ — เสียหายกว่าป้ายไม่ตรงเยอะ
 		log.Printf("!! อัปเดต metadata ของ namespace '%s' ไม่สำเร็จ (namespace ใช้งานได้ปกติ): %v", name, err)
 	}
-	return nil
+	return false, nil
+}
 
-	// TODO ขั้นถัดไปในนี้: ResourceQuota (ns.CPULimitMilli / ns.RAMLimitMB),
-	// LimitRange ค่า default ต่อ container, และ NetworkPolicy default-deny
-	// ทั้งสามตัวต้อง idempotent แบบเดียวกัน (Create → AlreadyExists → Update)
+// ensureResourceQuota ตั้งเพดานทรัพยากร "รวมทั้ง namespace" ให้ตรงกับ ns.CPULimitMilli / ns.RAMLimitMB
+//
+// นี่คือชั้นบังคับจริง ส่วน QuotaService ใน backend เป็นแค่ชั้นที่ตอบผู้ใช้ให้เร็วและมีข้อความสวยๆ
+// ทั้งสองชั้นต้องคิดเลขแบบเดียวกันเป๊ะ ไม่งั้นผู้ใช้จะเจอ "DB บอกว่าโควตาพอ แต่ deploy แล้วโดนปฏิเสธ"
+// ซึ่ง debug ยากมาก — QuotaService หักโควตาเป็น cpu_milli × replicas (ยอดรวมทุก Pod)
+// ตรงกับที่ ResourceQuota นับ requests.cpu รวมทุก Pod ในnamespace พอดี
+//
+// ทำไมตั้งทั้ง requests.* และ limits.* เป็นค่าเดียวกัน:
+//   - ใส่ limits.* ใน Hard ด้วย = บังคับให้ทุก container ต้องมี limit (ไม่มี = ถูกปฏิเสธ)
+//     ซึ่ง LimitRange ด้านล่างเติมให้อยู่แล้ว จึงไม่มีทาง deploy ไม่ผ่านเพราะข้อนี้
+//   - ตั้งเท่ากับ requests = ห้าม burst เกินที่จองไว้ ตรงกับความหมายของ "โควตา 300%" ที่ตกลงกัน
+//     ถ้าปล่อยให้ limits สูงกว่า requests ได้ ผู้ใช้จะแอบใช้เกินโควตาตอนคนอื่นว่าง
+//
+// ไม่ใส่ count/pods ใน Hard โดยตั้งใจ: DB ไม่ได้นับจำนวน Pod เป็นแกนโควตา (นับแค่ cpu/ram)
+// ถ้าใส่เพดานที่ backend มองไม่เห็น ก็จะสร้างเคส "DB บอกพอ แต่คลัสเตอร์ปฏิเสธ" ขึ้นมาเอง
+// จำนวน Pod ถูกคุมทางอ้อมอยู่แล้วจาก cpu ขั้นต่ำต่อ service (100m → เต็มที่ 80 Pod ที่โควตาสูงสุด 8 core)
+func (k *KubernetesProvisioner) ensureResourceQuota(
+	ctx context.Context, cs kubernetes.Interface, nsName string, ns *entity.Namespace,
+) error {
+	cpu := *resource.NewMilliQuantity(int64(ns.CPULimitMilli), resource.DecimalSI)
+	mem := *resource.NewQuantity(int64(ns.RAMLimitMB)*1024*1024, resource.BinarySI)
+
+	spec := corev1.ResourceQuotaSpec{
+		Hard: corev1.ResourceList{
+			corev1.ResourceRequestsCPU:    cpu,
+			corev1.ResourceLimitsCPU:      cpu,
+			corev1.ResourceRequestsMemory: mem,
+			corev1.ResourceLimitsMemory:   mem,
+		},
+	}
+	desired := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      quotaObjectName,
+			Namespace: nsName,
+			Labels:    map[string]string{labelManagedBy: managedByCaesar},
+		},
+		Spec: spec,
+	}
+
+	quotas := cs.CoreV1().ResourceQuotas(nsName)
+	if _, err := quotas.Create(ctx, desired, metav1.CreateOptions{}); err == nil {
+		log.Printf("[k8s] ตั้งโควตา namespace '%s' เป็น %dm CPU / %d MB แล้ว",
+			nsName, ns.CPULimitMilli, ns.RAMLimitMB)
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("ตั้ง ResourceQuota ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+
+	// มีอยู่แล้ว (มาจาก SetQuota) → ทับ spec ด้วยค่าใหม่
+	//
+	// k8s ยอมให้ลดเพดานลงต่ำกว่ายอดที่ใช้อยู่: Pod เดิมรันต่อได้ แต่สร้างเพิ่มไม่ได้จนกว่าจะลบของเก่า
+	// ซึ่งเป็นพฤติกรรมเดียวกับที่ NamespaceManager.SetQuota ระบุไว้ จึงไม่ต้องเช็คยอดใช้ก่อน
+	existing, err := quotas.Get(ctx, quotaObjectName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("อ่าน ResourceQuota ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	existing.Spec = spec
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	existing.Labels[labelManagedBy] = managedByCaesar
+
+	if _, err := quotas.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("อัปเดต ResourceQuota ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	log.Printf("[k8s] อัปเดตโควตา namespace '%s' เป็น %dm CPU / %d MB แล้ว",
+		nsName, ns.CPULimitMilli, ns.RAMLimitMB)
+	return nil
+}
+
+// ensureLimitRange ตั้งกติกาต่อ "1 container" ใน namespace — คนละชั้นกับ ResourceQuota ที่คุมยอดรวม
+//
+// ทำ 2 อย่าง:
+//   - Default / DefaultRequest: container ที่ไม่ระบุ resource มาเอง จะถูกเติมค่าให้อัตโนมัติ
+//     จำเป็นเพราะ ResourceQuota ด้านบนมี requests.*/limits.* อยู่ใน Hard — container ที่ไม่มี
+//     ค่าเหล่านี้จะถูก k8s ปฏิเสธทันที LimitRange คือตัวที่ทำให้ไม่มีทางเกิดเคสนั้น
+//   - Max: เพดานของ container เดี่ยวๆ ตรงกับ entity.MaxCPUMilliPerService / MaxRAMMBPerService
+//     ที่ QuotaService.ReserveAndInsert เช็คไว้แล้ว — ตั้งให้ตรงกันเพื่อไม่ให้สองชั้นขัดกันเอง
+//
+// ไม่ตั้ง Min เพราะไม่มีประโยชน์: ทุก Pod ในนี้เกิดจาก DeployService ของเราเอง ซึ่งผ่านด่าน
+// min=100m/128Mi ของ dto.CreateServiceRequest มาแล้ว การเพิ่ม Min มีแต่จะสร้างโอกาสตั้งค่าขัดกัน
+//
+// LimitRange ไม่ขึ้นกับโควตาของ namespace เลย (ทุก namespace ได้ค่าชุดเดียวกัน) จึงไม่ต้องรับ ns
+func (k *KubernetesProvisioner) ensureLimitRange(
+	ctx context.Context, cs kubernetes.Interface, nsName string,
+) error {
+	spec := corev1.LimitRangeSpec{
+		Limits: []corev1.LimitRangeItem{{
+			Type: corev1.LimitTypeContainer,
+			Default: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(defaultContainerCPUMilli, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(defaultContainerRAMMB*1024*1024, resource.BinarySI),
+			},
+			DefaultRequest: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(defaultContainerCPUMilli, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(defaultContainerRAMMB*1024*1024, resource.BinarySI),
+			},
+			Max: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(entity.MaxCPUMilliPerService, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(entity.MaxRAMMBPerService*1024*1024, resource.BinarySI),
+			},
+		}},
+	}
+	desired := &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      limitsObjectName,
+			Namespace: nsName,
+			Labels:    map[string]string{labelManagedBy: managedByCaesar},
+		},
+		Spec: spec,
+	}
+
+	limits := cs.CoreV1().LimitRanges(nsName)
+	if _, err := limits.Create(ctx, desired, metav1.CreateOptions{}); err == nil {
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("ตั้ง LimitRange ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+
+	existing, err := limits.Get(ctx, limitsObjectName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("อ่าน LimitRange ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	existing.Spec = spec
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	existing.Labels[labelManagedBy] = managedByCaesar
+
+	if _, err := limits.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("อัปเดต LimitRange ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	return nil
 }
 
 // DeleteNamespace ลบ namespace ทิ้งทั้งก้อน — workload ข้างในถูกเก็บตามไปด้วยโดย k8s เอง
@@ -220,6 +412,10 @@ func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName stri
 // → containerPort = svc.ContainerPort → svc.EnvVars ใส่เป็น container env (corev1.EnvVar)
 // → apply Deployment + Service(type=NodePort, targetPort=svc.ContainerPort) เข้า cluster
 // → อ่าน nodePort ที่ k8s สุ่มจ่ายให้ (หรือระบุเองถ้าอยากคุมเลข) → เซ็ตกลับที่ svc.NodePort ก่อน return
+//
+// requests ต้องเท่ากับ limits เสมอ ไม่งั้นชน ResourceQuota ที่ ensureResourceQuota ตั้งไว้
+// (Hard มีทั้ง requests.* และ limits.* เป็นค่าเดียวกัน — limits ที่สูงกว่า requests จะทำให้
+// ยอดรวมฝั่ง limits ทะลุก่อน ทั้งที่ backend คิดว่าโควตายังเหลือ)
 //
 // targetPort ต้องชี้ที่ ContainerPort เสมอ — ตั้งผิดแล้ว Service จะสร้างสำเร็จแต่ traffic เข้าไปไม่มีใครฟัง
 // กลายเป็น connection refused ที่ debug ยากเพราะ deploy "ผ่าน"
