@@ -2,7 +2,6 @@ import {
   Home,
   Box,
   FileText,
-  Bell,
   Settings,
 } from "lucide-react";
 
@@ -21,19 +20,11 @@ export const userNavItems: NavItem[] = [
     requiresVm: true
   },
   
-  // 3. การแจ้งเตือน & คำขอต่างๆ (Communication & Tracking)
+  // 3. คำขอต่างๆ (Communication & Tracking)
   { 
     label: "My Requests", 
     icon: FileText, 
     path: `/${PATHS.requestResources}` 
-  },
-  {
-    label: "Alerts",
-    icon: Bell,
-    // ไม่ตั้ง badge เป็นเลขตายตัว — DashboardLayout เติมจำนวนที่ยังไม่ได้อ่านจริงให้ตอน render
-    badgeSource: "alerts",
-    path: `/${PATHS.alertuser}`,
-    requiresVm: true
   },
   
   // 4. การตั้งค่าบัญชี (System) - ไว้ล่างสุดเสมอ

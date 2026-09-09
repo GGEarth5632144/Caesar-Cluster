@@ -119,7 +119,7 @@ func (m *MockProvisioner) Logs(ctx context.Context, nsName, svcName string, opts
 }
 
 // mockLogLine สร้างเนื้อ log ปลอมของบรรทัดที่ n — ส่วนใหญ่เป็น access log ปกติ
-// แทรก error/warning เป็นระยะ เพราะ LogAlertScanner อ่าน log จาก provisioner ตัวเดียวกันนี้
+// แทรก error/warning เป็นระยะ ให้หน้า log viewer มีของจริงให้ดูตอน dev
 // ถ้า mock พ่นแต่ "GET / 200" ล้วน ฟีเจอร์แจ้งเตือนจะทดสอบบนเครื่อง dev ไม่ได้เลย
 //
 // ใช้ n % k แทนการสุ่ม เพื่อให้ผลลัพธ์นิ่งพอที่เทสต์จะยืนยันจำนวนได้

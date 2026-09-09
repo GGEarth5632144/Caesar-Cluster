@@ -18,7 +18,7 @@ type CreateRequestRequest struct {
 
 // DenyRequestRequest = body ของ PATCH /api/admin/requests/:id/deny (admin เท่านั้น)
 // reason บังคับ — ผู้ยื่นต้องได้รู้ว่าคำขอถูกปฏิเสธเพราะอะไร ข้อความนี้ถูกเก็บไว้กับคำขอ
-// และถูกยิงเป็นแจ้งเตือน (UserAlert) ไปโผล่ในหน้า Alerts ของผู้ยื่นตามที่ admin เขียนไว้
+// และถูกเก็บไว้กับคำขอ ให้ผู้ยื่นอ่านเหตุผลได้จากหน้า "คำขอของฉัน"
 type DenyRequestRequest struct {
 	Reason string `json:"reason" binding:"required,min=1,max=1000"`
 }

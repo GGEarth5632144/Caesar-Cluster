@@ -54,26 +54,6 @@ type Config struct {
 	// อีเมลที่ผู้ใช้ตอบกลับได้จริง (ว่าง = ไม่ใส่ header Reply-To)
 	// กล่อง no-reply ที่ตอบกลับไม่ได้เลยถูกตัวกรองสแปมหักคะแนน — ดู mailer.Config.ReplyTo
 	MailReplyTo string
-
-	// AlertScan = ค่าของตัวสแกน log หา error แล้วส่งเข้าหน้า Alerts
-	AlertScan AlertScanConfig
-}
-
-// AlertScanConfig = ค่าที่คุม LogAlertScanner (ตัวที่เดินอ่าน log ของทุก service เป็นรอบๆ)
-type AlertScanConfig struct {
-	// เปิด/ปิดตัวสแกนทั้งก้อน — ปิดแล้วหน้า Alerts ยังใช้ได้ปกติ แค่ไม่มีแจ้งเตือนใหม่จาก log
-	Enabled bool
-
-	// ทุกกี่วินาทีจะเดินสแกนหนึ่งรอบ — default 60 วิ: ถี่พอให้รู้ตัวว่า service พังภายในหนึ่งนาที
-	// แต่ไม่ถี่จนยิง Kubernetes API รัวๆ บน control-plane ตัวเดียว
-	IntervalSeconds int
-
-	// ดึง log ย้อนหลังสูงสุดกี่บรรทัดต่อ service ต่อรอบ
-	// กัน container ที่พ่น log เป็นหมื่นบรรทัดต่อนาทีดูดแรม/แบนด์วิดท์ของ backend ไปหมด
-	MaxLinesPerScan int
-
-	// ส่ง warning เข้าหน้า Alerts ด้วยหรือไม่ — default false ("ส่งเฉพาะที่มัน error")
-	IncludeWarnings bool
 }
 
 // Load อ่านค่า config จาก environment (โหลด .env ให้ก่อนถ้ามี)
@@ -108,13 +88,6 @@ func Load() *Config {
 		ResetTokenTTLMinutes: getEnvInt("RESET_TOKEN_TTL_MINUTES", 30),
 		VerifyTokenTTLHours:  getEnvInt("VERIFY_TOKEN_TTL_HOURS", 24),
 		MailReplyTo:          strings.TrimSpace(getEnv("MAIL_REPLY_TO", "")),
-
-		AlertScan: AlertScanConfig{
-			Enabled:         getEnvBool("ALERT_SCAN_ENABLED", true),
-			IntervalSeconds: getEnvInt("ALERT_SCAN_INTERVAL_SECONDS", 60),
-			MaxLinesPerScan: getEnvInt("ALERT_SCAN_MAX_LINES", 500),
-			IncludeWarnings: getEnvBool("ALERT_SCAN_INCLUDE_WARNINGS", false),
-		},
 	}
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")
@@ -186,23 +159,6 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
-}
-
-// getEnvBool อ่าน env ที่เป็นค่าเปิด/ปิด — รับได้ทั้ง true/false, 1/0, yes/no, on/off
-// ค่าที่แปลไม่ออกจะคืน fallback พร้อม log เตือน (แบบเดียวกับ getEnvInt) ไม่เงียบหายไปเฉยๆ
-func getEnvBool(key string, fallback bool) bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-	switch v {
-	case "":
-		return fallback
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		log.Printf("ค่า env %s=%q ไม่ใช่ค่าเปิด/ปิด ใช้ค่า default %v แทน", key, v, fallback)
-		return fallback
-	}
 }
 
 // hasPublicHost บอกว่า origin ชี้ไปโดเมนจริงที่คนนอกเปิดได้ไหม — ใช้ตัดสินแค่ว่าจะเตือนหรือไม่
