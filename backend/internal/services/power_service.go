@@ -24,7 +24,7 @@ func NewPowerService(db *gorm.DB) *PowerService {
 }
 
 func (s *PowerService) StartPowerWorker() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	go func() {
 		for range ticker.C {
 			s.fetchAndSavePower()
@@ -40,35 +40,50 @@ func (s *PowerService) fetchAndSavePower() {
 		return
 	}
 
-	// 1. สร้าง Custom HTTP Client และตั้ง Timeout ป้องกันการค้าง
-	// ให้เวลารอแค่ 4 วินาที เพราะ Ticker เราทำงานทุกๆ 5 วินาที
-	client := &http.Client{
-		Timeout: 4 * time.Second,
+	// 1. สร้าง Request ด้วยตัวเองแทนการใช้ http.Get ตรงๆ
+	req, err := http.NewRequest("GET", promQueryURL, nil)
+	if err != nil {
+		fmt.Println("Error creating request:", err)
+		return
 	}
 
-	// 2. ใช้ client.Get แทน http.Get
-	resp, err := client.Get(promQueryURL)
+	// 🚨 ท่าไม้ตายที่ 1: บังคับปิด Connection ทันที (ป้องกันบอร์ด ESP ซ็อกเก็ตเต็ม)
+	req.Close = true 
+	
+	// 🚨 ท่าไม้ตายที่ 2: ปลอมตัวเป็น Browser เผื่อบอร์ดมันเตะบอท
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36")
+
+	// 🚨 ท่าไม้ตายที่ 3: ปิด Keep-Alive ที่ฝั่ง Transport ควบคู่กันไป
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,  
+			Proxy:             nil,   
+			ForceAttemptHTTP2: false, 
+		},
+	}
+
+	// ใช้ client.Do(req) แทน client.Get
+	resp, err := client.Do(req)
 	if err != nil {
-		// ถ้าดึงไม่ได้ (เช่น Timeout หรือบอร์ดไม่ตอบ) ก็แค่ Print บอกแล้ว Return ทิ้งไปเลย
-		// เดี๋ยวอีก 5 วินาที Worker ก็จะวนกลับมาดึงใหม่เอง
 		fmt.Println("Skip this tick - Fetch error or Timeout:", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	// 3. เช็ก Status Code กันเหนียว เผื่อบอร์ดส่ง 404 หรือ 503 กลับมาแทน JSON
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("Skip this tick - Device returned HTTP %d\n", resp.StatusCode)
 		return
 	}
 
-	// 4. แปลง JSON ตามปกติ
+	// Decode JSON 
 	var kwsData dto.KWSResponse
 	if err := json.NewDecoder(resp.Body).Decode(&kwsData); err != nil {
 		fmt.Println("Error decoding power data:", err)
 		return
 	}
 
+	// ... (ส่วนโค้ด For loop คำนวณ watt และบันทึกลง Database ให้คงไว้เหมือนเดิมเป๊ะๆ เลยครับ) ...
 	var powerRecords []entity.PowerNode
 
 	for _, child := range kwsData.Children {
@@ -112,7 +127,6 @@ func (s *PowerService) fetchAndSavePower() {
 		for _, n := range powerRecords {
 			totalWatt += n.Watt
 			totalAmp += n.Amp
-			// เอาเฉพาะตัวที่น่าจะทำงานจริงมาคิดค่าเฉลี่ย Volt (หลีกเลี่ยงตัวที่ดึงไฟไม่ถึง)
 			if n.Volt > 0 {
 				totalVolt += n.Volt
 				activeCount++
@@ -131,7 +145,6 @@ func (s *PowerService) fetchAndSavePower() {
 			AvgVolt:   avgVolt,
 		}
 
-		// บันทึกลงตารางประวัติ (PowerHistory)
 		if err := s.DB.Create(&historyRecord).Error; err != nil {
 			fmt.Printf("Error saving power history: %v\n", err)
 		}
