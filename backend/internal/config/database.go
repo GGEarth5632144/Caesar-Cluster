@@ -68,6 +68,8 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.SystemAlert{},
 		&entity.AuditLog{},
 		&entity.NodeTelemetry{},
+		&entity.PowerNode{},
+		&entity.PowerHistory{},
 	); err != nil {
 		log.Fatalf("automigrate failed: %v", err)
 	}

@@ -4,8 +4,7 @@ import {
   Users,
   Server,
   Layers,         // แนะนำให้ใช้ Layers หรือ ServerCog แทน Service (ไม่มีใน lucide)
-  Sliders,
-  BellRing,       // ใช้ BellRing ให้ดูเป็นการแจ้งเตือนที่ตื่นตัวขึ้น (หรือใช้ Bell ก็ได้)
+  Sliders,     // ใช้ BellRing ให้ดูเป็นการแจ้งเตือนที่ตื่นตัวขึ้น (หรือใช้ Bell ก็ได้)
   ScrollText,
   Settings,       // เปลี่ยนจาก User เป็น Settings (รูปเฟือง)
   Upload,
@@ -19,8 +18,7 @@ export const adminNavItems: NavItem[] = [
   { label: "General Dashboard", icon: Home, path: "/" },//กำลังทำ
   
   // 2. สิ่งที่แอดมินต้องจัดการ/ตรวจสอบเป็นอันดับแรก
-  { label: "Request", icon: Inbox, path: `/${PATHS.adminRequest}` },
-  { label: "Alert", icon: BellRing, path: `/${PATHS.alertadmin}` },//กำลังทำ
+  { label: "Request Resorce", icon: Inbox, path: `/${PATHS.adminRequest}` },
 
   // 3. การจัดการทรัพยากรหลักในระบบ (เรียงจากคน -> เครื่อง -> เซอร์วิส -> โควตา)
   { label: "User Management", icon: Users, path: `/${PATHS.userManagement}` },

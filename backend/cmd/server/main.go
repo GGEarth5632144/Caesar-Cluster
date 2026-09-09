@@ -51,6 +51,8 @@ func main() {
 	inviteMgr := services.NewInviteManager(db)
 	telemetrySvc := services.NewTelemetryService(db)
 	telemetrySvc.StartTelemetryWorker()
+	powerService := services.NewPowerService(db)
+	powerService.StartPowerWorker()
 
 	alertMgr := services.NewAlertManager(db)
 
@@ -71,7 +73,7 @@ func main() {
 		}).Run(ctx)
 	}()
 
-	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, alertMgr)
+	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, alertMgr ,powerService)
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 
 	// ListenAndServe ล้มเหลวแล้วห้าม log.Fatal ตรงนี้ — os.Exit จะข้าม Shutdown และ wg.Wait()
