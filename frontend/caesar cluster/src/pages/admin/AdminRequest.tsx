@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
-import { Plus, Edit2, Trash2, CheckSquare, Square, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Edit2, Trash2, CheckSquare, Square, ChevronLeft, ChevronRight } from "lucide-react";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { requestTemplatesScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 import { requestTemplateApi, type RequestTemplate, type CreateRequestTemplateDTO } from "../../api/adminrequest";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
@@ -122,25 +126,20 @@ interface ListViewProps {
 }
 
 function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
-  const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // กำหนดจำนวนแถวต่อหน้า
 
-  // 1. กรองข้อมูลตามคำค้นหา
-  const filteredData = data.filter((item) => {
-    const searchLower = searchTerm.toLowerCase();
-    return (
-      item.option_name.toLowerCase().includes(searchLower) ||
-      item.category.toLowerCase().includes(searchLower) ||
-      item.relate_subject.toLowerCase().includes(searchLower)
-    );
-  });
+  // 1. กรองข้อมูลด้วยช่องค้นหาบน Topbar (หน้านี้ลงทะเบียน scope ไว้ตอนที่ ListView อยู่บนจอ
+  //    ระหว่างอยู่ในฟอร์มเพิ่ม/แก้ไข ช่องค้นหาจะกลับไปเป็นโหมดข้ามหน้าเองอัตโนมัติ)
+  const { results: filteredData, isFiltering, highlightTerms } = usePageSearch(
+    requestTemplatesScope,
+    data,
+  );
 
-  // ฟังก์ชันจัดการเมื่อพิมพ์ช่องค้นหา (ให้กลับไปหน้า 1 เสมอ)
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
+  // เปลี่ยนคำค้นแล้วจำนวนแถวเปลี่ยน ถ้ายังค้างอยู่หน้า 3 อาจกลายเป็นหน้าว่าง — ดีดกลับหน้าแรก
+  useEffect(() => {
     setCurrentPage(1);
-  };
+  }, [filteredData.length]);
 
   // 2. คำนวณข้อมูลสำหรับแบ่งหน้า (Pagination)
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
@@ -152,18 +151,7 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
     <div className="rounded-3xl bg-[#FFFDF6] p-8 shadow-sm">
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-2xl font-bold text-[#BB6653]">Request Option</h2>
-        <div className="relative w-72">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <Search size={20} className="text-[#BB6653]/60" />
-          </div>
-          <input
-            type="text"
-            placeholder="Search"
-            value={searchTerm}
-            onChange={handleSearchChange}
-            className="w-full rounded-full border border-black/10 bg-white py-2.5 pl-10 pr-4 text-base text-[#211a14] outline-none transition-shadow focus:ring-2 focus:ring-[#BB6653]/50"
-          />
-        </div>
+        <SearchStatus />
       </div>
 
       <table className="w-full text-left text-base text-[#211a14]">
@@ -180,14 +168,18 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
           {paginatedData.length === 0 ? (
             <tr>
               <td colSpan={5} className="py-8 text-center text-neutral-500">
-                ไม่พบข้อมูลที่ค้นหา
+                {isFiltering ? "ไม่พบแม่แบบที่ตรงกับคำค้นหา" : "ยังไม่มีแม่แบบในระบบ"}
               </td>
             </tr>
           ) : (
             paginatedData.map((item) => (
               <tr key={item.id} className="border-b border-black/5 transition-colors last:border-0 hover:bg-black/[0.02]">
-                <td className="py-4 font-medium">{item.option_name}</td>
-                <td className="py-4">{item.relate_subject}</td>
+                <td className="py-4 font-medium">
+                  <Highlight text={item.option_name} terms={highlightTerms} />
+                </td>
+                <td className="py-4">
+                  <Highlight text={item.relate_subject} terms={highlightTerms} />
+                </td>
                 <td className="py-4 text-[#211a14]/70">
                   {item.cpu_limit_milli / 1000} Core / {Math.floor(item.ram_limit_mb / 1000)} GB
                 </td>

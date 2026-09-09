@@ -23,6 +23,10 @@ import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
 import { PATHS } from "@/config/routes";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { servicesScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 
 type EnvPair = { key: string; value: string };
 
@@ -164,6 +168,14 @@ export default function RequestQuotar() {
   const runningCount = services.filter((s) => s.status === "running").length;
   const deployingCount = services.filter((s) => s.status === "creating").length;
 
+  // ช่องค้นหาบน Topbar กรองการ์ดด้านล่าง — ตัวเลขสรุปบรรทัดบนยังนับจาก services ทั้งหมด
+  // เพราะเป็นภาพรวมของเนมสเปซ ไม่ใช่ผลของคำค้น
+  const {
+    results: visibleServices,
+    isFiltering,
+    highlightTerms,
+  } = usePageSearch(servicesScope, services);
+
   // backend เช็คโควตาให้ก่อน ถ้าไม่พอตอบ 409 แล้วเราคง state เดิมไว้ พร้อมโชว์เหตุผลที่ backend บอกมา
   const handleScale = async (id: number, replicas: number) => {
     setScalingId(id);
@@ -206,13 +218,16 @@ export default function RequestQuotar() {
               : `${services.length} total · ${runningCount} running · ${deployingCount} deploying`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-2 self-start rounded-xl bg-[#BB6653] px-5 py-3 text-base font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
-        >
-          <Plus size={18} strokeWidth={3} /> New Service
-        </button>
+        <div className="flex flex-wrap items-center gap-3 self-start">
+          {services.length > 0 && <SearchStatus />}
+          <button
+            type="button"
+            onClick={() => setShowCreate(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-3 text-base font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
+          >
+            <Plus size={18} strokeWidth={3} /> New Service
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -225,7 +240,7 @@ export default function RequestQuotar() {
         <ServiceCardsSkeleton />
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {services.map((svc) => {
+          {visibleServices.map((svc) => {
             const badge = statusBadge(svc.status);
             const isConfirming = pendingDeleteId === svc.id;
             const isDeleting = deletingId === svc.id;
@@ -245,8 +260,12 @@ export default function RequestQuotar() {
                       {initialsOf(svc.name)}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-[#211a14] truncate">{svc.name}</p>
-                      <p className="text-sm text-[#211a14]/45 truncate">{svc.image}</p>
+                      <p className="font-semibold text-[#211a14] truncate">
+                        <Highlight text={svc.name} terms={highlightTerms} />
+                      </p>
+                      <p className="text-sm text-[#211a14]/45 truncate">
+                        <Highlight text={svc.image} terms={highlightTerms} />
+                      </p>
                     </div>
                   </div>
                   <span
@@ -355,14 +374,23 @@ export default function RequestQuotar() {
             );
           })}
 
-          <button
-            type="button"
-            onClick={() => setShowCreate(true)}
-            className="rounded-2xl border-2 border-dashed border-black/10 p-6 flex flex-col items-center justify-center gap-2 text-[#211a14]/40 transition-colors hover:border-[#BB6653]/40 hover:text-[#BB6653] min-h-[168px]"
-          >
-            <Plus size={28} />
-            <span className="text-base font-semibold">Deploy a new service</span>
-          </button>
+          {/* ระหว่างกรองอยู่ ช่อง "สร้างใหม่" จะทำให้เข้าใจผิดว่าเป็นผลการค้นหา — สลับเป็นข้อความบอกผลแทน */}
+          {isFiltering ? (
+            visibleServices.length === 0 && (
+              <p className="col-span-full rounded-2xl border-2 border-dashed border-black/10 p-10 text-center text-base text-[#211a14]/45">
+                ไม่มีบริการที่ตรงกับคำค้นหา
+              </p>
+            )
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              className="rounded-2xl border-2 border-dashed border-black/10 p-6 flex flex-col items-center justify-center gap-2 text-[#211a14]/40 transition-colors hover:border-[#BB6653]/40 hover:text-[#BB6653] min-h-[168px]"
+            >
+              <Plus size={28} />
+              <span className="text-base font-semibold">Deploy a new service</span>
+            </button>
+          )}
         </div>
       )}
 

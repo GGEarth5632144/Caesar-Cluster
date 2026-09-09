@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, UserPlus, Edit2, Trash2, Cpu, Layers, Loader2, X ,Users} from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,10 @@ import {
 } from "@/api/eligibleStudents";
 import { PATHS } from "@/config/routes";
 import { notify, confirmAction } from "@/lib/modal";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { usersScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 type YearTab = "all" | "1" | "2" | "3" | "4" | "5+" | "admin";
 
 export default function UserManagement() {
@@ -20,7 +24,6 @@ export default function UserManagement() {
   const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<YearTab>("all");
-  const [searchTerm, setSearchTerm] = useState("");
 
   // State สำหรับเก็บข้อมูล User ที่กำลังถูกแก้ไข (ถ้าเป็น null คือปิด Modal)
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -75,29 +78,26 @@ export default function UserManagement() {
     setEditingUser(null);
   };
 
-  const filteredUsers = users.filter((user) => {
-    if (activeTab === "admin" && user.role_id !== 2) return false;
-    
-    if (activeTab !== "all" && activeTab !== "admin") {
-      if (user.role_id === 2) return false; 
-      
-      if (activeTab === "5+") {
-        if (user.year_level < 5) return false;
-      } else {
-        if (user.year_level.toString() !== activeTab) return false;
-      }
-    }
+  // แท็บชั้นปีกรองก่อน แล้วค่อยส่งที่เหลือให้ช่องค้นหาด้านบนกรองต่อ
+  // เรียงแบบนี้เพราะแท็บคือ "ขอบเขตที่กำลังดูอยู่" ส่วนคำค้นคือการหาของในขอบเขตนั้น
+  // ตัวเลข n/m ที่ Topbar โชว์จึงหมายถึง "เจอกี่คนในแท็บนี้" ซึ่งตรงกับสิ่งที่ตาเห็น
+  const usersInTab = useMemo(
+    () =>
+      users.filter((user) => {
+        if (activeTab === "admin") return user.role_id === 2;
+        if (activeTab === "all") return true;
+        if (user.role_id === 2) return false;
+        if (activeTab === "5+") return user.year_level >= 5;
+        return user.year_level.toString() === activeTab;
+      }),
+    [users, activeTab],
+  );
 
-    if (searchTerm) {
-      const lower = searchTerm.toLowerCase();
-      return (
-        (user.student_id || "").toLowerCase().includes(lower) ||
-        (user.real_name || "").toLowerCase().includes(lower) ||
-        (user.nick_name || "").toLowerCase().includes(lower)
-      );
-    }
-    return true;
-  });
+  const {
+    results: filteredUsers,
+    isFiltering,
+    highlightTerms,
+  } = usePageSearch(usersScope, usersInTab);
 
   const tabs: { id: YearTab; label: string }[] = [
     { id: "all", label: "ทั้งหมด" },
@@ -156,18 +156,7 @@ export default function UserManagement() {
             ))}
           </div>
 
-          <div className="relative w-full sm:w-64 shrink-0">
-            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-              <Search size={18} className="text-[#BB6653]/60" />
-            </div>
-            <input
-              type="text"
-              placeholder="ค้นหา"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-xl border border-black/10 bg-[#FFFDF6] py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
-            />
-          </div>
+          <SearchStatus className="shrink-0" />
         </div>
 
         <div className="-mx-6 overflow-x-auto sm:mx-0">
@@ -204,7 +193,11 @@ export default function UserManagement() {
                   <td colSpan={5} className="py-16 text-center text-neutral-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Search className="size-8 text-[#BB6653]/30" />
-                      <p>ไม่พบรายชื่อนักศึกษาในหมวดหมู่นี้</p>
+                      <p>
+                        {isFiltering
+                          ? "ไม่มีใครในแท็บนี้ตรงกับคำค้นหา"
+                          : "ไม่พบรายชื่อนักศึกษาในหมวดหมู่นี้"}
+                      </p>
                     </div>
                   </td>
                 </tr>
@@ -230,17 +223,24 @@ export default function UserManagement() {
                           </div>
                           <div className="min-w-0">
                             <div className="truncate font-semibold text-[#211a14]" title={user.real_name}>
-                              {user.real_name} {user.nick_name && <span className="text-[#211a14]/50">({user.nick_name})</span>}
+                              <Highlight text={user.real_name} terms={highlightTerms} />{" "}
+                              {user.nick_name && (
+                                <span className="text-[#211a14]/50">
+                                  (<Highlight text={user.nick_name} terms={highlightTerms} />)
+                                </span>
+                              )}
                             </div>
                             <div className="text-sm text-[#211a14]/60 mt-0.5">
-                              {user.student_id}
+                              <Highlight text={user.student_id} terms={highlightTerms} />
                             </div>
                           </div>
                         </div>
                       </td>
 
                       <td className="px-3 py-4 text-[#211a14]/70">
-                        <div className="truncate" title={user.gmail}>{user.gmail || "—"}</div>
+                        <div className="truncate" title={user.gmail}>
+                          {user.gmail ? <Highlight text={user.gmail} terms={highlightTerms} /> : "—"}
+                        </div>
                       </td>
 
                       <td className="px-3 py-4 text-[#211a14]/70">

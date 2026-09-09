@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Play, Pause, Search, Trash2, Download,
-  Loader2, Terminal, X, ArrowDownToLine,
+  ArrowLeft, Play, Pause, Trash2, Download,
+  Loader2, Terminal, ArrowDownToLine,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { serviceApi, type AppService } from "@/api/services";
 import { streamServiceLogs, type LogLine } from "@/api/logs";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { serviceLogsScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 import { PATHS } from "@/config/routes";
 
 // เพดานบรรทัดที่เก็บไว้ในหน่วยความจำ — live tail เปิดค้างเป็นชั่วโมงได้
@@ -34,7 +38,6 @@ export default function ServiceLogs() {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [follow, setFollow] = useState(true);
   const [tail, setTail] = useState<number>(200);
-  const [filter, setFilter] = useState("");
   const [connState, setConnState] = useState<ConnState>("connecting");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -127,11 +130,13 @@ export default function ServiceLogs() {
     if (paneRef.current) paneRef.current.scrollTop = paneRef.current.scrollHeight;
   };
 
-  const filteredLines = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return lines;
-    return lines.filter((l) => l.text.toLowerCase().includes(q));
-  }, [lines, filter]);
+  // ตัวกรอง log ย้ายไปอยู่ช่องค้นหาบน Topbar ทั้งหมด — ได้ของแถมคือรองรับ "วลีทั้งวลี",
+  // -คำที่ไม่เอา และ a|b ซึ่งเป็นสิ่งที่คนอ่าน log ต้องใช้บ่อยกว่าการพิมพ์คำเดียว
+  const {
+    results: filteredLines,
+    isFiltering,
+    highlightTerms,
+  } = usePageSearch(serviceLogsScope, lines);
 
   const handleDownload = () => {
     const content = lines.map((l) => (l.timestamp ? `${l.timestamp} ${l.text}` : l.text)).join("\n");
@@ -203,20 +208,7 @@ export default function ServiceLogs() {
           ))}
         </select>
 
-        <div className="flex min-w-[160px] flex-1 items-center gap-1.5 rounded-lg border border-black/10 bg-white px-2.5 py-1.5">
-          <Search size={15} className="text-[#211a14]/30 shrink-0" />
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="filter log lines..."
-            className="w-full bg-transparent text-sm text-[#211a14] placeholder:text-[#211a14]/30 outline-none"
-          />
-          {filter !== "" && (
-            <button type="button" onClick={() => setFilter("")} className="text-[#211a14]/30 hover:text-[#211a14]/60">
-              <X size={15} />
-            </button>
-          )}
-        </div>
+        <SearchStatus className="min-w-[160px]" />
 
         <button
           type="button"
@@ -263,7 +255,9 @@ export default function ServiceLogs() {
           <span className="size-2.5 rounded-full bg-yellow-500/70" />
           <span className="size-2.5 rounded-full bg-green-500/70" />
           <span className="ml-2 font-mono text-base text-white/30">
-            {filter ? `${filteredLines.length} / ${lines.length} lines (filtered)` : `${lines.length} lines`}
+            {isFiltering
+              ? `${filteredLines.length} / ${lines.length} lines (filtered)`
+              : `${lines.length} lines`}
           </span>
         </div>
 
@@ -278,14 +272,20 @@ export default function ServiceLogs() {
             </p>
           )}
           {connState !== "connecting" && filteredLines.length === 0 && (
-            <p className="text-white/20">{filter ? "ไม่มีบรรทัดที่ตรงกับตัวกรอง" : "ยังไม่มี log"}</p>
+            <p className="text-white/20">
+              {isFiltering ? "ไม่มีบรรทัดที่ตรงกับตัวกรอง" : "ยังไม่มี log"}
+            </p>
           )}
           {filteredLines.map((line) => (
             <p key={line.id} className="whitespace-pre-wrap break-all text-white/80">
               {line.timestamp && (
                 <span className="mr-2 text-white/25 select-none">{formatTimestamp(line.timestamp)}</span>
               )}
-              {line.text}
+              <Highlight
+                text={line.text}
+                terms={highlightTerms}
+                className="bg-[#F08B51]/45 text-white"
+              />
             </p>
           ))}
         </div>
