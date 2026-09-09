@@ -7,6 +7,10 @@ import {
   type PreviewEligibleStudentsResponse,
   type ConfirmEligibleStudentsResponse,
 } from "@/api/eligibleStudents";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { importPreviewScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 import { getApiErrorMessage } from "@/api/authApi";
 import { PATHS } from "@/config/routes";
 
@@ -171,6 +175,14 @@ function PreviewView({
 }) {
   const allSelected = data.valid.length > 0 && selectedIds.size === data.valid.length;
 
+  // ค้นในรายชื่อที่อ่านจากไฟล์ได้สำเร็จ — ไฟล์ทะเบียนมักมีหลายร้อยแถว
+  // การไล่หาว่า "คนนี้อยู่ในไฟล์ไหม" ด้วยตาก่อนกดยืนยันเป็นเรื่องที่ทำไม่ไหว
+  const {
+    results: visibleRows,
+    isFiltering,
+    highlightTerms,
+  } = usePageSearch(importPreviewScope, data.valid);
+
   return (
     <div className="mt-6 flex flex-col gap-6">
       <p className="text-base text-[#211a14]/70">
@@ -215,13 +227,17 @@ function PreviewView({
           <p className="text-base font-semibold text-[#BB6653]">
             เลือกรายชื่อที่จะ import ({selectedIds.size}/{data.valid.length} คน)
           </p>
-          <button
-            type="button"
-            onClick={onToggleAll}
-            className="text-sm font-medium text-[#BB6653] underline-offset-2 hover:underline"
-          >
-            {allSelected ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมด"}
-          </button>
+          <div className="flex items-center gap-3">
+            <SearchStatus />
+            <button
+              type="button"
+              onClick={onToggleAll}
+              className="text-sm font-medium text-[#BB6653] underline-offset-2 hover:underline"
+              title="ทำกับทุกแถวในไฟล์ ไม่ใช่เฉพาะแถวที่ค้นเจอ"
+            >
+              {allSelected ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมด"}
+            </button>
+          </div>
         </div>
         <div className="max-h-64 overflow-y-auto rounded-xl border border-black/10">
           <table className="w-full text-left text-base text-[#211a14]">
@@ -242,7 +258,7 @@ function PreviewView({
               </tr>
             </thead>
             <tbody>
-              {data.valid.map((item) => {
+              {visibleRows.map((item) => {
                 const checked = selectedIds.has(item.student_id);
                 return (
                   <tr
@@ -260,13 +276,26 @@ function PreviewView({
                         className="size-4 accent-[#BB6653]"
                       />
                     </td>
-                    <td className="px-4 py-2">{item.student_id}</td>
-                    <td className="px-4 py-2">{item.real_name}</td>
-                    <td className="px-4 py-2">{item.major}</td>
+                    <td className="px-4 py-2">
+                      <Highlight text={item.student_id} terms={highlightTerms} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <Highlight text={item.real_name} terms={highlightTerms} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <Highlight text={item.major} terms={highlightTerms} />
+                    </td>
                     <td className="px-4 py-2">{item.enrollment_status}</td>
                   </tr>
                 );
               })}
+              {isFiltering && visibleRows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-[#211a14]/45">
+                    ไม่มีรายชื่อในไฟล์ที่ตรงกับคำค้นหา
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

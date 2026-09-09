@@ -1,8 +1,12 @@
-import { useState, useEffect } from "react";
-import { Eye, Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, X, Loader2, Search, Calendar } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Eye, Clock, CheckCircle2, XCircle, Cpu, Layers, HardDrive, X, Loader2, Calendar } from "lucide-react";
 import { adminVmRequestApi, type AdminVmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { adminRequestQueueScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { notify } from "@/lib/modal";
 
@@ -39,7 +43,6 @@ export default function AdminRequestQueue() {
 
   // States สำหรับระบบ Filter และ Tabs
   const [activeTab, setActiveTab] = useState<TabType>("pending");
-  const [searchTerm, setSearchTerm] = useState("");
   const [cutoffDate, setCutoffDate] = useState(""); // เก็บรูปแบบ YYYY-MM-DDTHH:mm
 
   const fetchRequests = async () => {
@@ -91,27 +94,27 @@ export default function AdminRequestQueue() {
   // -------------------------------------------------------------
   // ระบบคัดกรองข้อมูล (Filter Logic)
   // -------------------------------------------------------------
-  const filteredRequests = requests.filter((req) => {
-    // 1. กรองตาม Tab (Status)
-    if (req.status !== activeTab) return false;
+  // แท็บสถานะกับตัววันเวลากรองก่อน แล้วจึงส่งที่เหลือให้ช่องค้นหาด้านบน
+  // (คำค้นที่พิมพ์ status:approved ในช่องบนก็ยังใช้ได้ แต่จะถูกจำกัดอยู่ในแท็บที่เปิดอยู่)
+  const requestsInTab = useMemo(
+    () =>
+      requests.filter((req) => {
+        if (req.status !== activeTab) return false;
+        if (cutoffDate) {
+          const reqDate = new Date(req.created_at).getTime();
+          const cutoff = new Date(cutoffDate).getTime();
+          if (reqDate > cutoff) return false;
+        }
+        return true;
+      }),
+    [requests, activeTab, cutoffDate],
+  );
 
-    // 2. กรองตามคำค้นหา (ชื่อ หรือ รหัสนักศึกษา)
-    if (searchTerm) {
-      const lowerSearch = searchTerm.toLowerCase();
-      const nameMatch = (req.requester_name || "").toLowerCase().includes(lowerSearch);
-      const studentIdMatch = (req.requester_student_id || "").toLowerCase().includes(lowerSearch);
-      if (!nameMatch && !studentIdMatch) return false;
-    }
-
-    // 3. กรองตามวันเวลา (Deadline)
-    if (cutoffDate) {
-      const reqDate = new Date(req.created_at).getTime();
-      const cutoff = new Date(cutoffDate).getTime();
-      if (reqDate > cutoff) return false;
-    }
-
-    return true;
-  });
+  const {
+    results: filteredRequests,
+    isFiltering,
+    highlightTerms,
+  } = usePageSearch(adminRequestQueueScope, requestsInTab);
 
   const detailRequest = requests.find((r) => r.id === detailId) ?? null;
   const pendingCount = requests.filter((r) => r.status === "pending").length;
@@ -158,19 +161,7 @@ export default function AdminRequestQueue() {
 
           {/* 2. Filters (Search & Date) */}
           <div className="flex flex-col sm:flex-row gap-3">
-            {/* Search Input */}
-            <div className="relative w-full sm:w-56">
-              <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                <Search size={18} className="text-[#BB6653]/60" />
-              </div>
-              <input
-                type="text"
-                placeholder="ค้นหาชื่อ, รหัสนักศึกษา..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full rounded-xl border border-black/10 bg-[#FFFDF6] py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
-              />
-            </div>
+            <SearchStatus />
 
             {/* Date Cutoff Input */}
             <div className="relative w-full sm:w-56">
@@ -239,7 +230,11 @@ export default function AdminRequestQueue() {
                     <td colSpan={5} className="py-16 text-center text-neutral-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <span className="text-5xl text-[#BB6653]/30">📭</span>
-                        <p>ไม่พบคำขอในหมวดหมู่นี้</p>
+                        <p>
+                          {isFiltering
+                            ? "ไม่มีคำขอในแท็บนี้ตรงกับคำค้นหา"
+                            : "ไม่พบคำขอในหมวดหมู่นี้"}
+                        </p>
                       </div>
                     </td>
                   </tr>
@@ -263,10 +258,19 @@ export default function AdminRequestQueue() {
                             </div>
                             <div className="min-w-0">
                               <div className="truncate font-semibold" title={req.requester_name || undefined}>
-                                {req.requester_name || `user #${req.user_id}`}
+                                {req.requester_name ? (
+                                  <Highlight text={req.requester_name} terms={highlightTerms} />
+                                ) : (
+                                  `user #${req.user_id}`
+                                )}
                               </div>
                               <div className="text-sm text-[#211a14]/50">
-                                {req.requester_student_id || "—"} · #REQ-{req.id}
+                                {req.requester_student_id ? (
+                                  <Highlight text={req.requester_student_id} terms={highlightTerms} />
+                                ) : (
+                                  "—"
+                                )}{" "}
+                                · #REQ-{req.id}
                               </div>
                             </div>
                           </div>

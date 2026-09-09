@@ -37,6 +37,9 @@ import {
   type PowerNode, 
   type PowerHistoryData 
 } from "@/api/mornitorequest";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { nodesScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
 
 // --- Constants ---
 const REFRESH_INTERVALS = [
@@ -265,6 +268,11 @@ export default function IPCmanagement() {
   const controlPlane = nodes.find((n) => n.NodeName === "intelnuc");
   const workerNodes = nodes.filter((n) => n.NodeName !== "intelnuc");
 
+  // ค้นเฉพาะการ์ดโหนดในกริดด้านล่าง — ตัวเลขสรุปและกราฟด้านบนยังคิดจากทุกโหนด
+  // เพราะเป็นสถานะของคลัสเตอร์ ไม่ควรเปลี่ยนตามคำที่พิมพ์ค้น
+  const { results: visibleNodes, isFiltering } = usePageSearch(nodesScope, nodes);
+  const visibleIds = new Set(visibleNodes.map((n) => n.ID));
+
   const totalWatt = powers.reduce((sum, p) => sum + p.Watt, 0);
   const avgVolt = powers.length > 0 ? powers.reduce((sum, p) => sum + p.Volt, 0) / powers.length : 0;
   
@@ -276,7 +284,10 @@ export default function IPCmanagement() {
       <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
         
         {/* --- Top Navbar --- */}
-        <div className="flex flex-col md:flex-row items-center justify-between bg-white border border-gray-200 rounded-2xl shadow-sm p-4 gap-4 sticky top-2 z-[100] bg-white/80 backdrop-blur-xl">
+        {/* z-30 พอให้ลอยเหนือการ์ด/กราฟในหน้า (ซึ่งไม่ได้ตั้ง z เลย) แต่ต้องต่ำกว่า z-50
+            ของกล่องผลลัพธ์ช่องค้นหาบน Topbar และ modal — ของในหน้าไม่ควรบังแถบเครื่องมือของแอป
+            (เดิมเป็น z-[100] ทำให้แถบนี้ทับกล่องค้นหาที่เด้งลงมาจากด้านบน) */}
+        <div className="flex flex-col md:flex-row items-center justify-between bg-white border border-gray-200 rounded-2xl shadow-sm p-4 gap-4 sticky top-2 z-30 bg-white/80 backdrop-blur-xl">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-50 rounded-lg">
               <Server className="h-6 w-6 text-indigo-600" />
@@ -578,16 +589,29 @@ export default function IPCmanagement() {
               <Server className="h-5 w-5 text-gray-500" />
               <h2 className="text-base font-extrabold text-gray-800">Node Cluster Status</h2>
             </div>
-            <span className="text-xs font-bold bg-gray-100 text-gray-600 px-3 py-1 rounded-full">
-              {onlineNodes.length} / {totalNodes} Online
-            </span>
+            <div className="flex items-center gap-3">
+              <SearchStatus />
+              <span className="text-xs font-bold bg-gray-100 text-gray-600 px-3 py-1 rounded-full">
+                {onlineNodes.length} / {totalNodes} Online
+              </span>
+            </div>
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {controlPlane && <NodeGridItem key={`n-${controlPlane.ID}`} node={controlPlane} />}
-            {workerNodes.map(node => (
-              <NodeGridItem key={`n-${node.ID}`} node={node} />
-            ))}
+            {/* control plane อยู่ใบแรกเสมอเพราะเป็นเครื่องที่ต้องมองก่อน — แต่ถ้ากรองแล้วไม่ตรงก็ต้องหายไปด้วย */}
+            {controlPlane && visibleIds.has(controlPlane.ID) && (
+              <NodeGridItem key={`n-${controlPlane.ID}`} node={controlPlane} />
+            )}
+            {workerNodes
+              .filter((node) => visibleIds.has(node.ID))
+              .map((node) => (
+                <NodeGridItem key={`n-${node.ID}`} node={node} />
+              ))}
+            {isFiltering && visibleNodes.length === 0 && (
+              <p className="col-span-full py-10 text-center text-sm text-gray-400">
+                ไม่มีโหนดที่ตรงกับคำค้นหา
+              </p>
+            )}
           </div>
         </div>
 
