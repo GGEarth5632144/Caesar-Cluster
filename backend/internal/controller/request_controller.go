@@ -10,6 +10,7 @@ import (
 
 	"backend/internal/dto"
 	"backend/internal/entity"
+	"backend/internal/services"
 	"backend/internal/utils"
 )
 
@@ -35,6 +36,14 @@ func (h *RequestController) Create(c *gin.Context) {
 	var req dto.CreateRequestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	// ตรวจเพดานตั้งแต่ตอนยื่น ไม่ใช่ไปเจอตอนแอดมินกดอนุมัติ — ตัวเลขคู่นี้จะถูกใช้ตั้ง
+	// ResourceQuota ของ namespace ตรงๆ ถ้าปล่อยคำขอที่เกินเพดานเข้าคิวไว้ คนยื่นจะรอเก้อ
+	// แล้วแอดมินก็ทำอะไรไม่ได้นอกจาก deny (ดู AdminController.Approve)
+	if err := services.ValidateQuota(req.CPULimitMilli, req.RAMLimitMB); err != nil {
+		utils.Error(c, http.StatusBadRequest, "QUOTA_OUT_OF_RANGE", err.Error())
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"backend/internal/dto"
+	"backend/internal/entity"
 	"backend/internal/services"
 	"backend/internal/utils"
 )
@@ -43,7 +44,10 @@ func (h *NamespaceController) Create(c *gin.Context) {
 		return
 	}
 
-	ns, err := h.ns.Create(c.Request.Context(), c.GetInt("userID"), req.Name)
+	// เส้นทางนี้ไม่ผ่านคำขอ จึงไม่มีตัวเลขที่ผู้ใช้ขอไว้ให้ใช้ — ได้โควตาตั้งต้นไปก่อน
+	// แล้วขอเพิ่มทีหลังผ่านแอดมิน (ต่างจาก AdminController.Approve ที่ใช้ค่าจาก requests)
+	ns, err := h.ns.Create(c.Request.Context(), c.GetInt("userID"), req.Name,
+		entity.DefaultCPULimitMilli, entity.DefaultRAMLimitMB)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrAlreadyInNamespace):

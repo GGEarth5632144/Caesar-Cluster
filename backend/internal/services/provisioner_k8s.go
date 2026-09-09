@@ -154,7 +154,7 @@ func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.
 // WithoutCancel ด้วยเหตุผลเดียวกับ NamespaceManager.Create: ถ้าที่พังคือ ctx ถูก cancel
 // (ผู้ใช้ปิดหน้าเว็บ) การลบด้วย ctx ตัวเดิมจะล้มตามทันที แล้ว namespace เปล่าค้างบนคลัสเตอร์ถาวร
 func (k *KubernetesProvisioner) rollbackFreshNamespace(
-	ctx context.Context, cs kubernetes.Interface, name string, created bool, cause error,
+ctx context.Context, cs kubernetes.Interface, name string, created bool, cause error,
 ) {
 	if !created {
 		return
