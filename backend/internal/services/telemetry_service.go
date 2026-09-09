@@ -40,24 +40,40 @@ func (s *TelemetryService) StartTelemetryWorker() {
 }
 
 // queryPrometheus เป็น Helper สำหรับยิง HTTP GET ไปที่ Prometheus API
+// queryPrometheus เป็น Helper สำหรับยิง HTTP GET ไปที่ Prometheus API (แบบกันค้าง)
 func (s *TelemetryService) queryPrometheus(promQuery string) (*dto.PrometheusResponse, error) {
 
 	promQueryURL := os.Getenv("PATH_PROMETHEUS_QUERY")
+	if promQueryURL == "" {
+		return nil, fmt.Errorf("PATH_PROMETHEUS_QUERY is empty")
+	}
 
 	// ต้องใช้ url.QueryEscape เพื่อแปลงช่องว่างและเครื่องหมายใน PromQL ให้ปลอดภัยสำหรับ URL
-	apiURL := fmt.Sprintf(promQueryURL, url.QueryEscape(promQuery)) 
-	
-	resp, err := http.Get(apiURL)
+	apiURL := fmt.Sprintf(promQueryURL, url.QueryEscape(promQuery))
+
+	// 1. สร้าง Client แบบตั้งเวลา Timeout แค่ 4 วินาที
+	// ถ้านานกว่านี้ถือว่า Prometheus หมุนนานไป ช่างมัน ปล่อยผ่าน
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+	}
+
+	resp, err := client.Get(apiURL)
 	if err != nil {
+		// ถ้าดึงไม่ได้ (เช่น Timeout) คืนค่า error กลับไปเลย โค้ดที่เรียกใช้จะได้ข้ามไป
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// 2. ถ้าไม่ได้ Status 200 OK ให้ข้ามไปเลย ไม่ต้องพยายามอ่าน JSON
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Prometheus returned HTTP %d", resp.StatusCode)
+	}
 
 	var result dto.PrometheusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	
+
 	return &result, nil
 }
 
@@ -160,16 +176,28 @@ type ClusterHistoryData struct {
 
 // queryPrometheusRange เป็น Helper สำหรับยิง HTTP GET ไปที่ API query_range ของ Prometheus
 func (s *TelemetryService) queryPrometheusRange(promQuery string, start, end int64, step string) (*dto.PrometheusResponse, error) {
-	// แนะนำให้กำหนด ENV สำหรับเส้นนี้แยกต่างหาก เพื่อความคลีน (ดูคำอธิบายด้านล่าง)
-	promRangeURL := os.Getenv("PATH_PROMETHEUS_QUERY_RANGE") 
-	
+	promRangeURL := os.Getenv("PATH_PROMETHEUS_QUERY_RANGE")
+	if promRangeURL == "" {
+		return nil, fmt.Errorf("PATH_PROMETHEUS_QUERY_RANGE is empty")
+	}
+
 	apiURL := fmt.Sprintf(promRangeURL, url.QueryEscape(promQuery), start, end, step)
-	
-	resp, err := http.Get(apiURL)
+
+	// 1. การดึงประวัติกราฟ (History) อาจจะต้องให้เวลามันคิดนานกว่าหน่อย
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get(apiURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// 2. ถ้าไม่ได้ Status 200 OK ให้ข้าม
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Prometheus returned HTTP %d", resp.StatusCode)
+	}
 
 	var result dto.PrometheusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
