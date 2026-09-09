@@ -35,19 +35,39 @@ func (s *PowerService) StartPowerWorker() {
 
 func (s *PowerService) fetchAndSavePower() {
 	promQueryURL := os.Getenv("GET_POWERS_URL")
-	resp, err := http.Get(promQueryURL)
+	if promQueryURL == "" {
+		fmt.Println("Warning: GET_POWERS_URL is empty")
+		return
+	}
+
+	// 1. สร้าง Custom HTTP Client และตั้ง Timeout ป้องกันการค้าง
+	// ให้เวลารอแค่ 4 วินาที เพราะ Ticker เราทำงานทุกๆ 5 วินาที
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+	}
+
+	// 2. ใช้ client.Get แทน http.Get
+	resp, err := client.Get(promQueryURL)
 	if err != nil {
-		fmt.Println("Error fetching power data:", err)
+		// ถ้าดึงไม่ได้ (เช่น Timeout หรือบอร์ดไม่ตอบ) ก็แค่ Print บอกแล้ว Return ทิ้งไปเลย
+		// เดี๋ยวอีก 5 วินาที Worker ก็จะวนกลับมาดึงใหม่เอง
+		fmt.Println("Skip this tick - Fetch error or Timeout:", err)
 		return
 	}
 	defer resp.Body.Close()
+
+	// 3. เช็ก Status Code กันเหนียว เผื่อบอร์ดส่ง 404 หรือ 503 กลับมาแทน JSON
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("Skip this tick - Device returned HTTP %d\n", resp.StatusCode)
+		return
+	}
+
+	// 4. แปลง JSON ตามปกติ
 	var kwsData dto.KWSResponse
 	if err := json.NewDecoder(resp.Body).Decode(&kwsData); err != nil {
 		fmt.Println("Error decoding power data:", err)
 		return
 	}
-
-	
 
 	var powerRecords []entity.PowerNode
 
@@ -81,39 +101,40 @@ func (s *PowerService) fetchAndSavePower() {
 
 		if err != nil {
 			fmt.Printf("Error saving power metrics: %v\n", err)
+			return
 		}
 
 		var totalWatt float64
-        var totalAmp float64
-        var totalVolt float64
-        var activeCount int
+		var totalAmp float64
+		var totalVolt float64
+		var activeCount int
 
-        for _, n := range powerRecords {
-            totalWatt += n.Watt
-            totalAmp += n.Amp
-            // เอาเฉพาะตัวที่น่าจะทำงานจริงมาคิดค่าเฉลี่ย Volt (หลีกเลี่ยงตัวที่ดึงไฟไม่ถึง)
-            if n.Volt > 0 {
-                totalVolt += n.Volt
-                activeCount++
-            }
-        }
+		for _, n := range powerRecords {
+			totalWatt += n.Watt
+			totalAmp += n.Amp
+			// เอาเฉพาะตัวที่น่าจะทำงานจริงมาคิดค่าเฉลี่ย Volt (หลีกเลี่ยงตัวที่ดึงไฟไม่ถึง)
+			if n.Volt > 0 {
+				totalVolt += n.Volt
+				activeCount++
+			}
+		}
 
-        avgVolt := float64(0)
-        if activeCount > 0 {
-            avgVolt = totalVolt / float64(activeCount)
-        }
+		avgVolt := float64(0)
+		if activeCount > 0 {
+			avgVolt = totalVolt / float64(activeCount)
+		}
 
-        historyRecord := entity.PowerHistory{
-            Timestamp: time.Now(),
-            TotalWatt: totalWatt,
-            TotalAmp:  totalAmp,
-            AvgVolt:   avgVolt,
-        }
+		historyRecord := entity.PowerHistory{
+			Timestamp: time.Now(),
+			TotalWatt: totalWatt,
+			TotalAmp:  totalAmp,
+			AvgVolt:   avgVolt,
+		}
 
-        // บันทึกลงตารางประวัติ (PowerHistory)
-        if err := s.DB.Create(&historyRecord).Error; err != nil {
-            fmt.Printf("Error saving power history: %v\n", err)
-        }
+		// บันทึกลงตารางประวัติ (PowerHistory)
+		if err := s.DB.Create(&historyRecord).Error; err != nil {
+			fmt.Printf("Error saving power history: %v\n", err)
+		}
 	}
 }
 

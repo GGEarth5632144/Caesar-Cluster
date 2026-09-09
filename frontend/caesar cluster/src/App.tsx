@@ -29,7 +29,6 @@ const UserManagement = lazy(() => import("@/pages/admin/Usermanagement"));
 const MyServices = lazy(() => import("@/pages/user/RequestQuotar"));
 const Service = lazy(() => import("@/pages/admin/Service"));
 const IPCmanagement = lazy(() => import("@/pages/admin/IPCmanagement"));
-const Alertadmin = lazy(() => import("@/pages/admin/Alertadmin"));
 const Auditlog = lazy(() => import("@/pages/admin/Auditlog"));
 const Createservice = lazy(() => import("@/pages/user/Createservice"));
 const Alertuser = lazy(() => import("@/pages/user/Alertuser"));
@@ -97,7 +96,6 @@ return (
                   <Route path={PATHS.adminRequest} element={<AdminRequest />} />
                   <Route path={PATHS.adminApprovals} element={<AdminRequestQueue />} />
                   <Route path={PATHS.userManagement} element={<UserManagement />} />
-                  <Route path={PATHS.alertadmin} element={<Alertadmin />} />
                   <Route path={PATHS.services} element={<Service />} />
                   <Route path={PATHS.ipcManagement} element={<IPCmanagement />} />
                   <Route path={PATHS.auditLog} element={<Auditlog />} />
