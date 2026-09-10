@@ -19,7 +19,7 @@ export const adminNavItems: NavItem[] = [
   { label: "General Dashboard", icon: Home, path: "/" },//กำลังทำ
   
   // 2. สิ่งที่แอดมินต้องจัดการ/ตรวจสอบเป็นอันดับแรก
-  { label: "Request Resorce", icon: Inbox, path: `/${PATHS.adminRequest}` },
+  { label: "Request Resource", icon: Inbox, path: `/${PATHS.adminRequest}` },
 
   // 3. การจัดการทรัพยากรหลักในระบบ (เรียงจากคน -> เครื่อง -> เซอร์วิส -> โควตา)
   { label: "User Management", icon: Users, path: `/${PATHS.userManagement}` },
