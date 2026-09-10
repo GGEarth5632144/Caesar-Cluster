@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
+	"slices"
 	"strconv"
 	"sync"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -27,6 +31,10 @@ import (
 const (
 	labelManagedBy   = "app.kubernetes.io/managed-by"
 	labelNamespaceID = "caesar-cluster.io/namespace-id"
+
+	// labelServiceName เป็นทั้งป้ายบน Pod และ selector ของ Deployment/Service — ใช้ชื่อ service ดิบได้
+	// เพราะ ServiceController.Create บังคับ isValidK8sName มาแล้ว (ตัวพิมพ์เล็ก/เลข/ขีดกลาง)
+	labelServiceName = "caesar-cluster.io/service"
 
 	annDisplayName   = "caesar-cluster.io/display-name"
 	annContributorID = "caesar-cluster.io/contributor-id"
@@ -406,21 +414,140 @@ func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName stri
 	return nil
 }
 
-// DeployService (ยังไม่ทำ) — จะสร้าง Deployment + Service ชนิด NodePort ใน namespace ที่กำหนด
-// data flow (แผน): รับ entity.Service จาก ServiceManager.Create → ตั้ง resources.requests/limits
-// จาก CPUMilli ("300m") และ RAMMB ("2048Mi") ต่อ 1 Pod → Deployment.spec.replicas = svc.Replicas
-// → containerPort = svc.ContainerPort → svc.EnvVars ใส่เป็น container env (corev1.EnvVar)
-// → apply Deployment + Service(type=NodePort, targetPort=svc.ContainerPort) เข้า cluster
-// → อ่าน nodePort ที่ k8s สุ่มจ่ายให้ (หรือระบุเองถ้าอยากคุมเลข) → เซ็ตกลับที่ svc.NodePort ก่อน return
+// DeployService สร้าง Deployment + Service ชนิด NodePort ใน namespace ที่กำหนด
 //
-// requests ต้องเท่ากับ limits เสมอ ไม่งั้นชน ResourceQuota ที่ ensureResourceQuota ตั้งไว้
-// (Hard มีทั้ง requests.* และ limits.* เป็นค่าเดียวกัน — limits ที่สูงกว่า requests จะทำให้
-// ยอดรวมฝั่ง limits ทะลุก่อน ทั้งที่ backend คิดว่าโควตายังเหลือ)
+// data flow: รับ entity.Service จาก ServiceManager.Create (สเปกถูก snapshot + จองโควตาใน DB มาแล้ว)
+// → สร้าง Deployment (replicas = svc.Replicas, resources จาก CPUMilli/RAMMB ต่อ 1 Pod, env จาก svc.EnvVars)
+// → สร้าง Service type=NodePort ที่ selector ชี้ Pod ของ Deployment นั้น
+// → อ่าน nodePort ที่ k8s จ่ายให้ → เซ็ตกลับที่ svc.NodePort ให้ ServiceManager เอาไป UPDATE ลง DB
+//
+// ทั้งสอง object ใช้ชื่อเดียวกับ svc.Name — ไม่ต้องเก็บชื่อบนคลัสเตอร์ไว้ใน DB อีกคอลัมน์
+// และ ScaleService/DeleteService/Logs ที่รับมาแค่ svcName ก็หาเจอทันที (ชื่อไม่ซ้ำใน namespace
+// เพราะตาราง services มี unique (namespace_id, name) อยู่แล้ว)
+func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	if _, err := cs.AppsV1().Deployments(nsName).Create(ctx, deploymentFor(nsName, svc), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("สร้าง Deployment '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+
+	nodePort, err := k.createNodePortService(ctx, cs, nsName, svc)
+	if err != nil {
+		// Deployment เกิดไปแล้วแต่ไม่มีทางเข้าถึง — ต้องเก็บทิ้ง เพราะ ServiceManager.Create จะลบแถว
+		// ใน DB (คืนโควตา) เมื่อได้ error ตัวนี้ ปล่อยไว้ = Pod รันกินทรัพยากรจริงโดยไม่มีใครเห็นและลบผ่าน UI ไม่ได้
+		// WithoutCancel เพราะสาเหตุที่พังบ่อยที่สุดคือ ctx ถูก cancel (ผู้ใช้ปิดหน้าเว็บ) — ลบด้วยตัวเดิมจะล้มตาม
+		delErr := cs.AppsV1().Deployments(nsName).Delete(context.WithoutCancel(ctx), svc.Name, metav1.DeleteOptions{})
+		if delErr != nil && !apierrors.IsNotFound(delErr) {
+			log.Printf("!! สร้าง Service ของ '%s' ใน namespace '%s' ไม่สำเร็จ (%v) และลบ Deployment ที่เพิ่งสร้างทิ้งไม่สำเร็จด้วย: %v "+
+				"— เหลือ Pod ที่กินโควตาค้างบนคลัสเตอร์โดยไม่มีแถวใน DB ต้องลบมือ", svc.Name, nsName, err, delErr)
+		}
+		return err
+	}
+
+	svc.NodePort = &nodePort
+	log.Printf("[k8s] deploy '%s' เข้า namespace '%s' แล้ว — %d replica × (%dm CPU / %d MB), เข้าถึงที่ <node-ip>:%d → container port %d",
+		svc.Name, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, nodePort, svc.ContainerPort)
+	return nil
+}
+
+// deploymentFor แปลง entity.Service → Deployment object (ยังไม่ยิงไปคลัสเตอร์)
+//
+// requests เท่ากับ limits เสมอ ไม่งั้นชน ResourceQuota ที่ ensureResourceQuota ตั้งไว้: Hard มีทั้ง
+// requests.* และ limits.* เป็นค่าเดียวกัน — limits ที่สูงกว่า requests จะทำให้ยอดรวมฝั่ง limits
+// ทะลุก่อน ทั้งที่ QuotaService ใน backend คิดว่าโควตายังเหลือ (เคสที่ debug ยากที่สุดของระบบนี้)
+func deploymentFor(nsName string, svc *entity.Service) *appsv1.Deployment {
+	labels := map[string]string{
+		labelManagedBy:   managedByCaesar,
+		labelServiceName: svc.Name,
+	}
+	replicas := int32(svc.Replicas)
+	res := corev1.ResourceList{
+		corev1.ResourceCPU:    *resource.NewMilliQuantity(int64(svc.CPUMilli), resource.DecimalSI),
+		corev1.ResourceMemory: *resource.NewQuantity(int64(svc.RAMMB)*1024*1024, resource.BinarySI),
+	}
+
+	// เรียง key ก่อนแปลงเป็น env — ลำดับของ map ใน Go สุ่มทุกรอบ ปล่อยไว้แล้ว spec จะ "เปลี่ยน"
+	// ทุกครั้งที่ประกอบใหม่ทั้งที่ค่าเท่าเดิม (กวน diff และทำให้ ScaleService/แก้ไขทีหลังสั่ง rollout เปล่าๆ)
+	env := make([]corev1.EnvVar, 0, len(svc.EnvVars))
+	for _, key := range slices.Sorted(maps.Keys(svc.EnvVars)) {
+		env = append(env, corev1.EnvVar{Name: key, Value: svc.EnvVars[key]})
+	}
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        svc.Name,
+			Namespace:   nsName,
+			Labels:      labels,
+			Annotations: map[string]string{annContributorID: strconv.Itoa(svc.CreatedBy)},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			// Selector แก้ทีหลังไม่ได้ (k8s ห้าม) — ต้องเป็นชุด label ที่ไม่มีวันเปลี่ยนตามค่าที่ผู้ใช้แก้ได้
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  svc.Name,
+						Image: svc.Image,
+						Ports: []corev1.ContainerPort{{
+							ContainerPort: int32(svc.ContainerPort),
+							Protocol:      corev1.ProtocolTCP,
+						}},
+						Env:       env,
+						Resources: corev1.ResourceRequirements{Requests: res, Limits: res},
+					}},
+				},
+			},
+		},
+	}
+}
+
+// createNodePortService เปิดทางเข้าจากนอกให้ workload แล้วคืนเลข nodePort ที่ k8s จ่ายมา
 //
 // targetPort ต้องชี้ที่ ContainerPort เสมอ — ตั้งผิดแล้ว Service จะสร้างสำเร็จแต่ traffic เข้าไปไม่มีใครฟัง
 // กลายเป็น connection refused ที่ debug ยากเพราะ deploy "ผ่าน"
-func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
-	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeployService)")
+//
+// ไม่ระบุ nodePort เอง ปล่อยให้ k8s สุ่มจากช่วง 30000-32767: ถ้าเราเลือกเลขเองต้องมาจดว่าใครใช้เลขไหน
+// แล้วกันชนกันข้าม namespace ซึ่ง k8s ทำให้อยู่แล้ว (คอลัมน์ node_port ใน DB เป็นแค่สำเนาไว้โชว์ URL)
+func (k *KubernetesProvisioner) createNodePortService(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) (int, error) {
+	labels := map[string]string{
+		labelManagedBy:   managedByCaesar,
+		labelServiceName: svc.Name,
+	}
+	created, err := cs.CoreV1().Services(nsName).Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svc.Name,
+			Namespace: nsName,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeNodePort,
+			Selector: labels,
+			Ports: []corev1.ServicePort{{
+				Port:       int32(svc.ContainerPort),
+				TargetPort: intstr.FromInt32(int32(svc.ContainerPort)),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("สร้าง Service (NodePort) '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+
+	// ปกติ k8s จ่ายเลขมาพร้อม response ของ Create เลย — ถ้าไม่มีแปลว่าช่วง NodePort เต็มหรือคลัสเตอร์
+	// ตั้งค่าไว้แปลก คืน error ไปเลยดีกว่าปล่อยผ่าน เพราะ svc.NodePort ที่ว่างแปลว่าผู้ใช้ไม่มี URL ให้เข้า
+	// (ServiceManager.Create จะเก็บกวาดของบนคลัสเตอร์ + คืนโควตาให้เอง)
+	if len(created.Spec.Ports) == 0 || created.Spec.Ports[0].NodePort == 0 {
+		return 0, fmt.Errorf("คลัสเตอร์ไม่ได้จ่าย nodePort ให้ service '%s' ใน namespace '%s' "+
+			"(ช่วง 30000-32767 อาจเต็ม)", svc.Name, nsName)
+	}
+	return int(created.Spec.Ports[0].NodePort), nil
 }
 
 // ScaleService (ยังไม่ทำ) — จะ Patch เฉพาะ Deployment.spec.replicas ของ workload ที่มีอยู่แล้ว
