@@ -158,45 +158,60 @@ func (s *PowerService) GetAllPower() ([]entity.PowerNode, error) {
 	return records, err
 }
 
-func (s *PowerService) GetPowerHistory(timeRange string) ([]dto.PowerHistoryResponse, error) {
-	var histories []entity.PowerHistory
-	now := time.Now()
-	var startTime time.Time
-
-	// แปลง timeRange ที่รับมาจาก React ให้เป็นระยะเวลา
+// powerHistoryWindow แปลง timeRange ที่ React ส่งมาเป็น "ย้อนหลังเท่าไหร่" + "หนึ่งจุดกราฟกว้างกี่วินาที"
+//
+// ความกว้างของ bucket ตั้งให้ตรงกับ step ของ TelemetryService.GetHistoryFromPrometheus เป๊ะๆ
+// กราฟสองอันบนหน้า Dashboard เดียวกันจะได้มีความละเอียดตามแกนเวลาเท่ากัน อ่านเทียบกันได้จริง
+//
+// ทุกช่วงจบที่ 60-170 จุด ซึ่งเกินความละเอียดที่จอกว้าง ~1400px จะวาดแยกออกอยู่แล้ว
+func powerHistoryWindow(timeRange string) (lookback time.Duration, bucketSeconds int) {
 	switch timeRange {
-	case "1h":
-		startTime = now.Add(-1 * time.Hour)
 	case "6h":
-		startTime = now.Add(-6 * time.Hour)
+		return 6 * time.Hour, 5 * 60 // 72 จุด
 	case "24h":
-		startTime = now.Add(-24 * time.Hour)
+		return 24 * time.Hour, 15 * 60 // 96 จุด
 	case "7d":
-		startTime = now.Add(-7 * 24 * time.Hour)
+		return 7 * 24 * time.Hour, 60 * 60 // 168 จุด
 	case "30d":
-		startTime = now.Add(-30 * 24 * time.Hour)
-	default:
-		startTime = now.Add(-1 * time.Hour)
+		return 30 * 24 * time.Hour, 6 * 60 * 60 // 120 จุด
+	default: // "1h" และค่าที่ไม่รู้จัก
+		return time.Hour, 60 // 60 จุด
 	}
+}
 
-	// ดึงจากฐานข้อมูล เรียงตามเวลาเก่าไปใหม่
-	err := s.DB.Where("timestamp >= ?", startTime).
-		Order("timestamp ASC").
-		Find(&histories).Error
+// GetPowerHistory คืนกราฟการใช้ไฟย้อนหลัง โดย "ยุบข้อมูลให้เหลือเท่าที่กราฟวาดได้จริง" ตั้งแต่ใน SQL
+//
+// worker เขียน power_histories ทุก 15 วินาที = 5,760 แถวต่อวัน ถ้าส่งแถวดิบทั้งหมดออกไป
+// ช่วง 24h จะเป็น ~5,700 จุด และ 30d จะเป็น ~172,000 จุด (หลาย MB) ทั้งที่ recharts
+// วาดได้จริงแค่ระดับร้อยจุด — ที่เหลือคือ byte ที่วิ่งข้ามเน็ตไปให้ browser ทิ้งเปล่าๆ
+// แล้วหน้า AdminDashboard ยังดึงซ้ำทุก 30 วินาทีอีก
+//
+// data flow: timeRange → หา lookback + ความกว้าง bucket → ให้ Postgres GROUP BY ตามช่วงเวลา
+// แล้ว AVG ค่าในแต่ละช่วง → ได้ผลลัพธ์ระดับร้อยแถวส่งกลับตรงๆ (ไม่ต้องวนรวมเองใน Go อีก)
+func (s *PowerService) GetPowerHistory(timeRange string) ([]dto.PowerHistoryResponse, error) {
+	lookback, bucketSeconds := powerHistoryWindow(timeRange)
+	startTime := time.Now().Add(-lookback)
 
+	// "timestamp" ต้องใส่ quote เพราะเป็นชื่อชนิดข้อมูลของ Postgres ด้วย — ถ้าไม่ quote
+	// ตัว parser จะอ่าน extract(epoch from timestamp) เป็นการอ้างถึง type ไม่ใช่คอลัมน์
+	//
+	// floor(epoch / bucket) * bucket = ปัดเวลาลงให้ตกขอบ bucket เดียวกัน แล้วค่อย GROUP BY
+	// (ไม่ใช้ date_trunc เพราะมันปัดได้แค่หน่วยสำเร็จรูป hour/day ไม่รองรับ 5 หรือ 15 นาที)
+	// เขียนเป็น Raw SQL ตรงๆ ไม่ผ่าน query builder เพราะ GORM ใส่ quote ให้อาร์กิวเมนต์ของ
+	// Group() เสมอ — "GROUP BY 1" จะกลายเป็น GROUP BY "1" ซึ่ง Postgres อ่านเป็น "คอลัมน์
+	// ชื่อ 1" แล้วตอบว่าไม่มีคอลัมน์นี้ ส่วน Raw ส่ง SQL ไปตามที่เขียนไว้ทุกตัวอักษร
+	var responses []dto.PowerHistoryResponse
+	err := s.DB.Raw(`
+		SELECT to_timestamp(floor(extract(epoch from "timestamp") / ?) * ?) AS time,
+		       AVG(total_watt) AS total_watt,
+		       AVG(total_amp)  AS total_amp,
+		       AVG(avg_volt)   AS avg_volt
+		FROM power_histories
+		WHERE "timestamp" >= ?
+		GROUP BY 1
+		ORDER BY 1`, bucketSeconds, bucketSeconds, startTime).Scan(&responses).Error
 	if err != nil {
 		return nil, err
-	}
-
-	// สร้าง DTO Response
-	var responses []dto.PowerHistoryResponse
-	for _, h := range histories {
-		responses = append(responses, dto.PowerHistoryResponse{
-			Time:      h.Timestamp,
-			TotalWatt: h.TotalWatt,
-			TotalAmp:  h.TotalAmp,
-			AvgVolt:   h.AvgVolt,
-		})
 	}
 
 	// ถ้าไม่มีข้อมูล ให้คืน slice ว่างๆ ป้องกัน null exception ในฝั่ง React

@@ -212,20 +212,74 @@ func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*Namesp
 }
 
 // ListAll คืน namespace ทั้งหมดพร้อมยอดใช้งาน — สำหรับหน้า admin ดูภาพรวมทั้งระบบ
-// data flow: SELECT namespaces ทั้งหมด → วน Detail ทีละอัน → คืนเป็น slice ให้ AdminController
+//
+// data flow: 3 query คงที่ ไม่ว่าจะมีกี่ space — SELECT namespaces → ยอดใช้งานของทุก space
+// ในคำสั่งเดียว (GROUP BY) → สมาชิกของทุก space ในคำสั่งเดียว (IN) → จับคู่กลับใน memory
+//
+// เดิมตรงนี้วนเรียก Detail() ทีละ namespace ซึ่งข้างในยิงอีก 3 query ต่อรอบ (อ่าน namespace
+// ที่ถืออยู่ในมือแล้วซ้ำ + Usage + สมาชิก) รวมเป็น 1+3N — 50 space = 151 query ต่อการเปิด
+// หน้า Namespace Management หนึ่งครั้ง ทั้งที่เป็นข้อมูลจากสามตารางเดิมทั้งหมด
+//
+// รูปแบบ "เก็บ id ที่พบมาถามเป็นก้อนเดียว" อันเดียวกับ AdminController.ListAllRequests
+// และ InviteManager.enrich ใช้อยู่ ส่วน Detail() ยังอยู่เหมือนเดิมเพราะ /namespaces/me
+// ถามทีละอันจริงๆ ไม่มี N+1 ให้แก้
 func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, error) {
 	var all []entity.Namespace
 	if err := m.db.WithContext(ctx).Order("id").Find(&all).Error; err != nil {
 		return nil, err
 	}
+	if len(all) == 0 {
+		return []NamespaceDetail{}, nil
+	}
+
+	ids := make([]int, 0, len(all))
+	for _, ns := range all {
+		ids = append(ids, ns.ID)
+	}
+
+	usageByNS, err := m.quota.UsageByNamespace(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	// เรียงตาม (namespace_id, id) เพื่อให้ลำดับสมาชิกในแต่ละ space เท่ากับที่ Detail() คืน
+	// (Detail เรียงตาม id ภายใน space เดียว) หน้าเว็บจะได้ไม่สลับแถวไปมาระหว่างสองเส้น
+	var users []entity.User
+	if err := m.db.WithContext(ctx).
+		Where("namespace_id IN ?", ids).
+		Order("namespace_id, id").Find(&users).Error; err != nil {
+		return nil, err
+	}
+	membersByNS := make(map[int][]MemberInfo, len(all))
+	contributorOf := make(map[int]int, len(all))
+	for _, ns := range all {
+		contributorOf[ns.ID] = ns.ContributorID
+	}
+	for _, u := range users {
+		if u.NamespaceID == nil {
+			continue // กันไว้เฉยๆ — WHERE ข้างบนกรอง NULL ออกไปแล้ว
+		}
+		nsID := *u.NamespaceID
+		membersByNS[nsID] = append(membersByNS[nsID], MemberInfo{
+			ID:            u.ID,
+			StudentID:     u.StudentID,
+			RealName:      u.RealName,
+			IsContributor: u.ID == contributorOf[nsID],
+		})
+	}
 
 	out := make([]NamespaceDetail, 0, len(all))
 	for _, ns := range all {
-		d, err := m.Detail(ctx, ns.ID)
-		if err != nil {
-			return nil, err
+		members := membersByNS[ns.ID]
+		if members == nil {
+			members = []MemberInfo{} // ให้ JSON เป็น [] ไม่ใช่ null เหมือนที่ Detail() คืน
 		}
-		out = append(out, *d)
+		out = append(out, NamespaceDetail{
+			Namespace:   ns,
+			Usage:       usageByNS[ns.ID],
+			MemberCount: len(members),
+			Members:     members,
+		})
 	}
 	return out, nil
 }

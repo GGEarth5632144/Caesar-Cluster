@@ -623,8 +623,8 @@ func (h *AdminController) DeleteNamespace(c *gin.Context) {
 
 // ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
 //
-// data flow: SELECT requests ทั้งหมด → เก็บ user_id ที่พบมาถามเป็นก้อนเดียว (กัน N+1 query)
-// → จับคู่กลับเป็น RequestWithRequester ทีละแถว (ตัวไหนหา user ไม่เจอ ปล่อยชื่อว่างไว้ ไม่ error ทั้งก้อน)
+// data flow: SELECT requests ทั้งหมด → enrichRequests เติมชื่อ/รหัส นศ. ของผู้ยื่นให้
+// (ถาม users เป็นก้อนเดียว กัน N+1 — ดู admin_dashboard.go)
 func (h *AdminController) ListAllRequests(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -635,31 +635,11 @@ func (h *AdminController) ListAllRequests(c *gin.Context) {
 		return
 	}
 
-	userIDs := make([]int, 0, len(requests))
-	for _, r := range requests {
-		userIDs = append(userIDs, r.UserID)
-	}
-	var users []entity.User
-	if len(userIDs) > 0 {
-		if err := h.db.WithContext(ctx).Where("id IN ?", userIDs).Find(&users).Error; err != nil {
-			log.Printf("list requests: load requesters error: %v", err)
-			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
-			return
-		}
-	}
-	byID := make(map[int]entity.User, len(users))
-	for _, u := range users {
-		byID[u.ID] = u
-	}
-
-	out := make([]dto.RequestWithRequester, 0, len(requests))
-	for _, r := range requests {
-		view := dto.RequestWithRequester{Request: r}
-		if u, ok := byID[r.UserID]; ok {
-			view.RequesterName = u.RealName
-			view.RequesterStudentID = u.StudentID
-		}
-		out = append(out, view)
+	out, err := h.enrichRequests(c, requests)
+	if err != nil {
+		log.Printf("list requests: load requesters error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงข้อมูลไม่สำเร็จ")
+		return
 	}
 	utils.OK(c, http.StatusOK, out)
 }
