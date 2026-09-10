@@ -8,6 +8,7 @@ import { adminRequestQueueScope } from "@/config/searchScopes";
 import { SearchStatus } from "@/components/ui/search-status";
 import { Highlight } from "@/components/ui/highlight";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
+import { AdminModal } from "@/components/ui/admin-modal";
 import { notify } from "@/lib/modal";
 
 function formatDateTime(dateString: string) {
@@ -349,148 +350,139 @@ function RequestDetailModal({ request, isActioning, onClose, onApprove, onDeny }
   const trimmedReason = reason.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-black/5">
-          <div>
-            <h2 className="text-xl font-bold text-[#211a14]">{request.requester_name || `user #${request.user_id}`}</h2>
-            <p className="text-sm text-[#211a14]/50 mt-0.5">
-              {request.requester_student_id || "—"} · #REQ-{request.id}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isActioning}
-            className="p-2 rounded-xl text-[#211a14]/50 hover:bg-black/5 transition-colors disabled:opacity-50"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="px-6 py-5 flex flex-col gap-5">
-          <div className="flex items-center justify-between">
-            <span className={cn("inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold", badge.className)}>
-              <BadgeIcon size={14} />
-              {badge.label}
-            </span>
-            <span className="text-sm text-[#211a14]/50 capitalize">{request.namespace_name} space</span>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">Request Note</label>
-            <p className="text-base text-[#211a14]/80 italic bg-white p-3 rounded-xl border border-black/5">
-              {request.description || "— no note attached —"}
-            </p>
-          </div>
-
-          {request.status === "denied" && request.deny_reason && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-bold uppercase tracking-wider text-red-500">Rejection reason</label>
-              <p className="whitespace-pre-wrap text-base text-[#211a14]/80 bg-red-50 p-3 rounded-xl border border-red-100">
-                {request.deny_reason}
-              </p>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">Time Submitted</label>
-            <p className="text-base text-[#211a14]">{formatDateTime(request.created_at)}</p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
-              <Cpu size={18} className="text-[#BB6653]" />
-              <span className="text-base font-bold text-[#211a14]">{request.cpu_limit_milli / 1000}</span>
-              <span className="text-sm text-[#211a14]/50 uppercase tracking-wide">Cores</span>
-            </div>
-            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
-              <Layers size={18} className="text-[#BB6653]" />
-              <span className="text-base font-bold text-[#211a14]">
-                {request.ram_limit_mb >= 1024 ? `${(request.ram_limit_mb / 1024).toFixed(1)}` : request.ram_limit_mb}
-              </span>
-              <span className="text-sm text-[#211a14]/50 uppercase tracking-wide">
-                {request.ram_limit_mb >= 1024 ? "GB RAM" : "MB RAM"}
-              </span>
-            </div>
-            <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
-              <HardDrive size={18} className="text-[#BB6653]" />
-              <span className="text-base font-bold text-[#211a14]">{request.storage_gb > 0 ? request.storage_gb : "—"}</span>
-              <span className="text-sm text-[#211a14]/50 uppercase tracking-wide">Storage GB</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 px-6 py-4 border-t border-black/5 bg-white/50 rounded-b-3xl">
-          {isPending ? (
-            rejecting ? (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-bold uppercase tracking-wider text-red-500">
-                    เหตุผลที่ปฏิเสธ
-                  </label>
-                  <textarea
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    disabled={isActioning}
-                    rows={3}
-                    autoFocus
-                    maxLength={1000}
-                    placeholder="เช่น ขอทรัพยากรเกินความจำเป็นสำหรับรายวิชานี้ กรุณายื่นใหม่โดยลด CPU เหลือ 1 core"
-                    className="w-full resize-none rounded-xl border border-red-200 bg-white p-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-50"
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRejecting(false);
-                      setReason("");
-                    }}
-                    disabled={isActioning}
-                    className="rounded-xl border border-black/20 px-5 py-2.5 text-base font-bold text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeny(trimmedReason)}
-                    disabled={isActioning || trimmedReason.length === 0}
-                    className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-base font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-50"
-                  >
-                    {isActioning && <Loader2 size={16} className="animate-spin" />}
-                    <X size={17} /> Confirm reject
-                  </button>
-                </div>
-              </>
-            ) : (
+    <AdminModal
+      onClose={onClose}
+      busy={isActioning}
+      size="sm"
+      title={request.requester_name || `user #${request.user_id}`}
+      subtitle={`${request.requester_student_id || "—"} · #REQ-${request.id}`}
+      footerClassName="flex flex-col gap-3"
+      footer={
+        isPending ? (
+          rejecting ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-bold uppercase tracking-wider text-red-500">
+                  เหตุผลที่ปฏิเสธ
+                </label>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  disabled={isActioning}
+                  rows={3}
+                  autoFocus
+                  maxLength={1000}
+                  placeholder="เช่น ขอทรัพยากรเกินความจำเป็นสำหรับรายวิชานี้ กรุณายื่นใหม่โดยลด CPU เหลือ 1 core"
+                  className="w-full resize-none rounded-xl border border-red-200 bg-white p-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-50"
+                />
+              </div>
               <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setRejecting(true)}
+                  onClick={() => {
+                    setRejecting(false);
+                    setReason("");
+                  }}
                   disabled={isActioning}
-                  className="inline-flex items-center gap-2 rounded-xl border border-red-500 px-5 py-2.5 text-base font-bold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                  className="rounded-xl border border-black/20 px-5 py-2.5 text-base font-bold text-[#211a14] hover:bg-black/5 transition-colors disabled:opacity-50"
                 >
-                  <X size={17} /> Reject
+                  Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={onApprove}
-                  disabled={isActioning}
-                  className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50 shadow-md"
+                  onClick={() => onDeny(trimmedReason)}
+                  disabled={isActioning || trimmedReason.length === 0}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-base font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-50"
                 >
                   {isActioning && <Loader2 size={16} className="animate-spin" />}
-                  <CheckCircle2 size={17} /> Approve request
+                  <X size={17} /> Confirm reject
                 </button>
               </div>
-            )
+            </>
           ) : (
-            <p className="text-base text-[#211a14]/50 w-full text-center">
-              This request has already been <span className={cn("font-bold capitalize", badge.className.split(' ')[1])}>{request.status}</span>.
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRejecting(true)}
+                disabled={isActioning}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-500 px-5 py-2.5 text-base font-bold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+              >
+                <X size={17} /> Reject
+              </button>
+              <button
+                type="button"
+                onClick={onApprove}
+                disabled={isActioning}
+                className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50 shadow-md"
+              >
+                {isActioning && <Loader2 size={16} className="animate-spin" />}
+                <CheckCircle2 size={17} /> Approve request
+              </button>
+            </div>
+          )
+        ) : (
+          <p className="w-full text-center text-base text-[#211a14]/50">
+            This request has already been{" "}
+            <span className={cn("font-bold capitalize", badge.className.split(" ")[1])}>
+              {request.status}
+            </span>
+            .
+          </p>
+        )
+      }
+    >
+      <div className="flex flex-col gap-5">
+        <div className="flex items-center justify-between">
+          <span className={cn("inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold", badge.className)}>
+            <BadgeIcon size={14} />
+            {badge.label}
+          </span>
+          <span className="text-sm text-[#211a14]/50 capitalize">{request.namespace_name} space</span>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">Request Note</label>
+          <p className="text-base text-[#211a14]/80 italic bg-white p-3 rounded-xl border border-black/5">
+            {request.description || "— no note attached —"}
+          </p>
+        </div>
+
+        {request.status === "denied" && request.deny_reason && (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-bold uppercase tracking-wider text-red-500">Rejection reason</label>
+            <p className="whitespace-pre-wrap text-base text-[#211a14]/80 bg-red-50 p-3 rounded-xl border border-red-100">
+              {request.deny_reason}
             </p>
-          )}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">Time Submitted</label>
+          <p className="text-base text-[#211a14]">{formatDateTime(request.created_at)}</p>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
+            <Cpu size={18} className="text-[#BB6653]" />
+            <span className="text-base font-bold text-[#211a14]">{request.cpu_limit_milli / 1000}</span>
+            <span className="text-sm text-[#211a14]/50 uppercase tracking-wide">Cores</span>
+          </div>
+          <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
+            <Layers size={18} className="text-[#BB6653]" />
+            <span className="text-base font-bold text-[#211a14]">
+              {request.ram_limit_mb >= 1024 ? `${(request.ram_limit_mb / 1024).toFixed(1)}` : request.ram_limit_mb}
+            </span>
+            <span className="text-sm text-[#211a14]/50 uppercase tracking-wide">
+              {request.ram_limit_mb >= 1024 ? "GB RAM" : "MB RAM"}
+            </span>
+          </div>
+          <div className="rounded-xl bg-white border border-black/5 p-3 flex flex-col items-center text-center gap-1 shadow-sm">
+            <HardDrive size={18} className="text-[#BB6653]" />
+            <span className="text-base font-bold text-[#211a14]">{request.storage_gb > 0 ? request.storage_gb : "—"}</span>
+            <span className="text-sm text-[#211a14]/50 uppercase tracking-wide">Storage GB</span>
+          </div>
         </div>
       </div>
-    </div>
+    </AdminModal>
   );
 }

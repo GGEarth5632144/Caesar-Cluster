@@ -829,6 +829,7 @@ func (h *AdminController) ListUsers(c *gin.Context) {
 		view := dto.UserWithYearLevel{User: u, YearLevel: yearLevel}
 		if u.NamespaceID != nil {
 			if ns, ok := nsByID[*u.NamespaceID]; ok {
+				view.NamespaceName = ns.Name
 				view.CPULimitMilli = ns.CPULimitMilli
 				view.RAMLimitMB = ns.RAMLimitMB
 			}

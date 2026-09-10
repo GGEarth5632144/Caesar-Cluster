@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, type ReactNode } from "react";
 import {
   Cpu,
   AlertTriangle,
@@ -40,6 +40,16 @@ import { userManagementApi } from "@/api/adminuser";
 import { getApiErrorMessage } from "@/api/authApi";
 
 // ─── Main Component ───
+// Recharts ประกาศ label ของ Tooltip เป็น ReactNode ซึ่งกว้างจนรวม undefined เข้าไปด้วย
+// ส่ง ReactNode เข้า new Date() ตรงๆ ไม่ผ่าน type check — ค่าจริงที่ Recharts ส่งเข้ามาคือฟิลด์
+// time ของข้อมูลกราฟ (สตริงเวลา) เลยแปลงเป็น string ก่อน แล้วกันกรณีแปลงเป็นวันที่ไม่ได้ไว้ด้วย
+// เกณฑ์เดียวกับที่ tickFormatter ของแกน X ใช้อยู่แล้ว จะได้ไม่โชว์ "Invalid Date" คาหน้าจอ
+function formatTooltipTime(label: ReactNode) {
+  const raw = String(label);
+  const date = new Date(raw);
+  return isNaN(date.getTime()) ? raw : date.toLocaleTimeString("th-TH");
+}
+
 export default function AdminDashboard() {
   const [nodes, setNodes] = useState<NodeTelemetry[]>([]);
   const [historyData, setHistoryData] = useState<ClusterHistoryData[]>([]);
@@ -324,7 +334,7 @@ export default function AdminDashboard() {
                 />
                 <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={(val) => `${(val/1024).toFixed(0)}G`} axisLine={false} tickLine={false} />
                 <Tooltip 
-                  labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                  labelFormatter={formatTooltipTime}
                   formatter={(value: any) => [(Number(value)/1024).toFixed(1) + " GB", "RAM Used"]}
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                 />
@@ -363,7 +373,7 @@ export default function AdminDashboard() {
                 />
                 <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={(val) => `${val}W`} axisLine={false} tickLine={false} />
                 <Tooltip 
-                  labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                  labelFormatter={formatTooltipTime}
                   formatter={(value: any) => [Number(value).toFixed(2) + " W", "Total Power"]}
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                 />
