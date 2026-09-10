@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, UserPlus, Edit2, Trash2, Boxes, Loader2, X, Users } from "lucide-react";
+import { Search, UserPlus, Edit2, Trash2, Boxes, Loader2, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableRowsSkeleton, SimpleRowsSkeleton } from "@/components/ui/PageSkeletons";
+import { AdminModal } from "@/components/ui/admin-modal";
 import { userManagementApi, type User, type UpdateUserDTO } from "@/api/adminuser";
 import {
   eligibleStudentsApi,
@@ -379,103 +380,88 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
   const labelClass = "mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] shadow-2xl">
-        
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-black/5 bg-[#FFF8E8] px-6 py-5">
-          <div>
-            <h2 className="text-xl font-bold text-[#211a14]">Edit User</h2>
-            <p className="text-sm text-[#211a14]/50 mt-0.5">กำลังแก้ไขข้อมูลของ {user.real_name}</p>
-          </div>
+    <AdminModal
+      onClose={onClose}
+      busy={isSubmitting}
+      title="Edit User"
+      subtitle={`กำลังแก้ไขข้อมูลของ ${user.real_name}`}
+      onSubmit={handleSubmit}
+      footer={(close) => (
+        <>
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             disabled={isSubmitting}
-            className="p-2 rounded-xl text-[#211a14]/50 hover:bg-black/5 transition-colors disabled:opacity-50"
+            className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 hover:bg-black/5 transition-colors disabled:opacity-50"
           >
-            <X size={20} />
+            Cancel
           </button>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+          >
+            {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Save Changes"}
+          </button>
+        </>
+      )}
+    >
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+        {/* รหัสนักศึกษา */}
+        <div>
+          <label className={labelClass}>Student ID</label>
+          <input name="student_id" value={formData.student_id} onChange={handleChange} required className={inputClass} />
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6">
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            
-            {/* รหัสนักศึกษา */}
-            <div>
-              <label className={labelClass}>Student ID</label>
-              <input name="student_id" value={formData.student_id} onChange={handleChange} required className={inputClass} />
-            </div>
+        {/* อีเมล */}
+        <div>
+          <label className={labelClass}>Gmail</label>
+          <input name="gmail" type="email" value={formData.gmail} onChange={handleChange} required className={inputClass} />
+        </div>
 
-            {/* อีเมล */}
-            <div>
-              <label className={labelClass}>Gmail</label>
-              <input name="gmail" type="email" value={formData.gmail} onChange={handleChange} required className={inputClass} />
-            </div>
+        {/* ชื่อจริง */}
+        <div>
+          <label className={labelClass}>Real Name</label>
+          <input name="real_name" value={formData.real_name} onChange={handleChange} required className={inputClass} />
+        </div>
 
-            {/* ชื่อจริง */}
-            <div>
-              <label className={labelClass}>Real Name</label>
-              <input name="real_name" value={formData.real_name} onChange={handleChange} required className={inputClass} />
-            </div>
+        {/* ชื่อเล่น */}
+        <div>
+          <label className={labelClass}>Nickname</label>
+          <input name="nick_name" value={formData.nick_name} onChange={handleChange} className={inputClass} />
+        </div>
 
-            {/* ชื่อเล่น */}
-            <div>
-              <label className={labelClass}>Nickname</label>
-              <input name="nick_name" value={formData.nick_name} onChange={handleChange} className={inputClass} />
-            </div>
+        {/* ชั้นปี — คำนวณสดจาก student_id เสมอ แก้ไขตรงนี้ไม่ได้ (เปลี่ยน Student ID แล้วบันทึก ค่านี้จะขยับตาม) */}
+        <div>
+          <label className={labelClass}>Year</label>
+          <input
+            value={`Year ${user.year_level}`}
+            disabled
+            className={`${inputClass} disabled:bg-black/5 disabled:text-[#211a14]/60`}
+          />
+        </div>
 
-            {/* ชั้นปี — คำนวณสดจาก student_id เสมอ แก้ไขตรงนี้ไม่ได้ (เปลี่ยน Student ID แล้วบันทึก ค่านี้จะขยับตาม) */}
-            <div>
-              <label className={labelClass}>Year</label>
-              <input
-                value={`Year ${user.year_level}`}
-                disabled
-                className={`${inputClass} disabled:bg-black/5 disabled:text-[#211a14]/60`}
-              />
-            </div>
+        {/* ตำแหน่ง (Role) */}
+        <div>
+          <label className={labelClass}>Role</label>
+          <select name="role_id" value={formData.role_id} onChange={handleChange} className={inputClass}>
+            <option value="1">User</option>
+            <option value="2">Admin</option>
+          </select>
+        </div>
 
-            {/* ตำแหน่ง (Role) */}
-            <div>
-              <label className={labelClass}>Role</label>
-              <select name="role_id" value={formData.role_id} onChange={handleChange} className={inputClass}>
-                <option value="1">User</option>
-                <option value="2">Admin</option>
-              </select>
-            </div>
-
-            {/* เนมสเปซที่สังกัด — อ่านอย่างเดียว ย้ายผู้ใช้ข้าม space จากที่นี่ไม่ได้
-                โควตาของ space ไปปรับที่หน้า Namespace Management */}
-            <div className="sm:col-span-2">
-              <label className={labelClass}>Namespace</label>
-              <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/60">
-                {user.namespace_id
-                  ? `${user.namespace_name || `#${user.namespace_id}`} — โควตาของ space นี้ปรับได้ที่หน้า Namespace Management`
-                  : "ผู้ใช้ยังไม่มี namespace — จะสังกัด space เมื่อสร้างหรือเข้าร่วมกลุ่มแล้ว"}
-              </div>
-            </div>
-
+        {/* เนมสเปซที่สังกัด — อ่านอย่างเดียว ย้ายผู้ใช้ข้าม space จากที่นี่ไม่ได้
+            โควตาของ space ไปปรับที่หน้า Namespace Management */}
+        <div className="sm:col-span-2">
+          <label className={labelClass}>Namespace</label>
+          <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/60">
+            {user.namespace_id
+              ? `${user.namespace_name || `#${user.namespace_id}`} — โควตาของ space นี้ปรับได้ที่หน้า Namespace Management`
+              : "ผู้ใช้ยังไม่มี namespace — จะสังกัด space เมื่อสร้างหรือเข้าร่วมกลุ่มแล้ว"}
           </div>
-
-          <div className="mt-8 flex items-center justify-end gap-3 pt-6 border-t border-black/5">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 hover:bg-black/5 transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
-            >
-              {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Save Changes"}
-            </button>
-          </div>
-        </form>
+        </div>
       </div>
-    </div>
+    </AdminModal>
   );
 }
 
@@ -519,88 +505,74 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-[#FFF8E8] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-black/5 px-6 py-5">
-          <div>
-            <h2 className="text-xl font-bold text-[#211a14]">รายชื่อผู้มีสิทธิ์</h2>
-            <p className="mt-0.5 text-sm text-[#211a14]/50">
-              ทั้งหมดในตาราง eligible_students ({students.length} คน) — คือรายชื่อที่ import เข้ามาแล้ว
-              ไม่ว่าจะสมัครเข้าระบบจริงหรือยังก็ตาม
-            </p>
+    <AdminModal
+      onClose={onClose}
+      size="lg"
+      title="รายชื่อผู้มีสิทธิ์"
+      subtitle={
+        `ทั้งหมดในตาราง eligible_students (${students.length} คน) — คือรายชื่อที่ import เข้ามาแล้ว ` +
+        `ไม่ว่าจะสมัครเข้าระบบจริงหรือยังก็ตาม`
+      }
+      toolbar={
+        <div className="relative w-full sm:w-72">
+          <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
+            <Search size={18} className="text-[#BB6653]/60" />
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 text-[#211a14]/50 transition-colors hover:bg-black/5"
-          >
-            <X size={20} />
-          </button>
+          <input
+            type="text"
+            placeholder="ค้นหารหัส/ชื่อ/สาขา"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
+          />
         </div>
-
-        <div className="border-b border-black/5 px-6 py-4">
-          <div className="relative w-full sm:w-72">
-            <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-              <Search size={18} className="text-[#BB6653]/60" />
-            </div>
-            <input
-              type="text"
-              placeholder="ค้นหารหัส/ชื่อ/สาขา"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
-            />
-          </div>
+      }
+    >
+      {isLoading ? (
+        <SimpleRowsSkeleton rows={7} cols={4} />
+      ) : error ? (
+        <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-base text-red-600">
+          {error}
         </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          {isLoading ? (
-            <SimpleRowsSkeleton rows={7} cols={4} />
-          ) : error ? (
-            <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-base text-red-600">
-              {error}
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-neutral-500">
-              <Search className="size-8 text-[#BB6653]/30" />
-              <p>ไม่พบรายชื่อที่ค้นหา</p>
-            </div>
-          ) : (
-            <table className="w-full text-left text-base text-[#211a14]">
-              <thead>
-                <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
-                  <th className="pb-3 pr-3">รหัสประจำตัว</th>
-                  <th className="pb-3 pr-3">ชื่อ-สกุล</th>
-                  <th className="pb-3 pr-3">สาขาวิชา</th>
-                  <th className="pb-3">สถานภาพ</th>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-16 text-neutral-500">
+          <Search className="size-8 text-[#BB6653]/30" />
+          <p>ไม่พบรายชื่อที่ค้นหา</p>
+        </div>
+      ) : (
+        <table className="w-full text-left text-base text-[#211a14]">
+          <thead>
+            <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+              <th className="pb-3 pr-3">รหัสประจำตัว</th>
+              <th className="pb-3 pr-3">ชื่อ-สกุล</th>
+              <th className="pb-3 pr-3">สาขาวิชา</th>
+              <th className="pb-3">สถานภาพ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((s) => {
+              const isActive = s.enrollment_status === 10 || s.enrollment_status === 11;
+              return (
+                <tr key={s.student_id} className="border-b border-black/5 last:border-0">
+                  <td className="py-3 pr-3 font-medium">{s.student_id}</td>
+                  <td className="py-3 pr-3">{s.real_name || "—"}</td>
+                  <td className="py-3 pr-3 text-[#211a14]/70">{s.major}</td>
+                  <td className="py-3">
+                    <span
+                      className={cn(
+                        "inline-flex rounded-full px-2.5 py-1 text-sm font-bold",
+                        isActive ? "bg-green-50 text-green-700" : "bg-black/5 text-[#211a14]/60"
+                      )}
+                    >
+                      {enrollmentStatusLabel(s.enrollment_status)}
+                    </span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s) => {
-                  const isActive = s.enrollment_status === 10 || s.enrollment_status === 11;
-                  return (
-                    <tr key={s.student_id} className="border-b border-black/5 last:border-0">
-                      <td className="py-3 pr-3 font-medium">{s.student_id}</td>
-                      <td className="py-3 pr-3">{s.real_name || "—"}</td>
-                      <td className="py-3 pr-3 text-[#211a14]/70">{s.major}</td>
-                      <td className="py-3">
-                        <span
-                          className={cn(
-                            "inline-flex rounded-full px-2.5 py-1 text-sm font-bold",
-                            isActive ? "bg-green-50 text-green-700" : "bg-black/5 text-[#211a14]/60"
-                          )}
-                        >
-                          {enrollmentStatusLabel(s.enrollment_status)}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </AdminModal>
   );
 }

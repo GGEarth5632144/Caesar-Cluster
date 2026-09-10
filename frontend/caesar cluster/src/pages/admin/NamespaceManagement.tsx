@@ -12,7 +12,6 @@ import {
   SlidersHorizontal,
   Trash2,
   Users,
-  X,
 } from "lucide-react";
 
 import {
@@ -29,6 +28,7 @@ import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
 import { notify, confirmAction } from "@/lib/modal";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
+import { AdminModal } from "@/components/ui/admin-modal";
 import { usePageSearch } from "@/hooks/usePageSearch";
 import { useSearchStore } from "@/store/searchStore";
 import { namespacesScope } from "@/config/searchScopes";
@@ -547,124 +547,107 @@ function ManageNamespaceModal({
     "ต่ำกว่ายอดที่ใช้อยู่ — บริการเดิมยังรันต่อ แต่จะ deploy เพิ่มไม่ได้จนกว่าจะลบของเก่าออก";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono backdrop-blur-sm">
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-[#FFF8E8] shadow-2xl">
-
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-black/5 bg-[#FFF8E8] px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="truncate text-xl font-bold text-[#211a14]">{namespace.name}</h2>
-            <p className="mt-0.5 text-sm text-[#211a14]/50">
-              สร้างเมื่อ {formatDate(namespace.created_at)} · สมาชิก {namespace.member_count} คน ·
-              บริการ {namespace.usage.service_count} ตัว
-            </p>
-          </div>
+    <AdminModal
+      onClose={onClose}
+      busy={isSubmitting}
+      title={namespace.name}
+      subtitle={
+        `สร้างเมื่อ ${formatDate(namespace.created_at)} · สมาชิก ${namespace.member_count} คน · ` +
+        `บริการ ${namespace.usage.service_count} ตัว`
+      }
+      onSubmit={handleSubmit}
+      footer={(close) => (
+        <>
           <button
             type="button"
-            onClick={onClose}
+            onClick={onDelete}
             disabled={isSubmitting}
-            className="rounded-xl p-2 text-[#211a14]/50 transition-colors hover:bg-black/5 disabled:opacity-50"
+            className="mr-auto inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-base font-bold text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50"
           >
-            <X size={20} />
+            <Trash2 size={18} />
+            ลบเนมสเปซนี้
           </button>
-        </div>
+          <button
+            type="button"
+            onClick={close}
+            disabled={isSubmitting}
+            className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting || !isDirty}
+            className="inline-flex min-w-[140px] items-center justify-center rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+          >
+            {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "บันทึกโควตา"}
+          </button>
+        </>
+      )}
+    >
+      {/* ---------- โควตา ---------- */}
+      <div className="flex flex-col gap-6 rounded-2xl border border-black/5 bg-white p-5">
+        <QuotaSlider
+          label="CPU Limit"
+          icon={Cpu}
+          value={cpuMilli}
+          onChange={setCpuMilli}
+          bounds={QUOTA_BOUNDS.cpu}
+          display={`${cores(cpuMilli)} Core`}
+          rawDisplay={`${cpuMilli}m`}
+          usedDisplay={`ใช้อยู่ ${cores(namespace.usage.used_cpu_milli)} Core`}
+          maxDisplay={`สูงสุด ${cores(QUOTA_BOUNDS.cpu.max)} Core`}
+          presets={CPU_PRESETS.map((v) => ({ value: v, label: `${cores(v)} Core` }))}
+          warning={cpuBelowUsage ? belowUsageWarning : null}
+          disabled={isSubmitting}
+        />
 
-        <form onSubmit={handleSubmit} className="p-6">
+        <div className="h-px bg-black/5" />
 
-          {/* ---------- โควตา ---------- */}
-          <div className="flex flex-col gap-6 rounded-2xl border border-black/5 bg-white p-5">
-            <QuotaSlider
-              label="CPU Limit"
-              icon={Cpu}
-              value={cpuMilli}
-              onChange={setCpuMilli}
-              bounds={QUOTA_BOUNDS.cpu}
-              display={`${cores(cpuMilli)} Core`}
-              rawDisplay={`${cpuMilli}m`}
-              usedDisplay={`ใช้อยู่ ${cores(namespace.usage.used_cpu_milli)} Core`}
-              maxDisplay={`สูงสุด ${cores(QUOTA_BOUNDS.cpu.max)} Core`}
-              presets={CPU_PRESETS.map((v) => ({ value: v, label: `${cores(v)} Core` }))}
-              warning={cpuBelowUsage ? belowUsageWarning : null}
-              disabled={isSubmitting}
-            />
-
-            <div className="h-px bg-black/5" />
-
-            <QuotaSlider
-              label="RAM Limit"
-              icon={Layers}
-              value={ramMB}
-              onChange={setRamMB}
-              bounds={QUOTA_BOUNDS.ram}
-              display={`${gigabytes(ramMB)} GB`}
-              rawDisplay={`${ramMB} MB`}
-              usedDisplay={`ใช้อยู่ ${gigabytes(namespace.usage.used_ram_mb)} GB`}
-              maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.ram.max)} GB`}
-              presets={RAM_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
-              warning={ramBelowUsage ? belowUsageWarning : null}
-              disabled={isSubmitting}
-            />
-          </div>
-
-          {/* ---------- สมาชิก ---------- */}
-          <div className="mt-6">
-            <span className={labelClass}>สมาชิกในเนมสเปซ</span>
-            {namespace.members.length === 0 ? (
-              <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/50">
-                ไม่เหลือสมาชิกใน space นี้แล้ว — โควตาที่ตั้งไว้ยังถูกจองอยู่ ควรพิจารณาลบทิ้ง
-              </div>
-            ) : (
-              <ul className="divide-y divide-black/5 overflow-hidden rounded-xl border border-black/10 bg-white">
-                {namespace.members.map((member) => (
-                  <li key={member.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-base font-semibold text-[#211a14]">
-                        {member.real_name}
-                      </div>
-                      <div className="text-sm text-[#211a14]/50">{member.student_id}</div>
-                    </div>
-                    {member.is_contributor && (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#FFF8E8] px-2.5 py-1 text-xs font-bold text-[#BB6653]">
-                        <Crown size={12} /> เจ้าของ
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="mt-8 flex flex-col-reverse gap-3 border-t border-black/5 pt-6 sm:flex-row sm:items-center sm:justify-between">
-            <button
-              type="button"
-              onClick={onDelete}
-              disabled={isSubmitting}
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-base font-bold text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50"
-            >
-              <Trash2 size={18} />
-              ลบเนมสเปซนี้
-            </button>
-
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={isSubmitting}
-                className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || !isDirty}
-                className="inline-flex min-w-[140px] items-center justify-center rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
-              >
-                {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "บันทึกโควตา"}
-              </button>
-            </div>
-          </div>
-        </form>
+        <QuotaSlider
+          label="RAM Limit"
+          icon={Layers}
+          value={ramMB}
+          onChange={setRamMB}
+          bounds={QUOTA_BOUNDS.ram}
+          display={`${gigabytes(ramMB)} GB`}
+          rawDisplay={`${ramMB} MB`}
+          usedDisplay={`ใช้อยู่ ${gigabytes(namespace.usage.used_ram_mb)} GB`}
+          maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.ram.max)} GB`}
+          presets={RAM_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
+          warning={ramBelowUsage ? belowUsageWarning : null}
+          disabled={isSubmitting}
+        />
       </div>
-    </div>
+
+      {/* ---------- สมาชิก ---------- */}
+      <div className="mt-6">
+        <span className={labelClass}>สมาชิกในเนมสเปซ</span>
+        {namespace.members.length === 0 ? (
+          <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/50">
+            ไม่เหลือสมาชิกใน space นี้แล้ว — โควตาที่ตั้งไว้ยังถูกจองอยู่ ควรพิจารณาลบทิ้ง
+          </div>
+        ) : (
+          <ul className="divide-y divide-black/5 overflow-hidden rounded-xl border border-black/10 bg-white">
+            {namespace.members.map((member) => (
+              <li key={member.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-base font-semibold text-[#211a14]">
+                    {member.real_name}
+                  </div>
+                  <div className="text-sm text-[#211a14]/50">{member.student_id}</div>
+                </div>
+                {member.is_contributor && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#FFF8E8] px-2.5 py-1 text-xs font-bold text-[#BB6653]">
+                    <Crown size={12} /> เจ้าของ
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </AdminModal>
   );
 }
 
