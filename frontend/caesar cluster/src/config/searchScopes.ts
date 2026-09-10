@@ -5,6 +5,12 @@ import type { AppService } from "@/api/services";
 import type { LogLine } from "@/api/logs";
 import type { NodeTelemetry } from "@/api/mornitorequest";
 import type { EligibleStudentItem } from "@/api/eligibleStudents";
+import {
+  namespaceOwner,
+  namespaceState,
+  namespaceUsagePercent,
+  type NamespaceDetail,
+} from "@/api/namespace";
 import type { SearchScope } from "@/store/searchStore";
 
 // นิยาม "หน้านี้ค้นอะไรได้บ้าง" ของทุกหน้า รวมไว้ที่เดียว
@@ -68,23 +74,16 @@ export const usersScope: SearchScope = {
       ],
       get: (u: User) => (u.namespace_id ? "yes" : "no"),
     },
+    // ไม่มีฟิลด์โควตาที่นี่แล้ว — คอลัมน์ Quota Limit ย้ายไปหน้า Namespace Management
+    // ค้นด้วยเลขโควตาในหน้านี้จะได้แถวที่มองไม่เห็นว่าตรงกับตรงไหน ให้ไปค้นที่หน้านั้นแทน
+    //
+    // alias ห้ามชน "space"/"namespace" ที่ฟิลด์ด้านบนจองไว้แล้ว — ตัวหาฟิลด์เลือกตัวแรกที่ตรง
+    // (ดู lib/search.ts) alias ที่ซ้ำจะกลายเป็น alias ตายที่ไม่มีวันถูกเรียกใช้
     {
-      id: "cpu",
-      label: "โควตา CPU",
-      type: "number",
-      unit: "millicore",
-      aliases: ["ซีพียู"],
-      exactOnly: true,
-      get: (u: User) => u.cpu_limit_milli,
-    },
-    {
-      id: "ram",
-      label: "โควตา RAM",
-      type: "number",
-      unit: "MB",
-      aliases: ["แรม", "memory"],
-      exactOnly: true,
-      get: (u: User) => u.ram_limit_mb,
+      id: "nsname",
+      label: "ชื่อเนมสเปซ",
+      aliases: ["ชื่อกลุ่ม", "ชื่อเนมสเปซ", "ns"],
+      get: (u: User) => u.namespace_name,
     },
     {
       id: "created",
@@ -113,7 +112,58 @@ export const usersScope: SearchScope = {
       ],
     },
   ],
-  examples: ["role:admin", "space:no", "year:4 -role:admin", "cpu:>=2000"],
+  examples: ["role:admin", "space:no", "year:4 -role:admin", "nsname:lab"],
+};
+
+// ---------------------------------------------------------------------------
+// ผู้ดูแล — เนมสเปซและโควตา
+// ---------------------------------------------------------------------------
+
+const namespaceStateOptions = [
+  { value: "active", label: "ใช้งานอยู่" },
+  { value: "full", label: "ใกล้เต็ม" },
+  { value: "idle", label: "ยังไม่มีบริการ" },
+  { value: "empty", label: "ไม่มีสมาชิก" },
+];
+
+export const namespacesScope: SearchScope = {
+  id: "admin-namespaces",
+  noun: "เนมสเปซ",
+  placeholder: "ค้นหาเนมสเปซ — ชื่อ space, ชื่อสมาชิก, state:full หรือ cpu:>=4000",
+  fields: [
+    { id: "name", label: "ชื่อเนมสเปซ", aliases: ["ชื่อ", "space", "ns"], get: (n: NamespaceDetail) => n.name },
+    {
+      id: "owner",
+      label: "เจ้าของ",
+      aliases: ["contributor", "เจ้าของ", "ผู้สร้าง"],
+      get: (n: NamespaceDetail) => namespaceOwner(n)?.real_name ?? "",
+    },
+    // ค้นด้วยชื่อหรือรหัสของสมาชิกคนไหนก็ได้ในกลุ่ม — แอดมินมักเริ่มจาก "นักศึกษาคนนี้อยู่ space ไหน"
+    // ไม่ใช่จากชื่อ space ที่ตัวเองไม่เคยเห็นมาก่อน
+    {
+      id: "member",
+      label: "สมาชิกในกลุ่ม",
+      aliases: ["สมาชิก", "นักศึกษา", "student", "รหัส"],
+      get: (n: NamespaceDetail) => n.members.map((m) => `${m.real_name} ${m.student_id}`).join(" "),
+    },
+    {
+      id: "state",
+      label: "สภาพการใช้งาน",
+      type: "enum",
+      aliases: ["สถานะ", "สภาพ", "status"],
+      exactOnly: true,
+      options: namespaceStateOptions,
+      get: (n: NamespaceDetail) => namespaceState(n),
+    },
+    { id: "cpu", label: "โควตา CPU", type: "number", unit: "millicore", aliases: ["ซีพียู"], exactOnly: true, get: (n: NamespaceDetail) => n.cpu_limit_milli },
+    { id: "ram", label: "โควตา RAM", type: "number", unit: "MB", aliases: ["แรม", "memory"], exactOnly: true, get: (n: NamespaceDetail) => n.ram_limit_mb },
+    { id: "usage", label: "สัดส่วนที่ใช้ไป", type: "number", unit: "%", aliases: ["ใช้ไป", "percent", "เปอร์เซ็นต์"], exactOnly: true, get: (n: NamespaceDetail) => Math.round(namespaceUsagePercent(n).peak) },
+    { id: "members", label: "จำนวนสมาชิก", type: "number", aliases: ["จำนวนสมาชิก", "คน"], exactOnly: true, get: (n: NamespaceDetail) => n.member_count },
+    { id: "services", label: "จำนวนบริการ", type: "number", aliases: ["บริการ", "service"], exactOnly: true, get: (n: NamespaceDetail) => n.usage.service_count },
+    { id: "created", label: "วันที่สร้าง", type: "date", aliases: ["วันที่", "สร้าง"], exactOnly: true, get: (n: NamespaceDetail) => n.created_at },
+  ],
+  quickFilters: [{ fieldId: "state", label: "สภาพ", options: namespaceStateOptions, multi: true }],
+  examples: ["state:full", "state:empty", "usage:>=90", "cpu:>=4000", "members:>1"],
 };
 
 // ---------------------------------------------------------------------------

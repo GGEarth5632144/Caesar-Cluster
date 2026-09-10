@@ -1,8 +1,6 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Server,
-  ServerCrash,
-  Cpu,
   Activity,
   AlertTriangle,
   RefreshCw,
@@ -207,6 +205,14 @@ const PowerGridItem = ({ power }: { power: PowerNode }) => {
 };
 
 // --- Main Component ---
+// เหตุผลเดียวกับใน AdminDashboard.tsx: Recharts ให้ label ของ Tooltip มาเป็น ReactNode
+// ซึ่งใส่ลง new Date() ตรงๆ ไม่ได้ ค่าจริงคือฟิลด์ time ของข้อมูลกราฟ
+function formatTooltipTime(label: ReactNode) {
+  const raw = String(label);
+  const date = new Date(raw);
+  return isNaN(date.getTime()) ? raw : date.toLocaleTimeString("th-TH");
+}
+
 export default function IPCmanagement() {
   const [nodes, setNodes] = useState<NodeTelemetry[]>([]);
   const [historyData, setHistoryData] = useState<ClusterHistoryData[]>([]);
@@ -385,7 +391,7 @@ export default function IPCmanagement() {
             value={activePowerNodes} 
             unit={`/ ${powers.length}`}
             color="#06b6d4"
-            data={powerHistory.map(p => ({ value: activePowerNodes }))} 
+            data={powerHistory.map(() => ({ value: activePowerNodes }))} 
             type="bar"
           />
         </div>
@@ -430,7 +436,7 @@ export default function IPCmanagement() {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ color: '#f97316', fontWeight: 'bold' }}
-                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                    labelFormatter={formatTooltipTime}
                     formatter={(value: any) => [Number(value).toFixed(1), "Avg Temp (°C)"]} 
                   />
                   <Line type="monotone" dataKey="avgTemp" name="Avg Temp (°C)" stroke="#f97316" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0 }} />
@@ -476,7 +482,7 @@ export default function IPCmanagement() {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
-                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                    labelFormatter={formatTooltipTime}
                     formatter={(value: any) => [(Number(value) / 1024).toFixed(2), "RAM Used (GB)"]} 
                   />
                   <defs>
@@ -531,7 +537,7 @@ export default function IPCmanagement() {
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ color: '#b45309', fontWeight: 'bold' }}
-                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                    labelFormatter={formatTooltipTime}
                   />
                   <Area type="monotone" dataKey="totalWatt" name="Total Power (W)" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorPower)" isAnimationActive={false} />
                 </AreaChart>
@@ -571,7 +577,7 @@ export default function IPCmanagement() {
                   
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    labelFormatter={(label) => new Date(label).toLocaleTimeString('th-TH')}
+                    labelFormatter={formatTooltipTime}
                   />
                   <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '13px' }} />
                   <Bar yAxisId="left" dataKey="totalAmp" name="Total Current (A)" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} isAnimationActive={false} />

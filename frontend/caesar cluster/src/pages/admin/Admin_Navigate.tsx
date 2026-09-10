@@ -2,6 +2,7 @@ import {
   Home,
   Inbox,          // เปลี่ยนจาก FileText มาใช้ Inbox หรือ ClipboardList เพื่อสื่อถึงคำขอที่รออยู่
   Users,
+  Boxes,          // กล่องซ้อนกัน = namespace หลายอันในคลัสเตอร์เดียว
   Server,
   Layers,         // แนะนำให้ใช้ Layers หรือ ServerCog แทน Service (ไม่มีใน lucide)
   Sliders,     // ใช้ BellRing ให้ดูเป็นการแจ้งเตือนที่ตื่นตัวขึ้น (หรือใช้ Bell ก็ได้)
@@ -22,6 +23,9 @@ export const adminNavItems: NavItem[] = [
 
   // 3. การจัดการทรัพยากรหลักในระบบ (เรียงจากคน -> เครื่อง -> เซอร์วิส -> โควตา)
   { label: "User Management", icon: Users, path: `/${PATHS.userManagement}` },
+  // Namespace Management ถือ "โควตา" ของระบบ — วางต่อจาก User Management เพราะเป็นหน้าที่
+  // แอดมินเด้งไปต่อทันทีหลังดูรายชื่อผู้ใช้ (โควตาผูกกับ space ไม่ได้ผูกกับตัวผู้ใช้)
+  { label: "Namespace Management", icon: Boxes, path: `/${PATHS.namespaceManagement}` },
   { label: "IPC Management", icon: Server, path: `/${PATHS.ipcManagement}` },//กำลังทำ
   { label: "Services", icon: Layers, path: `/${PATHS.services}` },//กำลังทำ
   { label: "Quota", icon: Sliders, path: `/${PATHS.adminApprovals}` },

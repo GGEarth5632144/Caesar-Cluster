@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, UserPlus, Edit2, Trash2, Cpu, Layers, Loader2, X ,Users} from "lucide-react";
+import { Search, UserPlus, Edit2, Trash2, Boxes, Loader2, X, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableRowsSkeleton, SimpleRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { userManagementApi, type User, type UpdateUserDTO } from "@/api/adminuser";
@@ -172,7 +172,7 @@ export default function UserManagement() {
               <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
                 <th className="px-6 pb-4 sm:px-3">Student Info</th>
                 <th className="px-3 pb-4">Contact</th>
-                <th className="px-3 pb-4">Quota Limit</th>
+                <th className="px-3 pb-4">Namespace</th>
                 <th className="px-3 pb-4 text-center">Role / Year</th>
                 <th className="px-6 pb-4 text-center sm:px-3">Action</th>
               </tr>
@@ -243,16 +243,29 @@ export default function UserManagement() {
                         </div>
                       </td>
 
+                      {/* เนมสเปซที่สังกัด — โควตาของ space นี้ไปดู/แก้ที่หน้า Namespace Management
+                          (โควตาผูกกับ namespace ไม่ใช่ user แก้ตรงนี้ทีเดียวจะกระทบทุกคนในกลุ่ม
+                          ซึ่งไม่ใช่สิ่งที่หน้า "จัดการผู้ใช้รายคน" ควรทำได้) */}
                       <td className="px-3 py-4 text-[#211a14]/70">
                         {user.namespace_id ? (
-                          <div className="flex flex-col gap-1 text-sm">
-                            <span className="flex items-center gap-1.5">
-                              <Cpu size={15} className="text-[#BB6653]" /> {user.cpu_limit_milli / 1000} Core
+                          <button
+                            type="button"
+                            onClick={() =>
+                              navigate(`/${PATHS.namespaceManagement}`, {
+                                // ฝากคำค้นไปด้วย หน้าปลายทางจะเปิดมาพร้อมกรองเหลือ space นี้อันเดียว
+                                // ชื่อ namespace ผ่านกฎ DNS-1123 อยู่แล้ว (ตัวเล็ก/ตัวเลข/ขีดกลาง)
+                                // จึงไม่มีช่องว่างมาทำให้ตัวแยกคำของช่องค้นหาตัดผิดที่
+                                state: user.namespace_name ? { search: `name:${user.namespace_name}` } : undefined,
+                              })
+                            }
+                            title="ไปที่หน้าจัดการเนมสเปซเพื่อปรับโควตา"
+                            className="inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-semibold text-[#BB6653] transition-colors hover:bg-[#F08B51]/15"
+                          >
+                            <Boxes size={15} className="shrink-0" />
+                            <span className="truncate">
+                              <Highlight text={user.namespace_name || `#${user.namespace_id}`} terms={highlightTerms} />
                             </span>
-                            <span className="flex items-center gap-1.5">
-                              <Layers size={15} className="text-[#BB6653]" /> {(user.ram_limit_mb / 1024).toFixed(1)} GB
-                            </span>
-                          </div>
+                          </button>
                         ) : (
                           <span className="text-sm text-[#211a14]/40">ยังไม่มี space</span>
                         )}
@@ -430,13 +443,14 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
               </select>
             </div>
 
-            {/* โควตา (Quota) — ผูกกับ namespace แล้ว ไม่ใช่ user แก้ที่หน้าจัดการ namespace แทน */}
+            {/* เนมสเปซที่สังกัด — อ่านอย่างเดียว ย้ายผู้ใช้ข้าม space จากที่นี่ไม่ได้
+                โควตาของ space ไปปรับที่หน้า Namespace Management */}
             <div className="sm:col-span-2">
-              <label className={labelClass}>Quota Limit</label>
+              <label className={labelClass}>Namespace</label>
               <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/60">
                 {user.namespace_id
-                  ? `${user.cpu_limit_milli / 1000} Core · ${(user.ram_limit_mb / 1024).toFixed(1)} GB — โควตาผูกกับ namespace ปรับได้ที่หน้าจัดการ Namespace`
-                  : "ผู้ใช้ยังไม่มี namespace — โควตาจะแสดงเมื่อสร้าง/เข้าร่วม space แล้ว"}
+                  ? `${user.namespace_name || `#${user.namespace_id}`} — โควตาของ space นี้ปรับได้ที่หน้า Namespace Management`
+                  : "ผู้ใช้ยังไม่มี namespace — จะสังกัด space เมื่อสร้างหรือเข้าร่วมกลุ่มแล้ว"}
               </div>
             </div>
 

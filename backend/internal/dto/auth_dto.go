@@ -66,9 +66,13 @@ type ResetPasswordRequest struct {
 // ซึ่งเป็นคนละความหมายกัน — ใช้ตอน ListUsers เท่านั้น (ดู AdminController.ListUsers)
 //
 // CPULimitMilli/RAMLimitMB ดึงมาจาก namespace ของผู้ใช้ (ถ้ายังไม่มี space จะเป็น 0)
+//
+// NamespaceName คือชื่อ space ที่ผู้ใช้สังกัด — หน้า User Management โชว์ชื่อนี้แทนโควตา
+// (โควตาย้ายไปจัดการที่หน้า Namespace Management แล้ว) ผู้ใช้ที่ยังไม่มี space จะเป็นค่าว่าง
 type UserWithYearLevel struct {
 	entity.User
-	YearLevel     int `json:"year_level"`
-	CPULimitMilli int `json:"cpu_limit_milli"`
-	RAMLimitMB    int `json:"ram_limit_mb"`
+	YearLevel     int    `json:"year_level"`
+	NamespaceName string `json:"namespace_name"`
+	CPULimitMilli int    `json:"cpu_limit_milli"`
+	RAMLimitMB    int    `json:"ram_limit_mb"`
 }
