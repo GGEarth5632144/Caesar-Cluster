@@ -558,10 +558,31 @@ func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcNam
 	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (ScaleService)")
 }
 
-// DeleteService (ยังไม่ทำ) — จะลบ Deployment ตัวเดียวออกจาก namespace
-// data flow (แผน): รับ namespace + ชื่อ service จาก ServiceManager.Delete → เรียก AppsV1().Deployments().Delete()
+// DeleteService ลบ Deployment + Service (NodePort) ที่ DeployService สร้างไว้ (ชื่อเดียวกับ svcName ทั้งคู่)
+// data flow: ServiceManager.Delete ส่ง namespace + ชื่อ service มา → ลบ Deployment → ลบ Service
+//
+// NotFound = สำเร็จ ตามสัญญา idempotent เดียวกับ DeleteNamespace: ServiceManager.Delete ลบแถวใน DB
+// หลังเราคืน nil เท่านั้น ถ้าลบได้ตัวเดียวแล้วล้ม การกดลบซ้ำต้องเดินผ่านตัวที่หายไปแล้วได้
+// ไม่งั้นแถวใน DB ค้างถาวรและโควตาไม่ถูกคืน
+//
+// ลบ Deployment ก่อนเพราะเป็นตัวที่กินทรัพยากร — Pod ถูก GC เก็บต่อแบบ async (propagation ของ
+// apps/v1 เป็น Background อยู่แล้ว) เราไม่รอให้หมด ด้วยเหตุผลเดียวกับ DeleteNamespace
 func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName, svcName string) error {
-	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (DeleteService)")
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	err = cs.AppsV1().Deployments(nsName).Delete(ctx, svcName, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("ลบ Deployment '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svcName, nsName, err)
+	}
+	err = cs.CoreV1().Services(nsName).Delete(ctx, svcName, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("ลบ Service '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svcName, nsName, err)
+	}
+	log.Printf("[k8s] ลบ service '%s' ออกจาก namespace '%s' แล้ว", svcName, nsName)
+	return nil
 }
 
 // Logs (ยังไม่ทำ) — จะเปิด stream ของ log จาก container ที่รัน service นี้อยู่
