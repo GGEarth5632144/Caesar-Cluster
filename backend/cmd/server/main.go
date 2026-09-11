@@ -51,7 +51,7 @@ func main() {
 	inviteMgr := services.NewInviteManager(db)
 	telemetrySvc := services.NewTelemetryService(db)
 	telemetrySvc.StartTelemetryWorker()
-	powerService := services.NewPowerService(db)
+	powerService := services.NewPowerService(db, cfg.PowerHistoryRetentionDays)
 	powerService.StartPowerWorker()
 
 	// ผูก context กับสัญญาณปิดโปรแกรม ให้ HTTP server ปิดจากสัญญาณเดียวกัน

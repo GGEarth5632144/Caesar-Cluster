@@ -19,8 +19,35 @@ func openDB(dbURL string) *gorm.DB {
 	if err != nil {
 		log.Fatalf("cannot connect to database: %v", err)
 	}
+
+	tunePool(db)
+
 	log.Println("database connected ✓")
 	return db
+}
+
+// tunePool ตั้งขนาด connection pool แทนค่า default ของ database/sql
+//
+// ค่า default คือ MaxIdleConns = 2 ซึ่งน้อยเกินไปสำหรับระบบนี้: worker สอง
+// ตัวเขียน DB ตลอดเวลาอยู่แล้ว (telemetry ทุก 5 วิ, power ทุก 15 วิ) ทับกับหน้า Dashboard
+// ที่ยิงหลายเส้นพร้อมกันทุก 30 วินาทีต่อแอดมินหนึ่งคน — connection ตัวที่ 3 เป็นต้นไปจะถูก
+// ปิดทิ้งทันทีที่ใช้เสร็จ แล้วเปิดใหม่ในรอบถัดไป ทุกครั้งที่เปิดใหม่ต้องจ่ายค่า TCP handshake
+// + auth ของ Postgres ก่อนถึงจะเริ่ม query ได้ ซึ่งบวกเข้าไปในเวลาที่ผู้ใช้รอหน้าเว็บโหลดตรงๆ
+//
+// MaxOpenConns 25 กันอีกด้านหนึ่ง: Postgres ตั้ง max_connections ไว้ 100 โดย default
+// ปล่อยไม่จำกัดแล้ววันที่มีคนเข้าพร้อมกันเยอะ backend จะกิน slot จนหมดแล้วต่อไม่ได้ทั้งเครื่อง
+func tunePool(db *gorm.DB) {
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("คำเตือน: ตั้งค่า connection pool ไม่สำเร็จ — ใช้ค่า default ต่อ: %v", err)
+		return
+	}
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	// รีไซเคิล connection ทุกชั่วโมง กัน connection ที่ค้างข้าม restart ของ Postgres
+	// หรือถูก proxy/firewall ตัดเงียบๆ แล้วเรายังคิดว่ายังใช้ได้อยู่
+	sqlDB.SetConnMaxLifetime(time.Hour)
 }
 
 // gormLogger = logger.Default แต่ไม่นับ "หาแถวไม่เจอ" เป็นเรื่องผิดปกติ

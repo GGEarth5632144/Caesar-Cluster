@@ -58,6 +58,48 @@ func (q *QuotaService) Usage(ctx context.Context, tx *gorm.DB, namespaceID int) 
 	return u, err
 }
 
+// UsageByNamespace = Usage แต่ถามทีเดียวให้หลาย namespace พร้อมกัน — สำหรับหน้า admin
+// ที่ต้องโชว์ยอดใช้งานของทุก space ในตารางเดียว
+//
+// ถ้าวน Usage() ทีละ namespace จะได้ query เท่าจำนวน space (N+1) ทั้งที่เป็นการรวมยอด
+// จากตารางเดียวกันทั้งหมด — GROUP BY namespace_id ทำงานเดียวกันนี้ได้ในคำสั่งเดียว
+//
+// namespace ที่ยังไม่มี service สักตัวจะไม่มีแถวใน GROUP BY เลย ผู้เรียกอ่านค่าจาก map
+// แล้วได้ zero value (0/0/0) ซึ่งตรงกับที่ Usage() ตอบให้อยู่แล้ว ไม่ต้องเติมเองให้ครบ
+func (q *QuotaService) UsageByNamespace(ctx context.Context, namespaceIDs []int) (map[int]NamespaceUsage, error) {
+	out := make(map[int]NamespaceUsage, len(namespaceIDs))
+	if len(namespaceIDs) == 0 {
+		return out, nil
+	}
+
+	var rows []struct {
+		NamespaceID  int
+		UsedCPUMilli int
+		UsedRAMMB    int
+		ServiceCount int
+	}
+	err := q.db.WithContext(ctx).Table("services").
+		Select(`namespace_id,
+		        COALESCE(SUM(cpu_milli * replicas), 0) AS used_cpu_milli,
+		        COALESCE(SUM(ram_mb * replicas), 0)    AS used_ram_mb,
+		        COUNT(*)                               AS service_count`).
+		Where("namespace_id IN ?", namespaceIDs).
+		Group("namespace_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, r := range rows {
+		out[r.NamespaceID] = NamespaceUsage{
+			UsedCPUMilli: r.UsedCPUMilli,
+			UsedRAMMB:    r.UsedRAMMB,
+			ServiceCount: r.ServiceCount,
+		}
+	}
+	return out, nil
+}
+
 // usageExcluding เหมือน Usage แต่ไม่นับ service ตัวที่ระบุ — ใช้ตอน scale ถามว่า "ถ้าไม่มีตัวนี้ เหลือเท่าไหร่"
 // ถ้าใช้ Usage ตรงๆ ยอดเดิมของมันจะถูกนับซ้ำ ทำให้ scale ลงโดนบล็อกทั้งที่ควรผ่าน
 func (q *QuotaService) usageExcluding(ctx context.Context, tx *gorm.DB, namespaceID, excludeServiceID int) (NamespaceUsage, error) {

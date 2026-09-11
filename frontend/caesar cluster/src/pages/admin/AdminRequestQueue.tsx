@@ -64,11 +64,20 @@ export default function AdminRequestQueue() {
     fetchRequests();
   }, []);
 
+  // วางทับเฉพาะแถวที่เพิ่งเปลี่ยน โดยรวมค่าที่ backend ตอบกลับมาเข้ากับของเดิม
+  //
+  // ฟิลด์ requester_name/requester_student_id มีเฉพาะใน payload ของ GET /admin/requests
+  // (backend enrich ให้ตอน list) เส้น approve/deny ตอบมาเป็น entity.Request เปล่าๆ ไม่มีสองตัวนี้
+  // การ spread ทับจึงคงค่าเดิมไว้ให้เอง เพราะ key ที่ไม่มีในฝั่งขวาจะไม่ไปลบของฝั่งซ้าย
+  const patchRequest = (id: number, changes: Partial<AdminVmRequest>) => {
+    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...changes } : r)));
+  };
+
   const handleApprove = async (id: number) => {
     setActioningId(id);
     try {
-      await adminVmRequestApi.approve(id);
-      await fetchRequests();
+      const updated = await adminVmRequestApi.approve(id);
+      patchRequest(id, updated);
       setDetailId(null);
     } catch (err) {
       console.error(err);
@@ -81,8 +90,8 @@ export default function AdminRequestQueue() {
   const handleDeny = async (id: number, reason: string) => {
     setActioningId(id);
     try {
-      await adminVmRequestApi.deny(id, reason);
-      await fetchRequests();
+      const { status, deny_reason } = await adminVmRequestApi.deny(id, reason);
+      patchRequest(id, { status, deny_reason });
       setDetailId(null);
     } catch (err) {
       console.error(err);

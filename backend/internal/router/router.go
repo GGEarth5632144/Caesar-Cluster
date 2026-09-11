@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -53,6 +54,18 @@ func Setup(
 		AllowMethods:    []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:    []string{"Authorization", "Content-Type"},
 	}))
+
+	// บีบอัด response ก่อนส่งออก — ทุก endpoint ของระบบตอบเป็น JSON ซึ่งซ้ำซ้อนสูงมาก
+	// (ชื่อฟิลด์เดิมซ้ำทุกแถว) gzip ลดขนาดที่วิ่งบนสายลงเหลือราว 10-15% ของเดิม
+	// โดยที่ controller ไม่ต้องแก้อะไรเลยสักบรรทัด
+	//
+	// ยกเว้นเส้น log ของ service: มันเป็นสตรีมที่ต้องไหลออกทีละบรรทัดตามที่ Flush() สั่ง
+	// แต่ gzip ต้องสะสม buffer ก่อนบีบ แล้วยังเซ็ต Content-Length ตอนปิด writer
+	// ซึ่งขัดกับ follow mode ที่ไม่มีวันรู้ความยาวล่วงหน้า — ปล่อยเส้นนี้ผ่านแบบไม่บีบ
+	r.Use(gzip.Gzip(
+		gzip.DefaultCompression,
+		gzip.WithExcludedPathsRegexs([]string{`^/api/services/\d+/logs$`}),
+	))
 
 	// /health = liveness/readiness probe: ping DB ภายใน 2 วิ → 200 ถ้าต่อ DB ได้, 503 ถ้าไม่ได้
 	r.GET("/health", func(c *gin.Context) {
@@ -113,7 +126,6 @@ func Setup(
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
 
-
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
 			protected.POST("/ai-review-requests", aiReviewReqCtl.Create)
@@ -134,6 +146,10 @@ func Setup(
 			admin.GET("/namespaces", adminCtl.ListNamespaces)
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
 			admin.DELETE("/namespaces/:id", adminCtl.DeleteNamespace)
+
+			// ก้อนสรุปของหน้า AdminDashboard — นับทุกอย่างที่ Postgres แล้วส่งกลับแค่ตัวเลข
+			// แทนที่จะยกตาราง users + requests ขึ้นมานับเองในเบราว์เซอร์ทุก 30 วินาที
+			admin.GET("/dashboard/summary", adminCtl.DashboardSummary)
 
 			admin.GET("/requests", adminCtl.ListAllRequests)
 			admin.PATCH("/requests/:id/approve", adminCtl.Approve)

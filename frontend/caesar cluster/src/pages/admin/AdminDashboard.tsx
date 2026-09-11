@@ -35,8 +35,7 @@ import {
   type PowerNode, 
   type PowerHistoryData 
 } from "@/api/mornitorequest";
-import { adminVmRequestApi, type AdminVmRequest } from "@/api/requests";
-import { userManagementApi } from "@/api/adminuser";
+import { adminDashboardApi, type AdminDashboardSummary } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 
 // ─── Main Component ───
@@ -55,8 +54,7 @@ export default function AdminDashboard() {
   const [historyData, setHistoryData] = useState<ClusterHistoryData[]>([]);
   const [powers, setPowers] = useState<PowerNode[]>([]);
   const [powerHistory, setPowerHistory] = useState<PowerHistoryData[]>([]);
-  const [requests, setRequests] = useState<AdminVmRequest[]>([]);
-  const [totalUsers, setTotalUsers] = useState<number>(0);
+  const [summary, setSummary] = useState<AdminDashboardSummary | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,21 +65,19 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       // โหลดทุกสรรพสิ่งมาพร้อมกันในทีเดียว!
-      const [nodesData, historyRes, powerData, powerHistData, reqData, usersData] = await Promise.all([
+      const [nodesData, historyRes, powerData, powerHistData, summaryData] = await Promise.all([
         nodetelemetry.getAll(),
         nodetelemetry.getHistory(timeRange),
         nodetelemetry.getAllPower(),
         nodetelemetry.getPowerHistory(timeRange),
-        adminVmRequestApi.listAll(),
-        userManagementApi.getAll(),
+        adminDashboardApi.summary(),
       ]);
 
       setNodes(nodesData.sort((a, b) => a.NodeName.localeCompare(b.NodeName)));
       setHistoryData(historyRes);
       setPowers(powerData.sort((a, b) => a.ModbusID - b.ModbusID));
       setPowerHistory(powerHistData);
-      setRequests(reqData);
-      setTotalUsers(usersData.length);
+      setSummary(summaryData);
 
       setLastUpdate(new Date());
       setError(null);
@@ -108,25 +104,30 @@ export default function AdminDashboard() {
   const totalWatt = powers.reduce((sum, p) => sum + p.Watt, 0);
   const activePowerNodes = powers.filter(p => p.Watt > 0).length;
 
-  // VM Requests
-  const pendingRequests = requests.filter(r => r.status === 'pending');
-  const approvedRequests = requests.filter(r => r.status === 'approved');
-  const deniedRequests = requests.filter(r => r.status === 'denied');
+  // VM Requests — backend นับมาให้แล้ว หน้านี้แค่อ่านค่ามาวาง
+  const counts = summary?.request_counts;
+  const totalUsers = summary?.user_count ?? 0;
+  const pendingRequests = summary?.pending_requests ?? [];
 
   const requestStatusData = [
-    { name: 'Pending', value: pendingRequests.length, color: '#f59e0b' },
-    { name: 'Approved', value: approvedRequests.length, color: '#10b981' },
-    { name: 'Denied', value: deniedRequests.length, color: '#ef4444' },
+    { name: 'Pending', value: counts?.pending ?? 0, color: '#f59e0b' },
+    { name: 'Approved', value: counts?.approved ?? 0, color: '#10b981' },
+    { name: 'Denied', value: counts?.denied ?? 0, color: '#ef4444' },
   ];
 
-  const requestTimelineData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    requests.forEach(req => {
-      const date = new Date(req.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
-      grouped[date] = (grouped[date] || 0) + 1;
-    });
-    return Object.entries(grouped).slice(-7).map(([date, count]) => ({ date, requests: count }));
-  }, [requests]);
+  // เหลือแค่แปลง YYYY-MM-DD ที่ backend ส่งมาเป็นป้ายภาษาไทยสั้นๆ บนแกน X
+  // (ตัวนับเองย้ายไปอยู่ที่ SQL พร้อมเติมวันที่ไม่มีคำขอเป็น 0 ให้ครบ 7 วันแล้ว)
+  const requestTimelineData = useMemo(
+    () =>
+      (summary?.request_timeline ?? []).map((point) => ({
+        date: new Date(`${point.date}T00:00:00`).toLocaleDateString('th-TH', {
+          day: 'numeric',
+          month: 'short',
+        }),
+        requests: point.count,
+      })),
+    [summary],
+  );
 
   if (loading && nodes.length === 0) {
     return (
