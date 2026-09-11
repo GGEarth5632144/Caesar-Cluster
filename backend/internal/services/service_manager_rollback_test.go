@@ -25,6 +25,15 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Skipf("ข้าม: ต่อ DB ทดสอบไม่ได้ (%v) — ตั้ง TEST_DB_URL ถ้าใช้ที่อื่น", err)
 	}
+
+	// migrate สองตารางที่เทสต์ชุดนี้ใช้ก่อนเสมอ
+	//
+	// จำเป็นเพราะ AutoMigrate ของจริงรันแค่ใน cmd/server กับ cmd/seed — เทสต์ต่อ DB ตรงๆ
+	// ถ้า dev เคยรันเซิร์ฟเวอร์เวอร์ชันเก่าค้างไว้ ตารางจะไม่มีคอลัมน์ที่เพิ่งเพิ่ม แล้วเทสต์
+	// จะล้มด้วย "column does not exist" ซึ่งดูเหมือนโค้ดพังทั้งที่แค่ schema ตามไม่ทัน
+	if err := db.AutoMigrate(&entity.Namespace{}, &entity.Service{}); err != nil {
+		t.Skipf("ข้าม: migrate schema ของ DB ทดสอบไม่สำเร็จ (%v)", err)
+	}
 	return db
 }
 
@@ -32,12 +41,15 @@ func testDB(t *testing.T) *gorm.DB {
 // context ของ HTTP request ถูก cancel ก่อน แล้ว provisioner จึงล้มเหลวเพราะ context นั้นเอง
 type disconnectingProv struct{ cancel context.CancelFunc }
 
-func (p *disconnectingProv) EnsureNamespace(context.Context, *entity.Namespace) error { return nil }
-func (p *disconnectingProv) DeleteNamespace(context.Context, string) error            { return nil }
-func (p *disconnectingProv) DeleteService(context.Context, string, string) error      { return nil }
-func (p *disconnectingProv) ScaleService(context.Context, string, string, int) error  { return nil }
+func (p *disconnectingProv) EnsureNamespace(context.Context, *entity.Namespace) error     { return nil }
+func (p *disconnectingProv) DeleteNamespace(context.Context, string) error                { return nil }
+func (p *disconnectingProv) DeleteService(context.Context, string, *entity.Service) error { return nil }
+func (p *disconnectingProv) ScaleService(context.Context, string, string, int) error      { return nil }
 func (p *disconnectingProv) Logs(context.Context, string, string, LogOptions) (io.ReadCloser, error) {
 	return nil, nil
+}
+func (p *disconnectingProv) Status(context.Context, string, *entity.Service) (WorkloadStatus, error) {
+	return WorkloadStatus{Phase: PhaseRunning}, nil
 }
 func (p *disconnectingProv) DeployService(ctx context.Context, _ string, _ *entity.Service) error {
 	p.cancel()

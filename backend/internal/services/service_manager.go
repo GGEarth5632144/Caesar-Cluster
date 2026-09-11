@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -16,6 +17,17 @@ var (
 	ErrRequestTemplateNotFound = errors.New("ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
 	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
 	ErrServiceNotReady         = errors.New("service ยังไม่พร้อม — รอให้ deploy เสร็จก่อนค่อยปรับจำนวน replica")
+
+	// ── error ของสวิตช์ database (ดู entity.Service.IsDatabase) ────────────────────────
+
+	// ระบบไม่เดาจุด mount ให้ไม่ว่าจะเป็น image อะไร เพราะเดาผิดแล้วได้ PVC ที่ไม่มีใครเขียนลง
+	// ข้อมูลหายตอน Pod restart ทั้งที่ทุกอย่างดูเหมือนสำเร็จ
+	ErrDataPathRequired = errors.New("ต้องระบุตำแหน่งที่ image นี้เก็บข้อมูล")
+
+	// ตอบเป็น error แทนการแก้ค่าให้เงียบๆ ไม่งั้นผู้เรียก API จะเข้าใจว่าได้ 3 Pod ทั้งที่ระบบให้ 1
+	ErrDatabaseReplicas = errors.New("database ต้องมี 1 pod เท่านั้น — สอง pod เขียนดิสก์ก้อนเดียวกันคือข้อมูลพัง")
+
+	ErrStorageNotAllowed = errors.New("ดิสก์ถาวรใช้ได้เฉพาะ service ที่เปิดสวิตช์ database")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
@@ -34,6 +46,14 @@ type CreateServiceParams struct {
 	ContainerPort int
 	Replicas      int
 	EnvVars       map[string]string
+
+	// IsDatabase = สวิตช์จากหน้าเว็บ เปิดแล้ว Create จะบังคับกติกาของ database ทั้งชุด
+	// (เครือข่ายปิด + ดิสก์ถาวร + 1 pod) — ดู entity.Service.IsDatabase
+	IsDatabase bool
+	// StorageMB เป็น 0 ได้ = ใช้ entity.DefaultStorageMBPerService (มีผลเฉพาะตอน IsDatabase)
+	StorageMB int
+	// DataPath = จุดที่ image เก็บข้อมูล — บังคับกรอกทุกครั้งที่ IsDatabase
+	DataPath string
 }
 
 // ServiceManager = business logic ของ workload: เช็คโควตา → บันทึก DB → deploy จริงขึ้น cluster
@@ -103,6 +123,30 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 	if replicas == 0 {
 		replicas = entity.DefaultReplicas
 	}
+	envVars := p.EnvVars
+	storageMB := 0
+	dataPath := ""
+
+	// ── สวิตช์ database: แปลง "ติ๊กหนึ่งครั้ง" เป็นกติกาทั้งชุด ────────────────────────
+	//
+	// ตรวจให้จบก่อนแตะ DB เพราะเป็นการตรวจคำขอล้วนๆ ไม่ต้องถือ lock ระหว่างทำ
+	if p.IsDatabase {
+		if p.Replicas > entity.DatabaseReplicas {
+			return nil, ErrDatabaseReplicas
+		}
+		replicas = entity.DatabaseReplicas
+		storageMB = p.StorageMB
+		if storageMB == 0 {
+			storageMB = entity.DefaultStorageMBPerService
+		}
+		if msg := ValidateDataPath(p.DataPath); msg != "" {
+			return nil, fmt.Errorf("%w: %s", ErrDataPathRequired, msg)
+		}
+		dataPath = strings.TrimRight(strings.TrimSpace(p.DataPath), "/")
+	} else if p.StorageMB > 0 {
+		// ขอดิสก์โดยไม่เปิดสวิตช์ = คำขอที่ขัดแย้งในตัวเอง ตอบให้ชัดดีกว่าเงียบๆ ไม่สร้าง PVC ให้
+		return nil, ErrStorageNotAllowed
+	}
 
 	svc := &entity.Service{
 		NamespaceID:       namespaceID,
@@ -115,12 +159,20 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		ContainerPort:     containerPort,
 		Replicas:          replicas,
 		Status:            entity.ServiceCreating,
-		EnvVars:           entity.EnvVarMap(p.EnvVars),
+		EnvVars:           entity.EnvVarMap(envVars),
+		IsDatabase:        p.IsDatabase,
+		StorageMB:         storageMB,
+		DataPath:          dataPath,
 	}
 
 	// เช็คโควตาของ namespace แล้ว INSERT ภายใน transaction เดียวกับที่ล็อก namespace ไว้
-	// (โควตาที่หักคือ cpu/ram × replicas — ดู ReserveAndInsert)
-	err := m.quota.ReserveAndInsert(ctx, namespaceID, cpuMilli, ramMB, replicas, func(tx *gorm.DB) error {
+	// (โควตาที่หักคือ cpu/ram/ดิสก์ × replicas — ดู ReserveAndInsert)
+	err := m.quota.ReserveAndInsert(ctx, namespaceID, ResourceRequest{
+		CPUMilli:  cpuMilli,
+		RAMMB:     ramMB,
+		StorageMB: storageMB,
+		Replicas:  replicas,
+	}, func(tx *gorm.DB) error {
 		return tx.Create(svc).Error
 	})
 	if err != nil {
@@ -139,17 +191,21 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		return nil, err
 	}
 
-	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว — persist คู่กับ status ในทีเดียว
+	// prov.DeployService เซ็ต svc.NodePort กลับมาแล้ว — persist ไว้
+	//
+	// จงใจไม่เขียน status=running ตรงนี้ทั้งที่ deploy ผ่าน เพราะ k8s รับ object แล้วตอบสำเร็จทันที
+	// ต่อให้ไม่มี node ว่างหรือ container จะตายทันทีที่ขึ้น ปล่อยเป็น creating ไว้ให้
+	// ServiceHealthMonitor ไปถามคลัสเตอร์ก่อนแล้วค่อยเขียนสถานะจริง (ดู service_health.go)
 	//
 	// ตัด cancel ออกด้วยเหตุผลเดียวกับ releaseReservation: ของถูกสร้างบนคลัสเตอร์ไปแล้วจริง
-	// ถ้าเขียนสถานะกลับไม่ได้เพราะผู้ใช้ปิดหน้าเว็บ แถวนี้จะค้างเป็น "creating" ตลอดกาล
-	// ทั้งที่ workload รันอยู่ และไม่มีอะไรมาแก้ให้
-	if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
-		Where("id = ?", svc.ID).
-		Updates(map[string]any{"status": entity.ServiceRunning, "node_port": svc.NodePort}).Error; err != nil {
-		return nil, err
+	// เขียน node_port ไม่ลงเพราะผู้ใช้ปิดหน้าเว็บ = ผู้ใช้ไม่มีทางรู้พอร์ตของตัวเอง
+	if svc.NodePort != nil {
+		if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
+			Where("id = ?", svc.ID).
+			Update("node_port", svc.NodePort).Error; err != nil {
+			return nil, err
+		}
 	}
-	svc.Status = entity.ServiceRunning
 	return svc, nil
 }
 
@@ -188,10 +244,16 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 		return nil, err
 	}
 
-	// ห้าม scale ระหว่างที่ Create ยังทำงานอยู่ ไม่งั้น DB กับคลัสเตอร์จะ drift ถาวร:
+	// เช็คก่อนเรื่องสถานะ เพราะถ้าเช็คทีหลัง การ scale database ที่ยังไม่ขึ้นจะได้ error ว่า
+	// "ยังไม่พร้อม" ซึ่งชวนให้เข้าใจผิดว่ารอแล้วทำได้ (ต้องกันที่นี่ ไม่ใช่แค่ซ่อน dropdown บนหน้าเว็บ)
+	if svc.IsDatabase {
+		return nil, ErrDatabaseReplicas
+	}
+
+	// ห้าม scale ระหว่างที่ยังไม่ได้ยืนยันว่า workload ขึ้นจริง ไม่งั้น DB กับคลัสเตอร์จะ drift ถาวร:
 	// Create อ่านค่า Replicas ไว้ตั้งแต่ก่อนเรียก provisioner แล้วไป apply ด้วยจำนวนเดิม
 	// ส่วน Scale เขียนจำนวนใหม่ลง DB ไปแล้ว — จบมาคลัสเตอร์ได้จำนวนเก่า และไม่มีอะไรมาปรับให้ตรงกันทีหลัง
-	// ช่องนี้กว้างหลายวินาทีบน k8s จริง ไม่ใช่แค่ 300ms แบบ mock
+	//
 	if svc.Status != entity.ServiceRunning {
 		return nil, fmt.Errorf("%w (สถานะตอนนี้: %s)", ErrServiceNotReady, svc.Status)
 	}
@@ -201,7 +263,12 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 		return &svc, nil // ไม่มีอะไรเปลี่ยน ไม่ต้องกวนคลัสเตอร์
 	}
 
-	err = m.quota.ReserveScale(ctx, namespaceID, serviceID, svc.CPUMilli, svc.RAMMB, replicas,
+	err = m.quota.ReserveScale(ctx, namespaceID, serviceID, ResourceRequest{
+		CPUMilli:  svc.CPUMilli,
+		RAMMB:     svc.RAMMB,
+		StorageMB: svc.StorageMB,
+		Replicas:  replicas,
+	},
 		func(tx *gorm.DB) error {
 			// UPDATE ที่ไม่โดนแถวไหน GORM ไม่ถือเป็น error — ถ้ามีคนลบ service แซงตอนเรารอ lock
 			// Scale จะตอบ success แล้วไปสั่งคลัสเตอร์ scale ของที่ถูกลบไปแล้ว
@@ -266,7 +333,8 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 		return err
 	}
 
-	if err := m.prov.DeleteService(ctx, ns.Name, svc.Name); err != nil {
+	// ส่งทั้ง svc ไปเพราะ database ต้องถอน PVC + NetworkPolicy เพิ่มด้วย (ดู Provisioner.DeleteService)
+	if err := m.prov.DeleteService(ctx, ns.Name, &svc); err != nil {
 		return err
 	}
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
@@ -295,4 +363,46 @@ func (m *ServiceManager) Logs(ctx context.Context, serviceID, namespaceID int, o
 	}
 
 	return m.prov.Logs(ctx, ns.Name, svc.Name, opts)
+}
+
+// ── จุด mount ของดิสก์ถาวร ─────────────────────────────────────────────────────────
+
+// reservedMountRoots = โฟลเดอร์ที่ห้าม mount PVC ทับ เพราะ PVC จะบังไฟล์เดิมของ image ทั้งหมด
+// แล้ว container ขึ้นไม่ได้ด้วย error ที่เดาสาเหตุไม่ออก (binary หาย, ไลบรารีหาย)
+var reservedMountRoots = []string{
+	"/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64",
+	"/proc", "/root", "/sbin", "/sys", "/usr",
+}
+
+// ValidateDataPath ตรวจจุด mount ที่ผู้ใช้กรอกมา — คืนข้อความอธิบาย สตริงว่าง = ผ่าน
+//
+// ตรวจได้แค่ว่า mount แล้วไม่พังระบบ ตรวจไม่ได้ว่าตรงกับที่ image เขียนข้อมูลลงจริงหรือเปล่า
+// อันหลังต้องพึ่งผู้ใช้ จึงเป็นเหตุผลที่ฟอร์มต้องเตือนให้ชัด
+func ValidateDataPath(p string) string {
+	p = strings.TrimSpace(p)
+	switch {
+	case p == "":
+		return "ต้องระบุตำแหน่งที่ image นี้เก็บข้อมูล"
+	case !strings.HasPrefix(p, "/"):
+		return "ต้องขึ้นต้นด้วย / (เช่น /var/lib/mydb)"
+	case len(p) > 200:
+		return "ยาวเกินไป (สูงสุด 200 ตัวอักษร)"
+	case strings.Contains(p, ".."):
+		return "ห้ามมี .. ในเส้นทาง"
+	case strings.Contains(p, "//"):
+		return "ห้ามมี / ติดกันสองตัว"
+	}
+
+	// เทียบทั้งตัวมันเองและการเป็นโฟลเดอร์ย่อย — "/usr" กับ "/usr/local/data" ผิดทั้งคู่
+	// แต่ "/usrdata" ไม่ผิด จึงต้องเทียบ prefix แบบมี "/" ต่อท้าย ไม่ใช่ HasPrefix เปล่าๆ
+	clean := strings.TrimRight(p, "/")
+	if clean == "" {
+		return "mount ที่ / ไม่ได้ — จะบังไฟล์ทั้งหมดของ image"
+	}
+	for _, root := range reservedMountRoots {
+		if clean == root || (root != "/" && strings.HasPrefix(clean+"/", root+"/")) {
+			return "mount ทับโฟลเดอร์ระบบ (" + root + ") ไม่ได้ — container จะขึ้นไม่ได้"
+		}
+	}
+	return ""
 }

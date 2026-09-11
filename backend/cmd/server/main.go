@@ -36,7 +36,12 @@ func main() {
 	// เลือกตัวสร้างของจริงบน cluster: kubernetes ของจริง หรือ mock ตอน dev
 	var prov services.Provisioner
 	if cfg.Provisioner == config.ProvisionerKubernetes {
-		prov = services.NewKubernetesProvisioner(cfg.KubeConfig)
+		// ต่อคลัสเตอร์ไม่ได้ = หยุดตั้งแต่ตรงนี้ ไม่ปล่อยให้ start แล้วไปพังตอนมีคนกด deploy
+		k8s, err := services.NewKubernetesProvisioner(cfg.KubeConfig)
+		if err != nil {
+			log.Fatalf("PROVISIONER=kubernetes แต่ใช้คลัสเตอร์ไม่ได้: %v", err)
+		}
+		prov = k8s
 		log.Println("provisioner: KUBERNETES")
 	} else {
 		prov = services.NewMockProvisioner()
@@ -58,6 +63,10 @@ func main() {
 	// เดิม r.Run() ไม่ผูกกับ context นี้ กด Ctrl+C แล้วโปรแกรมค้างต่อ
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// ถามคลัสเตอร์เป็นระยะว่า workload รันอยู่จริงไหม แล้วแก้สถานะใน DB ให้ตรง (ดู service_health.go)
+	// ผูกกับ ctx เดียวกับ HTTP server — ปิดเซิร์ฟเวอร์แล้ว worker หยุดตาม
+	services.NewServiceHealthMonitor(db, prov).Start(ctx)
 
 	var wg sync.WaitGroup
 
