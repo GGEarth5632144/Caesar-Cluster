@@ -44,6 +44,22 @@ function ResetPasswordRedirect() {
   return <Navigate to={PATHS.resetPassword + search} replace />;
 }
 
+/**
+ * ปลายทางของ path ที่ไม่ match route ไหนเลย
+ *
+ * คนที่ยังไม่ล็อกอิน → หน้า login ตามปกติ
+ * คนที่ล็อกอินอยู่แล้ว → หน้าแรกของตัวเอง ไม่ใช่ login (เพราะการเตะคนที่มี session อยู่ดีๆ
+ * ออกไปหน้า login คือบอกว่า "คุณหลุดแล้ว" ทั้งที่จริงแค่พิมพ์ URL ผิด)
+ *
+ * เคสที่ต้องพึ่งตรงนี้จริงๆ คือตอน role เปลี่ยน: route tree ถูกสร้างตาม role (ดูด้านล่าง)
+ * แอดมินที่เพิ่งถูกถอนสิทธิ์แล้วเปิด bookmark ของหน้าแอดมินค้างไว้ จะไม่มี route ไหนรับ
+ * ถ้าปล่อยให้เด้งไป login เขาจะเห็นหน้า login ทั้งที่ session ยังใช้ได้ดีอยู่
+ */
+function NotFoundRedirect() {
+  const token = useAuthStore((state) => state.token);
+  return <Navigate to={token ? "/" : PATHS.login} replace />;
+}
+
 function App() {
   // ดึงข้อมูล user จาก Zustand
   const user = useAuthStore((state) => state.user);
@@ -102,7 +118,7 @@ return (
               )}
             </Route>
           </Route>
-          <Route path="*" element={<Navigate to={PATHS.login} replace />} />
+          <Route path="*" element={<NotFoundRedirect />} />
         </Routes>
       </Suspense>
       <ActionModalHost />

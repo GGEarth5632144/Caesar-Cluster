@@ -1,15 +1,15 @@
 package services
 
 import (
+	"backend/internal/dto"
+	"backend/internal/entity"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
-	"os"
-	"backend/internal/dto"
-	"backend/internal/entity"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,73 +17,112 @@ import (
 
 type PowerService struct {
 	DB *gorm.DB
+
+	// เก็บประวัติย้อนหลังกี่วัน (<= 0 = ไม่ลบเลย) ห้ามน้อยกว่าช่วงยาวสุดของกราฟ (30d)
+	retentionDays int
 }
 
-func NewPowerService(db *gorm.DB) *PowerService {
-	return &PowerService{DB: db}
+func NewPowerService(db *gorm.DB, retentionDays int) *PowerService {
+	return &PowerService{DB: db, retentionDays: retentionDays}
 }
+
+const (
+	powerWorkerInterval = 15 * time.Second // ความถี่ที่ดึงค่าจากมิเตอร์ (GetPowerHistory คิดขนาด bucket จากค่านี้)
+	powerPruneInterval  = 6 * time.Hour    // ความถี่ที่ไล่ลบของเก่า — ไม่ต้องบ่อย รอบเดียวลบได้ทีละหลายชั่วโมง
+)
 
 func (s *PowerService) StartPowerWorker() {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(powerWorkerInterval)
 	go func() {
 		for range ticker.C {
 			s.fetchAndSavePower()
 		}
 	}()
-	fmt.Println("Power Background Worker started (5s interval)...")
+	log.Printf("power worker started (%s interval)", powerWorkerInterval)
+
+	s.startHistoryPruner()
+}
+
+// startHistoryPruner ลบแถวเก่าของ power_histories ทิ้งเป็นระยะ
+//
+// power_histories เป็นตารางเดียวที่โตไม่หยุด (5,760 แถว/วัน ~2 ล้านแถว/ปี) ส่วนตารางอื่น
+// upsert ทับของเดิม และไม่มีใครอ่านข้อมูลที่เก่ากว่าช่วงยาวสุดของกราฟเลย
+//
+// ลบรอบแรกทันทีตอน start ไม่รอครบ 6 ชม. เพื่อตัดของที่สะสมไว้ก่อนมีโค้ดนี้
+func (s *PowerService) startHistoryPruner() {
+	if s.retentionDays <= 0 {
+		log.Println("power history pruner disabled (retention <= 0) — เก็บข้อมูลย้อนหลังทั้งหมด")
+		return
+	}
+
+	go func() {
+		s.prunePowerHistory()
+		ticker := time.NewTicker(powerPruneInterval)
+		for range ticker.C {
+			s.prunePowerHistory()
+		}
+	}()
+	log.Printf("power history pruner started (keep %d days, run every %s)", s.retentionDays, powerPruneInterval)
+}
+
+// prunePowerHistory ลบแถวที่เก่ากว่าช่วงที่ตั้งไว้ — ล้มเหลวก็แค่ log ไม่ทำให้ worker หยุด
+func (s *PowerService) prunePowerHistory() {
+	cutoff := time.Now().AddDate(0, 0, -s.retentionDays)
+	res := s.DB.Where(`"timestamp" < ?`, cutoff).Delete(&entity.PowerHistory{})
+	if res.Error != nil {
+		log.Printf("prune power history error: %v", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("pruned %d power history rows older than %s", res.RowsAffected, cutoff.Format(time.RFC3339))
+	}
 }
 
 func (s *PowerService) fetchAndSavePower() {
 	promQueryURL := os.Getenv("GET_POWERS_URL")
 	if promQueryURL == "" {
-		fmt.Println("Warning: GET_POWERS_URL is empty")
+		log.Println("คำเตือน: GET_POWERS_URL ว่าง — ข้ามการเก็บค่าการใช้ไฟ")
 		return
 	}
 
-	// 1. สร้าง Request ด้วยตัวเองแทนการใช้ http.Get ตรงๆ
+	// สร้าง request เองแทน http.Get เพื่อคุมสามอย่างที่บอร์ด ESP ต้องการ: ปิด connection ทันที
+	// (กันซ็อกเก็ตเต็ม), ปลอม User-Agent (บอร์ดเตะ client ที่ไม่เหมือน browser) และปิด keep-alive
 	req, err := http.NewRequest("GET", promQueryURL, nil)
 	if err != nil {
-		fmt.Println("Error creating request:", err)
+		log.Printf("power: สร้าง request ไม่สำเร็จ: %v", err)
 		return
 	}
 
-	// 🚨 ท่าไม้ตายที่ 1: บังคับปิด Connection ทันที (ป้องกันบอร์ด ESP ซ็อกเก็ตเต็ม)
-	req.Close = true 
-	
-	// 🚨 ท่าไม้ตายที่ 2: ปลอมตัวเป็น Browser เผื่อบอร์ดมันเตะบอท
+	req.Close = true
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36")
 
-	// 🚨 ท่าไม้ตายที่ 3: ปิด Keep-Alive ที่ฝั่ง Transport ควบคู่กันไป
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			DisableKeepAlives: true,  
-			Proxy:             nil,   
-			ForceAttemptHTTP2: false, 
+			DisableKeepAlives: true,
+			Proxy:             nil,
+			ForceAttemptHTTP2: false,
 		},
 	}
 
-	// ใช้ client.Do(req) แทน client.Get
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Skip this tick - Fetch error or Timeout:", err)
+		log.Printf("power: ข้ามรอบนี้ (ดึงค่าไม่สำเร็จ/timeout): %v", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Skip this tick - Device returned HTTP %d\n", resp.StatusCode)
+		log.Printf("power: ข้ามรอบนี้ (อุปกรณ์ตอบ HTTP %d)", resp.StatusCode)
 		return
 	}
 
-	// Decode JSON 
 	var kwsData dto.KWSResponse
 	if err := json.NewDecoder(resp.Body).Decode(&kwsData); err != nil {
-		fmt.Println("Error decoding power data:", err)
+		log.Printf("power: อ่าน JSON จากอุปกรณ์ไม่สำเร็จ: %v", err)
 		return
 	}
 
-	// ... (ส่วนโค้ด For loop คำนวณ watt และบันทึกลง Database ให้คงไว้เหมือนเดิมเป๊ะๆ เลยครับ) ...
 	var powerRecords []entity.PowerNode
 
 	for _, child := range kwsData.Children {
@@ -115,7 +154,7 @@ func (s *PowerService) fetchAndSavePower() {
 		}).Create(&powerRecords).Error
 
 		if err != nil {
-			fmt.Printf("Error saving power metrics: %v\n", err)
+			log.Printf("power: บันทึกค่ามิเตอร์ไม่สำเร็จ: %v", err)
 			return
 		}
 
@@ -146,24 +185,22 @@ func (s *PowerService) fetchAndSavePower() {
 		}
 
 		if err := s.DB.Create(&historyRecord).Error; err != nil {
-			fmt.Printf("Error saving power history: %v\n", err)
+			log.Printf("power: บันทึกประวัติการใช้ไฟไม่สำเร็จ: %v", err)
 		}
 	}
 }
 
-// สำหรับให้ Controller เรียกใช้เพื่อส่งข้อมูลไปที่หน้าเว็บ
+// GetAllPower คืนค่าล่าสุดของมิเตอร์ทุกตัว (หนึ่งแถวต่อ modbus_id)
 func (s *PowerService) GetAllPower() ([]entity.PowerNode, error) {
 	var records []entity.PowerNode
 	err := s.DB.Find(&records).Error
 	return records, err
 }
 
-// powerHistoryWindow แปลง timeRange ที่ React ส่งมาเป็น "ย้อนหลังเท่าไหร่" + "หนึ่งจุดกราฟกว้างกี่วินาที"
+// powerHistoryWindow แปลง timeRange เป็น "ย้อนหลังเท่าไหร่" + "หนึ่งจุดกราฟกว้างกี่วินาที"
 //
-// ความกว้างของ bucket ตั้งให้ตรงกับ step ของ TelemetryService.GetHistoryFromPrometheus เป๊ะๆ
-// กราฟสองอันบนหน้า Dashboard เดียวกันจะได้มีความละเอียดตามแกนเวลาเท่ากัน อ่านเทียบกันได้จริง
-//
-// ทุกช่วงจบที่ 60-170 จุด ซึ่งเกินความละเอียดที่จอกว้าง ~1400px จะวาดแยกออกอยู่แล้ว
+// ขนาด bucket ตรงกับ step ของ TelemetryService.GetHistoryFromPrometheus เป๊ะๆ กราฟสองอัน
+// บนหน้าเดียวกันจะได้อ่านเทียบกันได้ ทุกช่วงจบที่ 60-170 จุด ซึ่งพอสำหรับจอกว้าง ~1400px
 func powerHistoryWindow(timeRange string) (lookback time.Duration, bucketSeconds int) {
 	switch timeRange {
 	case "6h":
@@ -179,27 +216,19 @@ func powerHistoryWindow(timeRange string) (lookback time.Duration, bucketSeconds
 	}
 }
 
-// GetPowerHistory คืนกราฟการใช้ไฟย้อนหลัง โดย "ยุบข้อมูลให้เหลือเท่าที่กราฟวาดได้จริง" ตั้งแต่ใน SQL
+// GetPowerHistory คืนกราฟการใช้ไฟย้อนหลัง โดยยุบข้อมูลให้เหลือเท่าที่กราฟวาดได้จริงตั้งแต่ใน SQL
 //
-// worker เขียน power_histories ทุก 15 วินาที = 5,760 แถวต่อวัน ถ้าส่งแถวดิบทั้งหมดออกไป
-// ช่วง 24h จะเป็น ~5,700 จุด และ 30d จะเป็น ~172,000 จุด (หลาย MB) ทั้งที่ recharts
-// วาดได้จริงแค่ระดับร้อยจุด — ที่เหลือคือ byte ที่วิ่งข้ามเน็ตไปให้ browser ทิ้งเปล่าๆ
-// แล้วหน้า AdminDashboard ยังดึงซ้ำทุก 30 วินาทีอีก
-//
-// data flow: timeRange → หา lookback + ความกว้าง bucket → ให้ Postgres GROUP BY ตามช่วงเวลา
-// แล้ว AVG ค่าในแต่ละช่วง → ได้ผลลัพธ์ระดับร้อยแถวส่งกลับตรงๆ (ไม่ต้องวนรวมเองใน Go อีก)
+// ส่งแถวดิบทั้งหมดคือ ~5,700 จุดที่ช่วง 24h และ ~172,000 จุด (หลาย MB) ที่ 30d ทั้งที่ recharts
+// วาดได้แค่ระดับร้อยจุด และหน้า AdminDashboard ยังดึงซ้ำทุก 30 วินาทีอีก
 func (s *PowerService) GetPowerHistory(timeRange string) ([]dto.PowerHistoryResponse, error) {
 	lookback, bucketSeconds := powerHistoryWindow(timeRange)
 	startTime := time.Now().Add(-lookback)
 
-	// "timestamp" ต้องใส่ quote เพราะเป็นชื่อชนิดข้อมูลของ Postgres ด้วย — ถ้าไม่ quote
-	// ตัว parser จะอ่าน extract(epoch from timestamp) เป็นการอ้างถึง type ไม่ใช่คอลัมน์
+	// floor(epoch / bucket) * bucket = ปัดเวลาลงให้ตกขอบ bucket เดียวกันก่อน GROUP BY
+	// (date_trunc ปัดได้แค่หน่วยสำเร็จรูป hour/day ไม่รองรับ 5 หรือ 15 นาที)
 	//
-	// floor(epoch / bucket) * bucket = ปัดเวลาลงให้ตกขอบ bucket เดียวกัน แล้วค่อย GROUP BY
-	// (ไม่ใช้ date_trunc เพราะมันปัดได้แค่หน่วยสำเร็จรูป hour/day ไม่รองรับ 5 หรือ 15 นาที)
-	// เขียนเป็น Raw SQL ตรงๆ ไม่ผ่าน query builder เพราะ GORM ใส่ quote ให้อาร์กิวเมนต์ของ
-	// Group() เสมอ — "GROUP BY 1" จะกลายเป็น GROUP BY "1" ซึ่ง Postgres อ่านเป็น "คอลัมน์
-	// ชื่อ 1" แล้วตอบว่าไม่มีคอลัมน์นี้ ส่วน Raw ส่ง SQL ไปตามที่เขียนไว้ทุกตัวอักษร
+	// "timestamp" ต้อง quote เพราะชนกับชื่อชนิดข้อมูลของ Postgres ส่วนที่ต้องใช้ Raw แทน
+	// query builder เพราะ GORM quote อาร์กิวเมนต์ของ Group() เสมอ — GROUP BY 1 จะเพี้ยนเป็น GROUP BY "1"
 	var responses []dto.PowerHistoryResponse
 	err := s.DB.Raw(`
 		SELECT to_timestamp(floor(extract(epoch from "timestamp") / ?) * ?) AS time,

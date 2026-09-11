@@ -52,17 +52,21 @@ export const adminVmRequestApi = {
     return response.data.data;
   },
 
+  // คืนแถวคำขอหลังอัปเดตมาด้วย หน้าที่เรียกจึงไม่ต้องดึงลิสต์ใหม่ทั้งก้อนเพียงเพื่อดูผลของแถวเดียว
+  // (backend ส่ง namespace ที่เพิ่งสร้างมาด้วย แต่หน้า Request Queue ไม่ได้ใช้ จึงไม่ประกาศไว้ใน type)
   approve: async (id: number) => {
     const response = await axiosClient.patch<ApiResponse<{ request: VmRequest }>>(`/admin/requests/${id}/approve`);
-    return response.data.data;
+    return response.data.data.request;
   },
 
   // reason บังคับ — backend เก็บไว้กับคำขอ ให้ผู้ยื่นอ่านเหตุผลได้จากหน้า "คำขอของฉัน"
+  //
+  // ตอบเฉพาะสามฟิลด์ที่เปลี่ยนจริง ไม่ใช่แถวเต็ม — status ผูกชนิดกับ VmRequest["status"] ไว้
+  // เพื่อให้ฝั่งหน้าเอาไปวางทับแถวเดิมได้เลยโดยไม่ต้อง cast
   deny: async (id: number, reason: string) => {
-    const response = await axiosClient.patch<ApiResponse<{ id: number; status: string; deny_reason: string }>>(
-      `/admin/requests/${id}/deny`,
-      { reason },
-    );
+    const response = await axiosClient.patch<
+      ApiResponse<{ id: number; status: VmRequest['status']; deny_reason: string }>
+    >(`/admin/requests/${id}/deny`, { reason });
     return response.data.data;
   },
 };

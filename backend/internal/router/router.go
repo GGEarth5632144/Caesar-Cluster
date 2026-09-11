@@ -126,7 +126,6 @@ func Setup(
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
 
-
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
 			protected.POST("/ai-review-requests", aiReviewReqCtl.Create)
