@@ -57,7 +57,7 @@ export const adminVmRequestApi = {
     return response.data.data;
   },
 
-  // reason บังคับ — backend เก็บไว้กับคำขอและยิงเป็นแจ้งเตือนไปหาผู้ยื่น (หน้า Alerts ของเขา)
+  // reason บังคับ — backend เก็บไว้กับคำขอ ให้ผู้ยื่นอ่านเหตุผลได้จากหน้า "คำขอของฉัน"
   deny: async (id: number, reason: string) => {
     const response = await axiosClient.patch<ApiResponse<{ id: number; status: string; deny_reason: string }>>(
       `/admin/requests/${id}/deny`,

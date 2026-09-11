@@ -12,10 +12,11 @@ export const PATHS = {
   services: "services",
 
   requestResources: "request-resources",
-  alertuser: "alertuser",
   myService: "my-service",
   createService: "create-service",
 
+  // ปิด route ไว้ชั่วคราว — หน้า AIReviewPage ยังอยู่ในโปรเจกต์แต่ถอดออกจาก App.tsx แล้ว
+  // เก็บค่านี้ไว้เพื่อให้เปิดกลับได้โดยไม่ต้องไปไล่หาว่า path เดิมสะกดว่าอะไร
   aiReview: "ai-review",
   serviceLogs: "service-logs",
 
@@ -25,7 +26,7 @@ export const PATHS = {
   adminRequest: "admin-request",
   adminApprovals: "admin-approvals",
   userManagement: "user-management",
-  alertadmin: "alertadmin",
+  namespaceManagement: "namespace-management",
   ipcManagement: "ipc-management",
   auditLog: "audit-log",
   adminImportStudents: "admin-import-students",

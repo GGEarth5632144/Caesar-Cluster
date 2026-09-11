@@ -4,6 +4,10 @@ import { cn } from "@/lib/utils";
 import { RequestListSkeleton } from "@/components/ui/PageSkeletons";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
+import { usePageSearch } from "@/hooks/usePageSearch";
+import { myRequestsScope } from "@/config/searchScopes";
+import { SearchStatus } from "@/components/ui/search-status";
+import { Highlight } from "@/components/ui/highlight";
 
 export default function RequestResources() {
   const [requests, setRequests] = useState<VmRequest[]>([]);
@@ -24,6 +28,12 @@ export default function RequestResources() {
       .finally(() => setLoading(false));
   }, []);
 
+  const {
+    results: visibleRequests,
+    isFiltering,
+    highlightTerms,
+  } = usePageSearch(myRequestsScope, requests);
+
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString("th-TH", {
@@ -36,11 +46,14 @@ export default function RequestResources() {
 
   return (
     <div className="flex flex-col gap-6 text-left font-mono animate-in fade-in duration-200">
-      <div>
-        <h1 className="text-5xl font-bold text-[#211a14]">My Requests</h1>
-        <p className="max-w-2xl text-lg text-[#211a14]/60 mt-1">
-          Track your VM and quota requests, and their approval status.
-        </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-5xl font-bold text-[#211a14]">My Requests</h1>
+          <p className="max-w-2xl text-lg text-[#211a14]/60 mt-1">
+            Track your VM and quota requests, and their approval status.
+          </p>
+        </div>
+        {requests.length > 0 && <SearchStatus className="self-start sm:self-end" />}
       </div>
 
       {loading && <RequestListSkeleton />}
@@ -57,7 +70,12 @@ export default function RequestResources() {
         </div>
       ) : (
         <div className="flex flex-col gap-6 max-w-5xl">
-          {requests.map((req) => {
+          {isFiltering && visibleRequests.length === 0 && (
+            <div className="w-full rounded-3xl border border-black/5 bg-[#FFFDF6] p-12 text-center text-gray-400">
+              ไม่มีคำขอที่ตรงกับคำค้นหา
+            </div>
+          )}
+          {visibleRequests.map((req) => {
             const coreDisplay = req.cpu_limit_milli / 1000;
             const ramDisplay = req.ram_limit_mb >= 1024
               ? `${(req.ram_limit_mb / 1024).toFixed(0)} GB`
@@ -187,7 +205,7 @@ export default function RequestResources() {
                     <>
                       <div className="hidden sm:block size-1 bg-black/20 rounded-full" />
                       <div className="text-sm text-[#211a14]/50 italic truncate max-w-xs">
-                        Note: "{req.description}"
+                        Note: "<Highlight text={req.description} terms={highlightTerms} />"
                       </div>
                     </>
                   )}
@@ -199,7 +217,7 @@ export default function RequestResources() {
                       เหตุผลที่ถูกปฏิเสธ
                     </p>
                     <p className="mt-1 whitespace-pre-wrap text-base text-[#211a14]/80">
-                      {req.deny_reason}
+                      <Highlight text={req.deny_reason} terms={highlightTerms} />
                     </p>
                   </div>
                 )}

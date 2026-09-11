@@ -64,10 +64,10 @@ func ConnectDB(dbURL string) *gorm.DB {
 		&entity.IPCMonitor{},
 		&entity.UserContainer{},
 		&entity.Request{},
-		&entity.UserAlert{},
-		&entity.SystemAlert{},
 		&entity.AuditLog{},
 		&entity.NodeTelemetry{},
+		&entity.PowerNode{},
+		&entity.PowerHistory{},
 	); err != nil {
 		log.Fatalf("automigrate failed: %v", err)
 	}
@@ -77,6 +77,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 		backfillGmailVerified(db)
 	}
 	dropRetiredOTPTables(db)
+	dropRetiredAlertTables(db)
 
 	// ไม่ประกาศ relation ให้ GORM จัดการ FK เอง เพราะเคยเจอว่ามันสร้าง sequence ผิดให้ column ที่เป็น FK
 	// (เข้าใจผิดว่าเป็น auto-increment) เลยมาเพิ่ม FK เองด้วย raw SQL — idempotent รันซ้ำได้ทุกครั้งที่ start
@@ -171,18 +172,6 @@ func addForeignKeys(db *gorm.DB) error {
 			      FOREIGN KEY (ipc_id) REFERENCES ipc_monitors(id) ON DELETE CASCADE`,
 		},
 		{
-			name: "fk_user_alerts_user_id",
-			ddl: `ALTER TABLE user_alerts ADD CONSTRAINT fk_user_alerts_user_id
-			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
-		},
-		{
-			// SET NULL ไม่ใช่ CASCADE: ลบ service แล้ว "ประวัติว่ามันเคยพัง" ยังมีค่า (ชื่ออยู่ใน source_name)
-			// แต่ service_id ต้องเป็น NULL ไม่งั้นหน้าเว็บโชว์ปุ่ม "ดู log" ที่กดแล้วพาไปหา service ที่ไม่มีแล้ว
-			name: "fk_user_alerts_service_id",
-			ddl: `ALTER TABLE user_alerts ADD CONSTRAINT fk_user_alerts_service_id
-			      FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL`,
-		},
-		{
 			name: "fk_requests_user_id",
 			ddl: `ALTER TABLE requests ADD CONSTRAINT fk_requests_user_id
 			      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
@@ -217,7 +206,7 @@ func addForeignKeys(db *gorm.DB) error {
 			ddl: `ALTER TABLE namespace_invites ADD CONSTRAINT fk_namespace_invites_invited_by
 			      FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE CASCADE`,
 		},
-		// audit_logs / system_alerts / request_templates ไม่มี FK โดยตั้งใจ (ดูเหตุผลในไฟล์ entity ของแต่ละตัว)
+		// audit_logs / request_templates ไม่มี FK โดยตั้งใจ (ดูเหตุผลในไฟล์ entity ของแต่ละตัว)
 		//
 		// email_deliveries ก็ไม่มี และห้ามใส่: Register ส่งอีเมลอยู่ข้างใน transaction ที่เพิ่ง INSERT users
 		// ถ้ามี FK การเขียน email_deliveries (คนละ connection) จะรอ transaction นั้น commit
@@ -271,6 +260,22 @@ func backfillGmailVerified(db *gorm.DB) {
 	if result.RowsAffected > 0 {
 		log.Printf("ทำเครื่องหมาย 'ยืนยันอีเมลแล้ว' ให้บัญชีเดิม %d รายการ (บัญชีที่มีอยู่ก่อนฟีเจอร์ยืนยันอีเมล) ✓",
 			result.RowsAffected)
+	}
+}
+
+// dropRetiredAlertTables ลบตาราง user_alerts/system_alerts ที่เลิกใช้แล้วทิ้ง
+// ระบบแจ้งเตือนถูกถอดออกทั้งก้อน (ตัวสแกน log, API /api/alerts, หน้า Alerts) ตารางจึงไม่มีอะไรเขียนลงไปอีก
+// ต้องลบไม่ใช่ปล่อยไว้ เพราะ FK ของ user_alerts ที่ยังผูกกับ users/services จะกลายเป็นกับดักตอนลบบัญชี
+// หรือลบ service ในอนาคต (เหตุผลเดียวกับ dropRetiredOTPTables)
+func dropRetiredAlertTables(db *gorm.DB) {
+	for _, table := range []string{"user_alerts", "system_alerts"} {
+		if !db.Migrator().HasTable(table) {
+			continue // ไม่มีตารางนี้อยู่แล้ว (DB ที่สร้างใหม่) ไม่ต้องทำอะไร
+		}
+		if err := db.Exec(`DROP TABLE IF EXISTS ` + table).Error; err != nil {
+			log.Fatalf("drop table %s failed: %v", table, err)
+		}
+		log.Printf("ลบตาราง %s ที่เลิกใช้แล้ว (ระบบแจ้งเตือนถูกถอดออกจากโปรเจค) ✓", table)
 	}
 }
 

@@ -26,15 +26,13 @@ const AdminRequestQueue = lazy(() => import("@/pages/admin/AdminRequestQueue"));
 const AdminImportStudents = lazy(() => import("@/pages/admin/AdminImportStudents"));
 const RequestResources = lazy(() => import("@/pages/user/RequestResources"));
 const UserManagement = lazy(() => import("@/pages/admin/Usermanagement"));
+const NamespaceManagement = lazy(() => import("@/pages/admin/NamespaceManagement"));
 const MyServices = lazy(() => import("@/pages/user/RequestQuotar"));
 const Service = lazy(() => import("@/pages/admin/Service"));
 const IPCmanagement = lazy(() => import("@/pages/admin/IPCmanagement"));
-const Alertadmin = lazy(() => import("@/pages/admin/Alertadmin"));
 const Auditlog = lazy(() => import("@/pages/admin/Auditlog"));
 const Createservice = lazy(() => import("@/pages/user/Createservice"));
-const Alertuser = lazy(() => import("@/pages/user/Alertuser"));
 const Myservice = lazy(() => import("@/pages/user/Myservice"));
-const AIReviewPage = lazy(() => import("@/pages/user/AIReviewPage"));
 const ServiceLogs = lazy(() => import("@/pages/user/ServiceLogs"));
 const GeneralDashboard = lazy(() => import("@/pages/user/GeneralDashboard"));
 const WorkspaceOnboarding = lazy(() => import("@/pages/user/WorkspaceOnboarding"));
@@ -79,10 +77,8 @@ return (
                   <Route path={PATHS.settings} element={<Setting />} />
                   <Route path={PATHS.requestResources} element={<RequestResources />} />
                   <Route path={PATHS.services} element={<MyServices />} />
-                  <Route path={PATHS.alertuser} element={<Alertuser />} />
                   <Route path={PATHS.myService} element={<Myservice />} />
                   <Route path={PATHS.createService} element={<Createservice />} />
-                  <Route path={`${PATHS.aiReview}/:requestId`} element={<AIReviewPage />} />
                   <Route path={`${PATHS.serviceLogs}/:serviceId`} element={<ServiceLogs />} />
                   <Route path={PATHS.generalDashboard} element={<GeneralDashboard user={user} />} />
                   <Route path={PATHS.workspaceOnboarding} element={<WorkspaceOnboarding />} />
@@ -97,7 +93,7 @@ return (
                   <Route path={PATHS.adminRequest} element={<AdminRequest />} />
                   <Route path={PATHS.adminApprovals} element={<AdminRequestQueue />} />
                   <Route path={PATHS.userManagement} element={<UserManagement />} />
-                  <Route path={PATHS.alertadmin} element={<Alertadmin />} />
+                  <Route path={PATHS.namespaceManagement} element={<NamespaceManagement />} />
                   <Route path={PATHS.services} element={<Service />} />
                   <Route path={PATHS.ipcManagement} element={<IPCmanagement />} />
                   <Route path={PATHS.auditLog} element={<Auditlog />} />

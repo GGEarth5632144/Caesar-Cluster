@@ -70,6 +70,7 @@ export const authApi = {
   // ล็อกอิน — บัญชีที่ยังไม่ยืนยันอีเมลจะได้ 403 EMAIL_NOT_VERIFIED กลับมา (ไม่ใช่ 200)
   // หน้า Login จับ code นั้นแล้วเสนอช่องขอลิงก์ยืนยันใหม่ให้
   login: async (payload: { student_id: string; password: string; remember: boolean }) => {
+    console.log("CHECK VITE_API_URL:", import.meta.env.VITE_API_URL);
     const response = await axiosClient.post<{ data: SessionResponse }>('/login', payload);
     return response.data.data;
   },

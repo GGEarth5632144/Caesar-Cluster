@@ -51,31 +51,21 @@ func main() {
 	inviteMgr := services.NewInviteManager(db)
 	telemetrySvc := services.NewTelemetryService(db)
 	telemetrySvc.StartTelemetryWorker()
+	powerService := services.NewPowerService(db)
+	powerService.StartPowerWorker()
 
-	alertMgr := services.NewAlertManager(db)
-
-	// ผูก context กับสัญญาณปิดโปรแกรม ให้ HTTP server และ background worker ปิดจากสัญญาณเดียวกัน
-	// เดิม r.Run() ไม่ผูกกับ context นี้ กด Ctrl+C แล้วตัวสแกนหยุดแต่โปรแกรมค้างต่อ
+	// ผูก context กับสัญญาณปิดโปรแกรม ให้ HTTP server ปิดจากสัญญาณเดียวกัน
+	// เดิม r.Run() ไม่ผูกกับ context นี้ กด Ctrl+C แล้วโปรแกรมค้างต่อ
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		services.NewLogAlertScanner(db, prov, alertMgr, services.LogScanConfig{
-			Enabled:         cfg.AlertScan.Enabled,
-			Interval:        time.Duration(cfg.AlertScan.IntervalSeconds) * time.Second,
-			MaxLinesPerScan: int64(cfg.AlertScan.MaxLinesPerScan),
-			IncludeWarnings: cfg.AlertScan.IncludeWarnings,
-		}).Run(ctx)
-	}()
 
-	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, alertMgr)
+	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, powerService)
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 
 	// ListenAndServe ล้มเหลวแล้วห้าม log.Fatal ตรงนี้ — os.Exit จะข้าม Shutdown และ wg.Wait()
-	// ทำให้ตัวสแกน log ถูกฆ่ากลางรอบ เรียก stop() ให้เดินทางปิดปกติแล้วค่อยจบด้วย exit code ที่ถูก
+	// ทำให้ request ที่ค้างอยู่ถูกตัดทิ้งกลางคัน เรียก stop() ให้เดินทางปิดปกติแล้วค่อยจบด้วย exit code ที่ถูก
 	var serveErr error
 	wg.Add(1)
 	go func() {
