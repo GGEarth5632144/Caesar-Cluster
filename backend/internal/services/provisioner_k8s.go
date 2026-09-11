@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -550,12 +551,30 @@ func (k *KubernetesProvisioner) createNodePortService(
 	return int(created.Spec.Ports[0].NodePort), nil
 }
 
-// ScaleService (ยังไม่ทำ) — จะ Patch เฉพาะ Deployment.spec.replicas ของ workload ที่มีอยู่แล้ว
-// (หรือใช้ UpdateScale ผ่าน scale subresource)
+// ScaleService แก้เฉพาะ Deployment.spec.replicas ของ workload ที่ DeployService สร้างไว้ (ชื่อ = svcName)
+// data flow: ServiceManager.Scale จองโควตา + UPDATE replicas ใน DB แล้ว → merge patch replicas บนคลัสเตอร์
+//
+// ใช้ merge patch แทน Get→Update: ยิงครั้งเดียว ไม่มีช่อง conflict กับ controller ที่เขียน status อยู่
+// และไม่แตะ field อื่นของ spec (pod template ไม่เปลี่ยน = ไม่เกิด rollout ใหม่ Pod เดิมรันต่อ)
 //
 // ห้ามแตะ Service/NodePort ที่จ่ายไปแล้ว — ผู้ใช้ถือ URL <node-ip>:<node_port> อยู่
+//
+// NotFound ไม่ถือว่าสำเร็จ (ต่างจาก DeleteService): ต้องคืน error ให้ ServiceManager.Scale ย้อน replicas
+// ใน DB กลับ ไม่งั้นโควตาถูกจองไว้ให้ Pod ที่ไม่มีอยู่จริง
 func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcName string, replicas int) error {
-	return fmt.Errorf("kubernetes provisioner: ยังไม่ได้ implement (ScaleService)")
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	patch := fmt.Appendf(nil, `{"spec":{"replicas":%d}}`, replicas)
+	_, err = cs.AppsV1().Deployments(nsName).Patch(ctx, svcName, types.MergePatchType, patch, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("ปรับจำนวน replica ของ Deployment '%s' ใน namespace '%s' เป็น %d ไม่สำเร็จ: %w",
+			svcName, nsName, replicas, err)
+	}
+	log.Printf("[k8s] scale '%s' ใน namespace '%s' เป็น %d replica แล้ว", svcName, nsName, replicas)
+	return nil
 }
 
 // DeleteService ลบ Deployment + Service (NodePort) ที่ DeployService สร้างไว้ (ชื่อเดียวกับ svcName ทั้งคู่)

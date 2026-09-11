@@ -153,6 +153,38 @@ func TestEnsureNamespaceTerminating(t *testing.T) {
 	}
 }
 
+// TestScaleServiceOnlyTouchesReplicas ยืนยันว่า scale เปลี่ยนแค่ replicas (pod template เดิม = ไม่เกิด rollout)
+// และ Deployment ที่ไม่มีอยู่ต้องได้ error — ServiceManager.Scale พึ่ง error นี้ในการย้อนโควตาใน DB กลับ
+func TestScaleServiceOnlyTouchesReplicas(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ctx := context.Background()
+	svc := &entity.Service{Name: "web", Image: "nginx", ContainerPort: 80, Replicas: 1, CPUMilli: 100, RAMMB: 128,
+		EnvVars: map[string]string{"A": "1"}}
+
+	if _, err := cs.AppsV1().Deployments("ns-7").Create(ctx, deploymentFor("ns-7", svc), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("เตรียม Deployment ไม่สำเร็จ: %v", err)
+	}
+	if err := k.ScaleService(ctx, "ns-7", "web", 3); err != nil {
+		t.Fatalf("ScaleService: %v", err)
+	}
+
+	got, err := cs.AppsV1().Deployments("ns-7").Get(ctx, "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา Deployment ไม่เจอ: %v", err)
+	}
+	if got.Spec.Replicas == nil || *got.Spec.Replicas != 3 {
+		t.Errorf("replicas = %v ต้องเป็น 3", got.Spec.Replicas)
+	}
+	c := got.Spec.Template.Spec.Containers
+	if len(c) != 1 || c[0].Image != "nginx" || len(c[0].Env) != 1 {
+		t.Errorf("pod template ต้องไม่เปลี่ยน ได้ %+v", c)
+	}
+
+	if err := k.ScaleService(ctx, "ns-7", "ghost", 2); err == nil {
+		t.Error("scale Deployment ที่ไม่มีอยู่ต้องได้ error")
+	}
+}
+
 // TestDeleteNamespaceIdempotent ยืนยันสัญญาใน Provisioner: ลบของที่ไม่มีอยู่แล้วต้องคืน nil
 // NamespaceManager.Delete ถอนของบนคลัสเตอร์ก่อนแล้วค่อยลบแถวใน DB — ถ้าล้มกลางคัน
 // การสั่งลบซ้ำต้องเดินจนจบได้ ไม่งั้น namespace นั้นค้างใน DB ตลอดกาล
