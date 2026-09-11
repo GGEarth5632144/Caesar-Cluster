@@ -4,6 +4,7 @@ import {
   Boxes,
   Cpu,
   Crown,
+  HardDrive,
   Layers,
   Loader2,
   RefreshCw,
@@ -98,7 +99,8 @@ export default function NamespaceManagement() {
     setNamespaces((prev) => prev.map((ns) => (ns.id === updated.id ? updated : ns)));
     notify.success(
       "ปรับโควตาสำเร็จ",
-      `${updated.name} ได้โควตาใหม่เป็น ${cores(updated.cpu_limit_milli)} Core / ${gigabytes(updated.ram_limit_mb)} GB`,
+      `${updated.name} ได้โควตาใหม่เป็น ${cores(updated.cpu_limit_milli)} Core / ` +
+        `${gigabytes(updated.ram_limit_mb)} GB RAM / ${gigabytes(updated.storage_limit_mb)} GB ดิสก์`,
     );
   };
 
@@ -380,6 +382,13 @@ export default function NamespaceManagement() {
                             limit={`${gigabytes(ns.ram_limit_mb)} GB`}
                             percent={percent.ram}
                           />
+                          {/* ต้องเห็นจากหน้ารวม ไม่ใช่ซ่อนในโมดัล ไม่งั้นแอดมินไม่รู้ว่ากลุ่มไหนดิสก์ใกล้เต็ม */}
+                          <UsageBar
+                            icon={HardDrive}
+                            used={gigabytes(ns.usage.used_storage_mb)}
+                            limit={`${gigabytes(ns.storage_limit_mb)} GB`}
+                            percent={percent.storage}
+                          />
                         </div>
                       </td>
 
@@ -503,6 +512,8 @@ interface ManageNamespaceModalProps {
 // ส่วน 8 Core / 8 GB คือเพดานสูงสุดที่ backend ยอมให้ตั้ง (entity.MaxCPULimitMilli / MaxRAMLimitMB)
 const CPU_PRESETS = [1000, 2000, 3000, 4000, 8000];
 const RAM_PRESETS = [1024, 2048, 4096, 8192];
+// 10 GB = ค่าตั้งต้นของทุก space, 0 = ไม่ให้กลุ่มนี้สร้าง database เลย
+const STORAGE_PRESETS = [0, 5120, 10240, 20480, 51200];
 
 function ManageNamespaceModal({
   namespace,
@@ -512,15 +523,34 @@ function ManageNamespaceModal({
 }: ManageNamespaceModalProps) {
   const [cpuMilli, setCpuMilli] = useState(namespace.cpu_limit_milli);
   const [ramMB, setRamMB] = useState(namespace.ram_limit_mb);
+  const [storageMB, setStorageMB] = useState(namespace.storage_limit_mb);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isDirty = cpuMilli !== namespace.cpu_limit_milli || ramMB !== namespace.ram_limit_mb;
+  const isDirty =
+    cpuMilli !== namespace.cpu_limit_milli ||
+    ramMB !== namespace.ram_limit_mb ||
+    storageMB !== namespace.storage_limit_mb;
 
   // ลดโควตาให้ต่ำกว่ายอดที่ใช้อยู่ได้ (backend ยอม เป็นพฤติกรรมเดียวกับ ResourceQuota ของ k8s)
   // แต่ service เดิมจะยังรันต่อและ deploy เพิ่มไม่ได้ — ต้องบอกก่อนกดบันทึก
   // ไม่ใช่ปล่อยให้เจ้าของ space ไปเจอเอาตอน deploy แล้วงงว่าทำไมโดนปฏิเสธ
   const cpuBelowUsage = cpuMilli < namespace.usage.used_cpu_milli;
   const ramBelowUsage = ramMB < namespace.usage.used_ram_mb;
+
+  // เตือนคนละแบบกับ CPU/RAM: ลด CPU/RAM แค่ทำให้ขอเพิ่มไม่ได้ แต่ดิสก์ที่จองไปแล้วเป็นก้อนจริง
+  // บนเครื่อง ลดเพดานไม่ทำให้มันคืนที่ ต้องลบ database ทิ้งเท่านั้น
+  const storageWarning = (() => {
+    if (storageMB < namespace.usage.used_storage_mb) {
+      return (
+        `ต่ำกว่าที่จองไว้แล้ว ${gigabytes(namespace.usage.used_storage_mb)} GB — ` +
+        "ดิสก์ก้อนเดิมไม่คืนที่ให้เองจนกว่าจะลบ database ทิ้ง และกลุ่มนี้จะสร้าง database ใหม่ไม่ได้"
+      );
+    }
+    if (storageMB === 0) {
+      return "ตั้งเป็น 0 = กลุ่มนี้จะสร้าง database ใหม่ไม่ได้เลย (service ธรรมดายังสร้างได้ตามปกติ)";
+    }
+    return null;
+  })();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -531,6 +561,7 @@ function ManageNamespaceModal({
       const updated = await adminNamespaceApi.setQuota(namespace.id, {
         cpu_limit_milli: cpuMilli,
         ram_limit_mb: ramMB,
+        storage_limit_mb: storageMB,
       });
       onSaved(updated);
       onClose();
@@ -616,6 +647,23 @@ function ManageNamespaceModal({
           maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.ram.max)} GB`}
           presets={RAM_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
           warning={ramBelowUsage ? belowUsageWarning : null}
+          disabled={isSubmitting}
+        />
+
+        <div className="h-px bg-black/5" />
+
+        <QuotaSlider
+          label="Storage Limit"
+          icon={HardDrive}
+          value={storageMB}
+          onChange={setStorageMB}
+          bounds={QUOTA_BOUNDS.storage}
+          display={`${gigabytes(storageMB)} GB`}
+          rawDisplay={`${storageMB} MB`}
+          usedDisplay={`จองแล้ว ${gigabytes(namespace.usage.used_storage_mb)} GB`}
+          maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.storage.max)} GB`}
+          presets={STORAGE_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
+          warning={storageWarning}
           disabled={isSubmitting}
         />
       </div>

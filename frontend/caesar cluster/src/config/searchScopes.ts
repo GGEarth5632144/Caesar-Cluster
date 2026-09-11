@@ -157,6 +157,7 @@ export const namespacesScope: SearchScope = {
     },
     { id: "cpu", label: "โควตา CPU", type: "number", unit: "millicore", aliases: ["ซีพียู"], exactOnly: true, get: (n: NamespaceDetail) => n.cpu_limit_milli },
     { id: "ram", label: "โควตา RAM", type: "number", unit: "MB", aliases: ["แรม", "memory"], exactOnly: true, get: (n: NamespaceDetail) => n.ram_limit_mb },
+    { id: "storage", label: "โควตาดิสก์", type: "number", unit: "MB", aliases: ["ดิสก์", "disk", "พื้นที่"], exactOnly: true, get: (n: NamespaceDetail) => n.storage_limit_mb },
     { id: "usage", label: "สัดส่วนที่ใช้ไป", type: "number", unit: "%", aliases: ["ใช้ไป", "percent", "เปอร์เซ็นต์"], exactOnly: true, get: (n: NamespaceDetail) => Math.round(namespaceUsagePercent(n).peak) },
     { id: "members", label: "จำนวนสมาชิก", type: "number", aliases: ["จำนวนสมาชิก", "คน"], exactOnly: true, get: (n: NamespaceDetail) => n.member_count },
     { id: "services", label: "จำนวนบริการ", type: "number", aliases: ["บริการ", "service"], exactOnly: true, get: (n: NamespaceDetail) => n.usage.service_count },

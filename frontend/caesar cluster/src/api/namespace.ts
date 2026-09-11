@@ -3,6 +3,8 @@ import axiosClient from './axiosClient';
 export interface NamespaceUsage {
   used_cpu_milli: number;
   used_ram_mb: number;
+  // ยอดดิสก์ที่ database ในกลุ่มจองไว้รวมกัน — 0 ถ้ายังไม่มีใครสร้าง database
+  used_storage_mb: number;
   service_count: number;
 }
 
@@ -19,6 +21,8 @@ export interface NamespaceDetail {
   contributor_id: number;
   cpu_limit_milli: number;
   ram_limit_mb: number;
+  // เพดานดิสก์รวมของทุก database ในกลุ่ม — namespace เดิมได้ค่า default ตอน migrate
+  storage_limit_mb: number;
   created_at: string;
   usage: NamespaceUsage;
   member_count: number;
@@ -29,6 +33,8 @@ export interface NamespaceDetail {
 export interface SetQuotaPayload {
   cpu_limit_milli: number;
   ram_limit_mb: number;
+  // ต้องส่งมาเสมอ (backend ตอบ 400 ถ้าไม่ส่ง) — ส่ง 0 = กลุ่มนี้สร้าง database ไม่ได้
+  storage_limit_mb: number;
 }
 
 // เพดาน/พื้นที่ว่างของโควตา — ค่าเดียวกับ entity.MaxCPULimitMilli / MaxRAMLimitMB และ binding
@@ -37,6 +43,8 @@ export interface SetQuotaPayload {
 export const QUOTA_BOUNDS = {
   cpu: { min: 100, max: 8000, step: 100 },
   ram: { min: 128, max: 8192, step: 128 },
+  // ดิสก์เริ่มที่ 0 ได้ ต่างจาก CPU/RAM ที่ต้องมีขั้นต่ำ — 0 แปลว่ากลุ่มนี้ไม่ให้สร้าง database
+  storage: { min: 0, max: 51200, step: 1024 },
 } as const;
 
 interface ApiResponse<T> {
@@ -99,11 +107,23 @@ export function namespaceOwner(ns: NamespaceDetail): MemberInfo | undefined {
   return ns.members.find((m) => m.is_contributor);
 }
 
-/** เปอร์เซ็นต์ที่ใช้ไปของโควตา — peak คือด้านที่ตึงกว่า ใช้ตัดสินสถานะของทั้ง space */
+/**
+ * เปอร์เซ็นต์ที่ใช้ไปของโควตา — peak คือด้านที่ตึงที่สุด ใช้ตัดสินสถานะของทั้ง space
+ *
+ * ดิสก์ต้องอยู่ใน peak ด้วย ไม่งั้นกลุ่มที่ดิสก์เต็มแต่ CPU/RAM ว่างจะขึ้นว่า "ใช้งานอยู่"
+ * แล้วแอดมินไม่เห็นว่าต้องเพิ่มโควตาให้ ส่วนเพดานดิสก์ที่เป็น 0 ได้ทำให้ต้องแยกเคส
+ * "ไม่ได้จองอะไรเลย" (0%) ออกจาก "จองไว้แล้วแต่เพดานถูกลดเหลือ 0" (100%)
+ */
 export function namespaceUsagePercent(ns: NamespaceDetail) {
   const cpu = ns.cpu_limit_milli > 0 ? (ns.usage.used_cpu_milli / ns.cpu_limit_milli) * 100 : 0;
   const ram = ns.ram_limit_mb > 0 ? (ns.usage.used_ram_mb / ns.ram_limit_mb) * 100 : 0;
-  return { cpu, ram, peak: Math.max(cpu, ram) };
+  const storage =
+    ns.storage_limit_mb > 0
+      ? (ns.usage.used_storage_mb / ns.storage_limit_mb) * 100
+      : ns.usage.used_storage_mb > 0
+        ? 100
+        : 0;
+  return { cpu, ram, storage, peak: Math.max(cpu, ram, storage) };
 }
 
 export type NamespaceState = 'empty' | 'full' | 'idle' | 'active';
