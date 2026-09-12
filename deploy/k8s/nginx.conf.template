@@ -1,0 +1,71 @@
+# nginx ของ image frontend — เสิร์ฟ React build + reverse proxy ไป backend และ Cluster AI
+# เป็น template: ${BACKEND_UPSTREAM} / ${AI_UPSTREAM} ถูกแทนค่าตอน container start
+# (เฉพาะชื่อที่ลงท้าย _UPSTREAM — ดู NGINX_ENVSUBST_FILTER ใน Dockerfile.prod) ตัวแปรของ nginx เองไม่โดนแตะ
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+
+    # DNS ภายในของ docker — resolve ชื่อ service ใหม่ทุก 10 วิ
+    # ถ้าใส่ชื่อ host ใน proxy_pass ตรงๆ nginx จะ resolve ครั้งเดียวตอน start: backend restart แล้วได้ IP ใหม่
+    # nginx ก็ยังยิง IP เก่า = 502 ค้างจนกว่าจะ restart nginx · ผ่านตัวแปรจึง resolve ใหม่ตาม valid
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $backend_upstream http://${BACKEND_UPSTREAM};
+    set $ai_upstream      http://${AI_UPSTREAM};
+
+    # header ที่ส่งต่อให้ทุก proxy (location ด้านล่างไม่ตั้ง proxy_set_header เอง จึงสืบทอดชุดนี้)
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    # $http_host = host พร้อมพอร์ต — gin-contrib/cors เทียบ Origin กับ "http://"+Host เพื่อรู้ว่าเป็น same-origin
+    # ถ้าส่ง $host (ไม่มีพอร์ต) แล้วเว็บไม่ได้อยู่พอร์ต 80 ทุก POST จะถูกมองเป็น CORS แล้วโดน 403
+    proxy_set_header Host              $http_host;
+    # เขียนทับ ไม่ต่อท้าย: backend (gin) เชื่อ proxy ทุกตัวแล้วอ่าน X-Forwarded-For ตัวซ้ายสุด
+    # ถ้าต่อท้ายด้วย $proxy_add_x_forwarded_for ผู้ใช้ปลอม header เองแล้วหลบ rate limit ได้
+    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    gzip on;
+    gzip_min_length 1024;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # ไฟล์ใน /assets/ มี hash ในชื่อ (Vite) → cache ได้ยาว build ใหม่ชื่อไฟล์ก็เปลี่ยนเอง
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # SPA (BrowserRouter): path ที่ไม่ใช่ไฟล์จริง เช่น /dashboard → index.html ให้ React จัดการ route
+    # index.html ห้าม cache ไม่งั้น deploy ใหม่แล้วเบราว์เซอร์ยังโหลด JS ชุดเก่า
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+
+    location /api/ {
+        proxy_pass $backend_upstream;
+    }
+
+    # log ของ service โหมด follow: backend ส่งทีละบรรทัดแล้ว Flush — nginx ห้าม buffer และต้องรอได้นาน
+    location ~ ^/api/services/[0-9]+/logs$ {
+        proxy_pass $backend_upstream;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+
+    # Cluster AI (AGX Orin): frontend เรียก /ai/api/... → ตัด /ai ออกแล้วส่งเป็น /api/...
+    # ยังไม่มี AI server = เส้นนี้ตอบ 502 เส้นเดียว ส่วนอื่นของเว็บไม่กระทบ
+    location /ai/ {
+        rewrite ^/ai/(.*)$ /$1 break;
+        proxy_pass $ai_upstream;
+        proxy_read_timeout 300s;
+    }
+}

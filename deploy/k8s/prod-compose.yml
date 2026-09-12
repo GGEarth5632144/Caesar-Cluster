@@ -1,0 +1,104 @@
+# Caesar Cluster — production บน NUC (Docker Compose)
+#
+# image ดึงจาก Docker Hub (build บนเครื่อง dev ด้วย Dockerfile.prod ในโฟลเดอร์นี้ — คำสั่งอยู่หัวไฟล์นั้น)
+# บน NUC ใช้แค่ 2 ไฟล์ในโฟลเดอร์เดียวกัน: prod-compose.yml + .env (copy จาก .env.example แล้วกรอก)
+#
+#   docker compose -f prod-compose.yml pull
+#   docker compose -f prod-compose.yml up -d
+#   docker compose -f prod-compose.yml ps          # db/backend/frontend = healthy, seed = exited (0)
+#   docker compose -f prod-compose.yml logs -f backend
+#
+# อัปเดตเวอร์ชัน: แก้ IMAGE_TAG ใน .env → pull → up -d (ย้อนกลับก็แค่ใส่ tag เดิม)
+#
+# ใครเปิดพอร์ตอะไร: มีแค่ frontend (nginx) ที่ publish ออกนอกเครื่อง
+# backend กับ db คุยกันใน network ของ compose เท่านั้น — ทุก request เข้าทาง nginx ซึ่งเขียน IP จริงของผู้ใช้ให้
+
+name: caesar
+
+# log ของ docker โตไม่มีเพดานถ้าไม่ตั้ง — ดิสก์ระบบของ NUC เต็ม = control-plane ของคลัสเตอร์ล่มไปด้วย
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-backend-image: &backend-image "${DOCKERHUB_USER:?ตั้ง DOCKERHUB_USER ใน .env}/caesar-backend:${IMAGE_TAG:?ตั้ง IMAGE_TAG ใน .env}"
+
+# ค่าที่ backend และ seed ต้องได้เหมือนกัน (ทับค่าจาก env_file)
+x-backend-env: &backend-env
+  # ประกอบจาก POSTGRES_* ที่เดียว ไม่ต้องพิมพ์รหัสผ่านซ้ำใน .env
+  DB_URL: "postgres://postgres:${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน .env}@db:5432/${POSTGRES_DB:-cloud_cluster}?sslmode=disable"
+  # path ใน container — ไฟล์จริงบน NUC ตั้งที่ KUBECONFIG_HOST_PATH
+  KUBECONFIG: /etc/caesar/kubeconfig
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    # ส่งแค่ค่าที่ postgres ใช้ — ไม่ใช้ env_file เพราะจะลาก JWT_SECRET/SMTP_PASSWORD เข้าไปใน container db ด้วย
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cloud_cluster}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # เพดานทุก container: NUC เป็น control-plane ด้วย ถ้า RAM หมดแล้ว OOM ไปโดน etcd/apiserver = ทั้งคลัสเตอร์ล่ม
+    mem_limit: 1g
+    cpus: 1.0
+    logging: *logging
+
+  # สร้าง role / request template / admin คนแรก — รันทุกครั้งที่ up ได้ (มีแล้วข้าม ไม่ทับรหัสผ่าน admin)
+  seed:
+    image: *backend-image
+    entrypoint: ["./seed"]
+    env_file: .env
+    environment: *backend-env
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 256m
+    logging: *logging
+
+  backend:
+    image: *backend-image
+    restart: unless-stopped
+    env_file: .env
+    environment: *backend-env
+    volumes:
+      # kubeconfig จาก ServiceAccount caesar-backend (ไม่ใช่ admin.conf) — ใช้เมื่อ PROVISIONER=kubernetes
+      # ไม่ตั้ง = mount /dev/null แทน (โหมด mock ไม่อ่านไฟล์นี้)
+      - ${KUBECONFIG_HOST_PATH:-/dev/null}:/etc/caesar/kubeconfig:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *logging
+
+  frontend:
+    image: "${DOCKERHUB_USER}/caesar-frontend:${IMAGE_TAG}"
+    restart: unless-stopped
+    environment:
+      BACKEND_UPSTREAM: backend:8080
+      # ว่าง = ชี้ไปพอร์ตที่ไม่มีใครฟังใน container → /ai ตอบ 502 (ส่วนอื่นของเว็บใช้ได้ปกติ)
+      AI_UPSTREAM: ${AI_UPSTREAM:-127.0.0.1:8090}
+    ports:
+      - "${WEB_BIND_IP:?ตั้ง WEB_BIND_IP ใน .env}:${WEB_PORT:-80}:80"
+    # nginx resolve ชื่อ backend ตอนมี request (ไม่ใช่ตอน start) จึงไม่ต้องรอ backend healthy
+    depends_on:
+      - backend
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *logging
+
+volumes:
+  pgdata:

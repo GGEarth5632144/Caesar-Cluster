@@ -1,0 +1,91 @@
+# syntax=docker/dockerfile:1
+#
+# image production ของ Caesar Cluster — ไฟล์เดียว build ได้ 2 image ด้วย --target
+#   backend  = Go API (server + seed) บน alpine รันเป็น non-root (uid 10001)
+#   frontend = React build แล้วเสิร์ฟด้วย nginx + reverse proxy /api → backend, /ai → Cluster AI
+#
+# build context = root ของ repo (ไม่ใช่โฟลเดอร์นี้) เพราะต้องหยิบทั้ง backend/ และ frontend/
+# ไฟล์ ignore ของ context คือ Dockerfile.prod.dockerignore ข้างๆ ไฟล์นี้ (BuildKit อ่านให้เอง)
+#
+# build + push (รันที่ root ของ repo):
+#   export DOCKERHUB_USER=<user> TAG=$(git rev-parse --short HEAD)
+#   docker build --platform linux/amd64 -f deploy/k8s/Dockerfile.prod --target backend  -t $DOCKERHUB_USER/caesar-backend:$TAG  .
+#   docker build --platform linux/amd64 -f deploy/k8s/Dockerfile.prod --target frontend -t $DOCKERHUB_USER/caesar-frontend:$TAG .
+#   docker push $DOCKERHUB_USER/caesar-backend:$TAG && docker push $DOCKERHUB_USER/caesar-frontend:$TAG
+#
+# image ไม่มีความลับติดไปเลย (ค่า VITE_* เป็น path สัมพัทธ์, secret ทั้งหมดมาจาก .env ตอนรัน)
+# จึง push ขึ้น Docker Hub แบบ public ได้ และ image เดียวใช้ได้ทุกเครื่องไม่ต้อง build ใหม่ตาม IP
+
+ARG GO_VERSION=1.25
+ARG NODE_VERSION=22
+ARG ALPINE_VERSION=3.24
+ARG NGINX_VERSION=1.30
+
+# ─── backend ──────────────────────────────────────────────────────────────────
+FROM golang:${GO_VERSION}-alpine AS backend-build
+WORKDIR /src
+
+# go.mod/go.sum ก่อน → แก้แค่โค้ดแล้ว build ใหม่ ไม่ต้องโหลด module ใหม่ทั้งหมด
+COPY backend/go.mod backend/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY backend/ ./
+# CGO_ENABLED=0 = binary static ไม่พึ่ง libc ของ image ปลายทาง
+# -trimpath ตัด path ของเครื่องที่ build ออกจาก binary, -s -w ตัด debug symbol (เล็กลงราว 30%)
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/seed ./cmd/seed
+
+FROM alpine:${ALPINE_VERSION} AS backend
+# ca-certificates: ต่อ SMTP แบบ STARTTLS และ apiserver ของคลัสเตอร์ผ่าน TLS
+RUN apk add --no-cache ca-certificates && adduser -D -H -u 10001 caesar
+WORKDIR /app
+COPY --from=backend-build /out/server /out/seed ./
+
+# non-root: backend ไม่เขียนไฟล์ลงดิสก์เลย (log ออก stdout) จึงไม่ต้องมีสิทธิ์เขียนที่ไหน
+# ผลข้างเคียง: kubeconfig ที่ mount เข้ามาต้องให้ uid 10001 อ่านได้ (ดู .env.example)
+USER 10001:10001
+EXPOSE 8080
+
+# /health ping DB ด้วย — DB ล่ม = unhealthy · start-period เผื่อ AutoMigrate + ตรวจ SMTP (timeout 20 วิ)
+# ที่ main.go ทำก่อนเปิดพอร์ต · seed ใช้ image เดียวกัน prod-compose.yml จึงปิด healthcheck ของ seed ไว้
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=3 \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT:-8080}/health" || exit 1
+
+ENTRYPOINT ["./server"]
+
+# ─── frontend ─────────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS frontend-build
+WORKDIR /app
+
+# ชื่อโฟลเดอร์มีเว้นวรรค ต้องใช้ COPY แบบ JSON array
+COPY ["frontend/caesar cluster/package.json", "frontend/caesar cluster/package-lock.json", "./"]
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+COPY ["frontend/caesar cluster/", "./"]
+
+# ค่า VITE_* ถูกฝังลง JS ตอน build — จึงให้เป็น path สัมพัทธ์ที่ nginx ของ image นี้ proxy ต่อ
+# ไม่ผูกกับ IP/โดเมนของเครื่องไหน (ปลายทางจริงของ proxy ตั้งตอนรันผ่าน env ด้านล่าง)
+# vite.config ตั้ง envDir ไว้ที่ root ของ repo ซึ่งไม่มีใน image → ค่ามาจาก ENV ตรงนี้เท่านั้น
+ARG VITE_API_URL=/api
+ARG VITE_AI_API_URL=/ai
+# true = จำลอง AI pipeline ในเบราว์เซอร์ทั้งหมด (ไม่ยิง AI server จริง)
+ARG VITE_MOCK_AI=false
+ENV VITE_API_URL=${VITE_API_URL} \
+    VITE_AI_API_URL=${VITE_AI_API_URL} \
+    VITE_MOCK_AI=${VITE_MOCK_AI}
+RUN npm run build
+
+FROM nginx:${NGINX_VERSION}-alpine AS frontend
+# image nginx แปลง /etc/nginx/templates/*.template → /etc/nginx/conf.d/ ด้วย envsubst ตอน container start
+# FILTER จำกัดให้แทนเฉพาะตัวแปรที่ลงท้าย _UPSTREAM — กันไปแทน $host/$uri ของ nginx เองโดยไม่ตั้งใจ
+ENV NGINX_ENVSUBST_FILTER=_UPSTREAM$ \
+    BACKEND_UPSTREAM=backend:8080 \
+    AI_UPSTREAM=127.0.0.1:8090
+COPY deploy/k8s/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=frontend-build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1/healthz || exit 1

@@ -1,0 +1,18 @@
+# build context ของ Dockerfile.prod คือ root ของ repo — ไฟล์นี้ใช้แทน .dockerignore ของ root
+# (BuildKit หา <ชื่อ Dockerfile>.dockerignore ข้างๆ Dockerfile ให้เอง)
+
+.git
+**/.git
+
+# node_modules ของเครื่อง dev จะไป COPY ทับของที่ npm ci ลงไว้ใน image และทำให้ context ใหญ่มาก
+**/node_modules
+**/dist
+**/dist-ssr
+
+# ความลับของ dev (.env ที่ root) ห้ามหลุดเข้า context
+**/.env
+**/.env.*
+**/*.local
+**/*.kubeconfig
+
+**/*.md
