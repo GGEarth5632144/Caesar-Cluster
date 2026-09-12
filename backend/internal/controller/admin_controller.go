@@ -682,14 +682,22 @@ func (h *AdminController) Approve(c *gin.Context) {
 		return
 	}
 
+	// โควตาของ space มาจากที่ผู้ใช้กรอกไว้ตอนยื่นคำขอ ไม่ใช่ค่าตั้งต้นของระบบ — คำขอทั้งใบ
+	// มีไว้เพื่อให้แอดมินตัดสินตัวเลขคู่นี้โดยเฉพาะ ถ้าอนุมัติแล้วยังได้ค่าตั้งต้นเท่ากันหมด
+	// การกรอก cpu/ram ในหน้ายื่นคำขอก็ไม่มีความหมาย และแอดมินต้องตามไปปรับโควตาให้ทีหลังทุกใบ
 	name := fmt.Sprintf("ns-user-%d", req.UserID)
-	ns, err := h.ns.Create(ctx, req.UserID, name)
+	ns, err := h.ns.Create(ctx, req.UserID, name, req.CPULimitMilli, req.RAMLimitMB)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrAlreadyInNamespace):
 			utils.Error(c, http.StatusConflict, "ALREADY_IN_NAMESPACE", err.Error())
 		case errors.Is(err, services.ErrNameTaken):
 			utils.Error(c, http.StatusConflict, "NAME_TAKEN", err.Error())
+		case errors.Is(err, services.ErrQuotaOutOfRange):
+			// คำขอเก่าที่ยื่นไว้ก่อนมีการเช็คเพดานตอนยื่น (หรือเพดานถูกปรับลงทีหลัง)
+			// บอกให้ชัดว่าติดที่ตัวเลขในคำขอ ไม่ใช่ระบบพัง — แอดมินจะได้ deny แล้วให้ยื่นใหม่
+			utils.Error(c, http.StatusUnprocessableEntity, "QUOTA_OUT_OF_RANGE",
+				"โควตาที่ระบุในคำขอเกินเพดานที่ระบบอนุญาต: "+err.Error())
 		case errors.Is(err, services.ErrNamespaceTerminating):
 			// เจอตอนแอดมินลบ space ของคนนี้แล้วรีบกด approve คำขอใหม่ให้เขาทันที
 			// ชื่อ namespace ที่ Approve ตั้งเป็น ns-user-<id> ตายตัว จึงชนกับตัวเดิมที่ยังไม่ตายสนิท

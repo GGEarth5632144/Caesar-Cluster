@@ -60,16 +60,42 @@ func NewNamespaceManager(db *gorm.DB, quota *QuotaService, prov Provisioner) *Na
 	return &NamespaceManager{db: db, quota: quota, prov: prov}
 }
 
+// ValidateQuota ตรวจว่าโควตาที่ขอมาอยู่ในช่วงที่ระบบยอมให้ตั้งได้ (> 0 และไม่เกินเพดาน)
+//
+// แยกเป็นฟังก์ชันสาธารณะเพราะถูกใช้ 3 ที่ที่ต้องตอบตรงกันเสมอ: ตอนผู้ใช้ยื่นคำขอ
+// (RequestController.Create — กันไม่ให้ยื่นคำขอที่ยังไงก็ approve ไม่ผ่าน), ตอนสร้าง namespace จริง
+// (Create) และตอนแอดมินปรับโควตาทีหลัง (SetQuota) ถ้าปล่อยให้แต่ละที่เช็คเอง มีวันที่จะเลื่อนไม่ตรงกัน
+func ValidateQuota(cpuMilli, ramMB int) error {
+	if cpuMilli <= 0 || ramMB <= 0 {
+		return fmt.Errorf("%w: ต้องมากกว่า 0 ทั้ง CPU และ RAM", ErrQuotaOutOfRange)
+	}
+	if cpuMilli > entity.MaxCPULimitMilli || ramMB > entity.MaxRAMLimitMB {
+		return fmt.Errorf("%w: ตั้งได้สูงสุด %dm CPU / %d MB",
+			ErrQuotaOutOfRange, entity.MaxCPULimitMilli, entity.MaxRAMLimitMB)
+	}
+	return nil
+}
+
 // Create สร้าง namespace ใหม่ให้ user แล้วผูก user เข้ากับ space นั้นทันที (เขาเป็นเจ้าของ)
 //
 // data flow:
-//   - รับ userID + ชื่อ + ชนิด (solo/group) จาก NamespaceController
-//   - เช็คก่อนว่า user ยังไม่มี space (กติกา 1 คน = 1 space) → ถ้ามีแล้ว → ErrAlreadyInNamespace
-//   - ใน transaction: INSERT namespaces (โควตาตั้งต้น 3000m/2048MB) แล้ว UPDATE users.namespace_id
+//   - รับ userID + ชื่อ + โควตาที่จะให้ space นี้ จากผู้เรียก
+//   - เช็คก่อนว่าโควตาอยู่ในเพดาน และ user ยังไม่มี space (กติกา 1 คน = 1 space)
+//   - ใน transaction: INSERT namespaces (ตามโควตาที่ส่งมา) แล้ว UPDATE users.namespace_id
 //   - นอก transaction: เรียก prov.EnsureNamespace ไปสร้าง namespace + ResourceQuota จริงบน cluster
 //
+// cpuMilli/ramMB มาจากไหน ขึ้นกับผู้เรียก:
+//   - AdminController.Approve ส่งค่าที่ผู้ใช้ "ขอ" ไว้ในคำขอ (requests.cpu_limit_milli / ram_limit_mb)
+//     — นี่คือเส้นทางปกติของระบบ: ผู้ใช้ระบุความต้องการตอนยื่น แอดมินอนุมัติ แล้วได้เท่าที่ขอจริง
+//   - NamespaceController.Create (ผู้ใช้กดสร้างเอง ไม่ผ่านคำขอ) ส่งค่าตั้งต้น entity.Default*
+//
 // ถ้าสร้างบน cluster ไม่สำเร็จ จะ rollback ด้วยการลบ row ทิ้ง — ไม่ปล่อยให้ DB มี space ที่ไม่มีอยู่จริง
-func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) (*entity.Namespace, error) {
+func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, cpuMilli, ramMB int) (*entity.Namespace, error) {
+	// เช็คโควตาก่อนแตะ DB เลย — ค่าที่เกินเพดานคือคำขอที่ผิดตั้งแต่ต้น ไม่ใช่ความผิดพลาดชั่วคราว
+	if err := ValidateQuota(cpuMilli, ramMB); err != nil {
+		return nil, err
+	}
+
 	var user entity.User
 	if err := m.db.WithContext(ctx).First(&user, userID).Error; err != nil {
 		return nil, err
@@ -81,8 +107,8 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string) 
 	ns := &entity.Namespace{
 		Name:          name,
 		ContributorID: userID,
-		CPULimitMilli: entity.DefaultCPULimitMilli,
-		RAMLimitMB:    entity.DefaultRAMLimitMB,
+		CPULimitMilli: cpuMilli,
+		RAMLimitMB:    ramMB,
 	}
 
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -301,9 +327,8 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, err
 	}
 
-	if cpuMilli > entity.MaxCPULimitMilli || ramMB > entity.MaxRAMLimitMB {
-		return nil, fmt.Errorf("%w: ตั้งได้สูงสุด %dm CPU / %d MB",
-			ErrQuotaOutOfRange, entity.MaxCPULimitMilli, entity.MaxRAMLimitMB)
+	if err := ValidateQuota(cpuMilli, ramMB); err != nil {
+		return nil, err
 	}
 
 	prevCPU, prevRAM := ns.CPULimitMilli, ns.RAMLimitMB
@@ -364,7 +389,7 @@ func (m *NamespaceManager) Delete(ctx context.Context, namespaceID int) error {
 		return err
 	}
 
-	if err := m.prov.DeleteNamespace(ctx, ns.Name); err != nil {
+	if err := m.prov.DeleteNamespace(ctx, K8sNamespaceName(ns.ID)); err != nil {
 		return fmt.Errorf("ลบ namespace บนคลัสเตอร์ไม่สำเร็จ: %w", err)
 	}
 
