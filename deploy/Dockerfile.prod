@@ -9,8 +9,8 @@
 #
 # build + push (รันที่ root ของ repo):
 #   export DOCKERHUB_USER=<user> TAG=$(git rev-parse --short HEAD)
-#   docker build --platform linux/amd64 -f deploy/k8s/Dockerfile.prod --target backend  -t $DOCKERHUB_USER/caesar-backend:$TAG  .
-#   docker build --platform linux/amd64 -f deploy/k8s/Dockerfile.prod --target frontend -t $DOCKERHUB_USER/caesar-frontend:$TAG .
+#   docker build --platform linux/amd64 -f deploy/Dockerfile.prod --target backend  -t $DOCKERHUB_USER/caesar-backend:$TAG  .
+#   docker build --platform linux/amd64 -f deploy/Dockerfile.prod --target frontend -t $DOCKERHUB_USER/caesar-frontend:$TAG .
 #   docker push $DOCKERHUB_USER/caesar-backend:$TAG && docker push $DOCKERHUB_USER/caesar-frontend:$TAG
 #
 # image ไม่มีความลับติดไปเลย (ค่า VITE_* เป็น path สัมพัทธ์, secret ทั้งหมดมาจาก .env ตอนรัน)
@@ -83,7 +83,7 @@ FROM nginx:${NGINX_VERSION}-alpine AS frontend
 ENV NGINX_ENVSUBST_FILTER=_UPSTREAM$ \
     BACKEND_UPSTREAM=backend:8080 \
     AI_UPSTREAM=127.0.0.1:8090
-COPY deploy/k8s/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
