@@ -1,1 +1,8 @@
 .env
+
+# kubeconfig ที่มี token/cert ของคลัสเตอร์ — รีโปนี้ public หลุดขึ้นไป = ใครก็ใช้สิทธิ์นั้นยิง apiserver ได้
+# (manifest RBAC ใน deploy/k8s/ commit ได้ เพราะ Secret ในนั้นเป็นแค่เปลือก k8s เติม token ให้บนคลัสเตอร์)
+*.kubeconfig
+kubeconfig*
+admin.conf
+super-admin.conf
