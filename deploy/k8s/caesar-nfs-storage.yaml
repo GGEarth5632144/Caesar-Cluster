@@ -1,0 +1,155 @@
+# ที่เก็บข้อมูลถาวรของ database นักศึกษา — NFS provisioner + StorageClass `caesar-nfs`
+#
+# backend สร้าง StatefulSet ที่มี volumeClaimTemplate `data` ระบุ storageClassName: caesar-nfs
+# → StatefulSet controller สร้าง PVC `data-<service>-0` → provisioner ตัวนี้ mkdir บน NFS แล้วสร้าง PV ให้
+# → kubelet บน worker mount 192.168.100.1:/Caesar-NFS/pvc/<namespace>-<pvc> (ใช้ nfs-common ของเครื่อง)
+#
+# โฟลเดอร์บน NUC: /Caesar-NFS/pvc/ns-<id>-data-<service>-0/  (แบน ไม่ซ้อนโฟลเดอร์ namespace — เหตุผลอยู่ที่ pathPattern)
+# ลบ service / ลบ namespace = ลบ PVC → PV (reclaimPolicy Delete) → provisioner ลบโฟลเดอร์ทิ้งทันที ไม่ archive ไม่มีอะไรค้าง
+# (ตั้งใจ: ลบ namespace = ลบทุกอย่าง ไม่มี backup)
+#
+# ข้อจำกัดที่ต้องรู้: ขนาดใน PVC บน NFS บังคับอะไรไม่ได้ (เขียนเกินได้) — ตัวบังคับจริงคือ XFS project quota ที่ยังไม่ได้ทำ
+#
+# apply (บน NUC ด้วย kubeconfig admin):
+#   kubectl apply -f caesar-nfs-storage.yaml
+# ตรวจ:
+#   kubectl -n caesar-storage get pod -o wide        # ต้องอยู่ intelnuc, Running
+#   kubectl get storageclass caesar-nfs
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: caesar-storage
+  labels:
+    # ห้ามใส่ app.kubernetes.io/managed-by=caesar-cluster — นั่นคือเครื่องหมาย namespace นักศึกษาที่ backend ลบได้
+    app.kubernetes.io/part-of: caesar-cluster
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-provisioner
+  namespace: caesar-storage
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: storage
+---
+# สิทธิ์ตาม deploy/rbac.yaml ของ upstream (nfs-subdir-external-provisioner) — ตัด Role leader-locking (endpoints) ออก
+# เพราะรัน replica เดียวและปิด ENABLE_LEADER_ELECTION
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: caesar-nfs-provisioner
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: storage
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, update]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: caesar-nfs-provisioner
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: storage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: caesar-nfs-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-provisioner
+    namespace: caesar-storage
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-provisioner
+  namespace: caesar-storage
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: storage
+spec:
+  replicas: 1
+  # Recreate: ไม่ให้มี provisioner สองตัวพร้อมกัน (ปิด leader election ไว้)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-provisioner
+    spec:
+      serviceAccountName: nfs-provisioner
+      # ตรึงไว้ที่ NUC — เครื่องเดียวกับ NFS server, ไม่กินทรัพยากร worker ของนักศึกษา
+      nodeSelector:
+        kubernetes.io/hostname: intelnuc
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: nfs-provisioner
+          image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          env:
+            # ต้องตรงกับ provisioner: ของ StorageClass ข้างล่าง ไม่งั้น PVC ค้าง Pending แบบไม่มี event
+            - name: PROVISIONER_NAME
+              value: k8s-sigs.io/nfs-subdir-external-provisioner
+            - name: NFS_SERVER
+              value: 192.168.100.1
+            - name: NFS_PATH
+              value: /Caesar-NFS/pvc
+            - name: ENABLE_LEADER_ELECTION
+              value: "false"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: nfs-root
+              mountPath: /persistentvolumes
+      volumes:
+        - name: nfs-root
+          nfs:
+            server: 192.168.100.1
+            path: /Caesar-NFS/pvc
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  # ไม่ตั้งเป็น default — backend ระบุชื่อนี้เองทุกครั้ง กัน workload อื่น (เช่น Prometheus local PV) ตกมาอยู่บน NFS
+  name: caesar-nfs
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: storage
+provisioner: k8s-sigs.io/nfs-subdir-external-provisioner
+parameters:
+  # ต้องแบน ห้ามมี "/" — v4.0.2 ตอนลบหาโฟลเดอร์ด้วย filepath.Base(path) อย่างเดียว ถ้าซ้อน ns/pvc จะหาไม่เจอ
+  # แล้วข้ามไป ("deletion skipped") ลบแค่ PV ข้อมูลค้างบนดิสก์เงียบๆ (เจอจริงตอนเทสต์ — docs 021)
+  # ชื่อไม่ชน: namespace ของ backend = ns-<ตัวเลข> และ PVC ขึ้นต้น data- เสมอ
+  pathPattern: "${.PVC.namespace}-${.PVC.name}"
+  onDelete: delete
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: false
+mountOptions:
+  - nfsvers=4.2
+  - hard   # ห้าม soft — timeout คืน EIO ให้ Postgres = ข้อมูลพังได้จริง

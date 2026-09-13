@@ -57,6 +57,10 @@ const (
 // ตามกติกาการตั้งชื่อของ StatefulSet (ดู pvcName)
 const dataVolumeName = "data"
 
+// databaseStorageClass = StorageClass ของ PVC database (NFS บน NUC) — ต้องตรงกับ deploy/k8s/caesar-nfs-storage.yaml
+// ระบุชื่อเองทุกครั้ง เพราะคลัสเตอร์ตั้งใจไม่มี default StorageClass (ไม่ระบุ = PVC ค้าง Pending ตลอด)
+const databaseStorageClass = "caesar-nfs"
+
 // ขอบเขตของข้อความสถานะที่ Status ส่งกลับไปให้ ServiceHealthMonitor เขียนลง DB
 const (
 	crashLogTailLines = 15   // log กี่บรรทัดท้ายที่แนบไปกับสถานะ crash loop
@@ -566,6 +570,7 @@ func deploymentFor(nsName string, svc *entity.Service) *appsv1.Deployment {
 func statefulSetFor(nsName string, svc *entity.Service) *appsv1.StatefulSet {
 	labels := serviceLabels(svc.Name)
 	replicas := int32(entity.DatabaseReplicas)
+	storageClass := databaseStorageClass
 
 	template := podTemplateFor(svc, labels)
 	template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
@@ -588,7 +593,8 @@ func statefulSetFor(nsName string, svc *entity.Service) *appsv1.StatefulSet {
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
 				ObjectMeta: metav1.ObjectMeta{Name: dataVolumeName},
 				Spec: corev1.PersistentVolumeClaimSpec{
-					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					StorageClassName: &storageClass,
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 					Resources: corev1.VolumeResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceStorage: *resource.NewQuantity(int64(svc.StorageMB)*1024*1024, resource.BinarySI),
