@@ -217,6 +217,8 @@ func (h *ServiceController) Logs(c *gin.Context) {
 		switch {
 		case errors.Is(err, services.ErrServiceNotFound):
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrLogsUnavailable):
+			utils.Error(c, http.StatusConflict, "LOGS_UNAVAILABLE", err.Error())
 		default:
 			log.Printf("stream logs error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึง log ไม่สำเร็จ")
