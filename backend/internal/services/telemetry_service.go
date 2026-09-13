@@ -252,7 +252,7 @@ func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]Cluster
 	if tempRes != nil && tempRes.Status == "success" && len(tempRes.Data.Result) > 0 {
 		for _, val := range tempRes.Data.Result[0].Values {
 			ts := int64(val[0].(float64)) // Prometheus คืน Timestamp เป็น float64
-			historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format("15:04")} // แปลงเป็น HH:mm
+			historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)} // แปลงเป็น HH:mm
 			historyMap[ts].AvgTemp = parseFloat(val[1])
 		}
 	}
@@ -263,7 +263,7 @@ func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]Cluster
 		for _, val := range ramRes.Data.Result[0].Values {
 			ts := int64(val[0].(float64))
 			if _, exists := historyMap[ts]; !exists {
-				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format("15:04")}
+				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)}
 			}
 			historyMap[ts].TotalRam = parseFloat(val[1]) / (1024 * 1024)
 		}
@@ -275,7 +275,7 @@ func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]Cluster
 		for _, val := range upRes.Data.Result[0].Values {
 			ts := int64(val[0].(float64))
 			if _, exists := historyMap[ts]; !exists {
-				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format("15:04")}
+				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)}
 			}
 			historyMap[ts].OnlineNodes = int(parseFloat(val[1]))
 		}
