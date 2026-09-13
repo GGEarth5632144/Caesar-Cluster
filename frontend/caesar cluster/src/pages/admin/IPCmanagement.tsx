@@ -9,7 +9,7 @@ import {
   Zap,
   PlugZap,
   ZapOff,
-  PowerOff
+  PowerOff,
 } from "lucide-react";
 import {
   LineChart,
@@ -28,12 +28,12 @@ import {
 } from "recharts";
 
 // นำเข้า API และ Interface ที่เพิ่มเข้ามาใหม่ (powerApi และ PowerHistoryData)
-import { 
-  nodetelemetry, 
-  type NodeTelemetry, 
-  type ClusterHistoryData, 
-  type PowerNode, 
-  type PowerHistoryData 
+import {
+  nodetelemetry,
+  type NodeTelemetry,
+  type ClusterHistoryData,
+  type PowerNode,
+  type PowerHistoryData,
 } from "@/api/mornitorequest";
 import { usePageSearch } from "@/hooks/usePageSearch";
 import { nodesScope } from "@/config/searchScopes";
@@ -57,8 +57,8 @@ const TIME_RANGES = [
   { label: "Last 1 hour", value: "1h" },
   { label: "Last 6 hours", value: "6h" },
   { label: "Last 24 hours", value: "24h" },
-  { label: "Last 7 days", value: "7d" },
-  { label: "Last 30 days", value: "30d" },
+  { label: "Last 7 days", value: "7d" }, // <-- ในช่วงนี้จะมีปัญหาเรื่องการชี้ที่กราฟ ผมคือว่ามันมีช่วงของเวลาที่ซอยออกมาเยอะไป UI มันก็เลยบัค ครับ
+  { label: "Last 30 days", value: "30d" }, // <-- ในช่วงนี้จะมีปัญหาเรื่องการชี้ที่กราฟ ผมคือว่ามันมีช่วงของเวลาที่ซอยออกมาเยอะไป UI มันก็เลยบัค ครับ
 ];
 
 // --- Sub-Components ---
@@ -66,7 +66,9 @@ const StatCard = ({ title, value, unit, data, color, type = "line" }: any) => {
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 flex flex-col justify-between">
       <div className="flex justify-between items-start mb-2">
-        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">{title}</span>
+        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+          {title}
+        </span>
       </div>
       <div className="flex items-baseline gap-1 mb-3">
         <span className="text-3xl font-extrabold text-gray-800">{value}</span>
@@ -77,12 +79,25 @@ const StatCard = ({ title, value, unit, data, color, type = "line" }: any) => {
           {type === "area" ? (
             <AreaChart data={data}>
               <defs>
-                <linearGradient id={`color-${title.replace(/\s+/g, '-')}`} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient
+                  id={`color-${title.replace(/\s+/g, "-")}`}
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
                   <stop offset="5%" stopColor={color} stopOpacity={0.2} />
                   <stop offset="95%" stopColor={color} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <Area type="monotone" dataKey="value" stroke={color} fillOpacity={1} fill={`url(#color-${title.replace(/\s+/g, '-')})`} strokeWidth={2} />
+              <Area
+                type="monotone"
+                dataKey="value"
+                stroke={color}
+                fillOpacity={1}
+                fill={`url(#color-${title.replace(/\s+/g, "-")})`}
+                strokeWidth={2}
+              />
             </AreaChart>
           ) : type === "bar" ? (
             <BarChart data={data}>
@@ -90,7 +105,14 @@ const StatCard = ({ title, value, unit, data, color, type = "line" }: any) => {
             </BarChart>
           ) : (
             <LineChart data={data}>
-              <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke={color}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
             </LineChart>
           )}
         </ResponsiveContainer>
@@ -103,34 +125,52 @@ const NodeGridItem = ({ node }: { node: NodeTelemetry }) => {
   const isOffline = node.IsUp === 0;
   const isHot = node.Temperature >= 75;
   const statusColor = isOffline ? "bg-red-500" : "bg-emerald-500";
-  const rowBg = isOffline ? "bg-red-50 border-red-200" : "bg-white border-gray-200";
+  const rowBg = isOffline
+    ? "bg-red-50 border-red-200"
+    : "bg-white border-gray-200";
 
   return (
-    <div className={`flex flex-col p-4 border rounded-xl ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}>
+    <div
+      className={`flex flex-col p-4 border rounded-xl ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}
+    >
       <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
         <div className="relative flex h-2.5 w-2.5 shrink-0">
-          {!isOffline && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />}
-          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor}`} />
+          {!isOffline && (
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+          )}
+          <span
+            className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor}`}
+          />
         </div>
-        <span className={`text-sm font-extrabold truncate ${isOffline ? "text-red-700" : "text-gray-800"}`}>
+        <span
+          className={`text-sm font-extrabold truncate ${isOffline ? "text-red-700" : "text-gray-800"}`}
+        >
           {node.NodeName}
         </span>
       </div>
 
       {isOffline ? (
         <div className="flex items-center justify-center py-2">
-          <span className="text-xs text-red-500 font-bold uppercase tracking-widest">Offline</span>
+          <span className="text-xs text-red-500 font-bold uppercase tracking-widest">
+            Offline
+          </span>
         </div>
       ) : (
         <div className="flex flex-col gap-2 font-mono">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-sans font-semibold text-gray-400">Temp</span>
-            <span className={`text-sm font-bold ${isHot ? "text-red-500 animate-pulse" : "text-orange-500"}`}>
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              Temp
+            </span>
+            <span
+              className={`text-sm font-bold ${isHot ? "text-red-500 animate-pulse" : "text-orange-500"}`}
+            >
               {node.Temperature.toFixed(1)} °C
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-sans font-semibold text-gray-400">RAM</span>
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              RAM
+            </span>
             <span className="text-sm font-bold text-gray-700">
               {(node.RamUsedMB / 1024).toFixed(1)} GB
             </span>
@@ -163,37 +203,55 @@ const PowerGridItem = ({ power }: { power: PowerNode }) => {
   }
 
   return (
-    <div className={`flex flex-col p-4 border rounded-xl ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}>
+    <div
+      className={`flex flex-col p-4 border rounded-xl ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}
+    >
       <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
         <div className="relative flex h-2.5 w-2.5 shrink-0">
-          {!isOffline && !isIdle && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />}
-          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor}`} />
+          {!isOffline && !isIdle && (
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+          )}
+          <span
+            className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor}`}
+          />
         </div>
-        <span className={`flex items-center gap-1.5 text-sm font-extrabold truncate ${textColor}`}>
+        <span
+          className={`flex items-center gap-1.5 text-sm font-extrabold truncate ${textColor}`}
+        >
           {icon} Modbus {power.ModbusID}
         </span>
       </div>
 
       {isOffline ? (
         <div className="flex items-center justify-center py-2 gap-2 text-gray-400">
-          <span className="text-xs font-bold uppercase tracking-widest">Power Off</span>
+          <span className="text-xs font-bold uppercase tracking-widest">
+            Power Off
+          </span>
         </div>
       ) : (
         <div className="flex flex-col gap-2 font-mono">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-sans font-semibold text-gray-400">Power</span>
-            <span className={`text-sm font-bold ${isIdle ? 'text-blue-600' : 'text-amber-600'}`}>
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              Power
+            </span>
+            <span
+              className={`text-sm font-bold ${isIdle ? "text-blue-600" : "text-amber-600"}`}
+            >
               {power.Watt.toFixed(2)} W
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-sans font-semibold text-gray-400">Current</span>
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              Current
+            </span>
             <span className="text-sm font-bold text-gray-700">
               {power.Amp.toFixed(3)} A
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-sans font-semibold text-gray-400">Voltage</span>
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              Voltage
+            </span>
             <span className="text-sm font-bold text-gray-700">
               {power.Volt.toFixed(1)} V
             </span>
@@ -210,14 +268,38 @@ const PowerGridItem = ({ power }: { power: PowerNode }) => {
 function formatTooltipTime(label: ReactNode) {
   const raw = String(label);
   const date = new Date(raw);
-  return isNaN(date.getTime()) ? raw : date.toLocaleTimeString("th-TH");
+
+  if (isNaN(date.getTime())) return raw;
+
+  return date.toLocaleString("th-TH", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatXAxisTime(val: any, timeRange: string) {
+  const date = new Date(val);
+  if (isNaN(date.getTime())) return val;
+
+  // ถ้าดูย้อนหลัง 7 หรือ 30 วัน ให้แสดงแค่วันและเดือน (เช่น 10 ก.ย.)
+  if (timeRange === "7d" || timeRange === "30d") {
+    return date.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+  }
+
+  // ช่วงเวลาอื่น (1h, 6h, 24h) แสดงแค่เวลา (เช่น 14:30)
+  return date.toLocaleTimeString("th-TH", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function IPCmanagement() {
   const [nodes, setNodes] = useState<NodeTelemetry[]>([]);
   const [historyData, setHistoryData] = useState<ClusterHistoryData[]>([]);
   const [powers, setPowers] = useState<PowerNode[]>([]);
-  
+
   // ใช้ State สำหรับเก็บข้อมูลประวัติจาก Backend
   const [powerHistory, setPowerHistory] = useState<PowerHistoryData[]>([]);
 
@@ -232,14 +314,17 @@ export default function IPCmanagement() {
     setLoading(true);
     try {
       // ดึงข้อมูล 4 เส้นพร้อมกัน รวมถึง History ของ Power ด้วย
-      const [snapshotData, historyDataRes, powerDataRes, powerHistoryRes] = await Promise.all([
-        nodetelemetry.getAll(),
-        nodetelemetry.getHistory(timeRange),
-        nodetelemetry.getAllPower(),
-        nodetelemetry.getPowerHistory(timeRange)
-      ]);
+      const [snapshotData, historyDataRes, powerDataRes, powerHistoryRes] =
+        await Promise.all([
+          nodetelemetry.getAll(),
+          nodetelemetry.getHistory(timeRange),
+          nodetelemetry.getAllPower(),
+          nodetelemetry.getPowerHistory(timeRange),
+        ]);
 
-      setNodes(snapshotData.sort((a, b) => a.NodeName.localeCompare(b.NodeName)));
+      setNodes(
+        snapshotData.sort((a, b) => a.NodeName.localeCompare(b.NodeName)),
+      );
       setHistoryData(historyDataRes);
       setPowers(powerDataRes.sort((a, b) => a.ModbusID - b.ModbusID));
       setPowerHistory(powerHistoryRes);
@@ -248,7 +333,7 @@ export default function IPCmanagement() {
       setError(null);
     } catch (err) {
       console.error("Fetch Data Error:", err);
-      setError("ไม่สามารถดึงข้อมูลระบบได้ กรุณาตรวจสอบการเชื่อมต่อ"); 
+      setError("ไม่สามารถดึงข้อมูลระบบได้ กรุณาตรวจสอบการเชื่อมต่อ");
     } finally {
       setLoading(false);
     }
@@ -269,26 +354,34 @@ export default function IPCmanagement() {
   // --- Derived Metrics ---
   const totalNodes = nodes.length;
   const onlineNodes = nodes.filter((n) => n.IsUp === 1);
-  const avgTemp = onlineNodes.length > 0 ? onlineNodes.reduce((s, n) => s + n.Temperature, 0) / onlineNodes.length : 0;
-  
+  const avgTemp =
+    onlineNodes.length > 0
+      ? onlineNodes.reduce((s, n) => s + n.Temperature, 0) / onlineNodes.length
+      : 0;
+
   const controlPlane = nodes.find((n) => n.NodeName === "intelnuc");
   const workerNodes = nodes.filter((n) => n.NodeName !== "intelnuc");
 
   // ค้นเฉพาะการ์ดโหนดในกริดด้านล่าง — ตัวเลขสรุปและกราฟด้านบนยังคิดจากทุกโหนด
   // เพราะเป็นสถานะของคลัสเตอร์ ไม่ควรเปลี่ยนตามคำที่พิมพ์ค้น
-  const { results: visibleNodes, isFiltering } = usePageSearch(nodesScope, nodes);
+  const { results: visibleNodes, isFiltering } = usePageSearch(
+    nodesScope,
+    nodes,
+  );
   const visibleIds = new Set(visibleNodes.map((n) => n.ID));
 
   const totalWatt = powers.reduce((sum, p) => sum + p.Watt, 0);
-  const avgVolt = powers.length > 0 ? powers.reduce((sum, p) => sum + p.Volt, 0) / powers.length : 0;
-  
+  const avgVolt =
+    powers.length > 0
+      ? powers.reduce((sum, p) => sum + p.Volt, 0) / powers.length
+      : 0;
+
   // นับเฉพาะตัวที่มีโหลดไฟจริงๆ (ไม่ใช่แค่ On เฉยๆ)
-  const activePowerNodes = powers.filter(p => p.Watt > 0).length;
+  const activePowerNodes = powers.filter((p) => p.Watt > 0).length;
 
   return (
     <div className="min-h-screen bg-transparent text-gray-800 font-sans p-4 md:p-6">
       <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
-        
         {/* --- Top Navbar --- */}
         {/* z-30 พอให้ลอยเหนือการ์ด/กราฟในหน้า (ซึ่งไม่ได้ตั้ง z เลย) แต่ต้องต่ำกว่า z-50
             ของกล่องผลลัพธ์ช่องค้นหาบน Topbar และ modal — ของในหน้าไม่ควรบังแถบเครื่องมือของแอป
@@ -299,9 +392,13 @@ export default function IPCmanagement() {
               <Server className="h-6 w-6 text-indigo-600" />
             </div>
             <div>
-              <h1 className="text-xl font-extrabold text-gray-800 tracking-wide">Unified Cluster Monitor</h1>
+              <h1 className="text-xl font-extrabold text-gray-800 tracking-wide">
+                Unified Cluster Monitor
+              </h1>
               <p className="text-xs font-semibold text-gray-400 mt-0.5">
-                {lastUpdate ? `Updated at ${lastUpdate.toLocaleTimeString("th-TH")}` : "Waiting for data..."}
+                {lastUpdate
+                  ? `Updated at ${lastUpdate.toLocaleTimeString("th-TH")}`
+                  : "Waiting for data..."}
               </p>
             </div>
           </div>
@@ -309,31 +406,41 @@ export default function IPCmanagement() {
           <div className="flex items-center gap-3 text-sm">
             <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl overflow-hidden px-2 hover:bg-gray-100 transition-colors">
               <Clock className="h-4 w-4 text-gray-400" />
-              <select 
+              <select
                 value={timeRange}
                 onChange={(e) => setTimeRange(e.target.value)}
                 className="bg-transparent text-gray-700 font-semibold py-2 px-2 outline-none cursor-pointer"
               >
-                {TIME_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                {TIME_RANGES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl px-1">
-              <button 
+              <button
                 onClick={fetchDashboardData}
                 disabled={loading}
                 className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
                 title="Refresh now"
               >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-indigo-600' : 'text-gray-500'}`} />
+                <RefreshCw
+                  className={`h-4 w-4 ${loading ? "animate-spin text-indigo-600" : "text-gray-500"}`}
+                />
               </button>
               <div className="w-px h-5 bg-gray-300 mx-1"></div>
-              <select 
+              <select
                 value={refreshInterval}
                 onChange={(e) => setRefreshInterval(Number(e.target.value))}
                 className="bg-transparent text-gray-700 font-semibold py-2 px-2 outline-none cursor-pointer"
               >
-                {REFRESH_INTERVALS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                {REFRESH_INTERVALS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -348,50 +455,52 @@ export default function IPCmanagement() {
 
         {/* --- Overview Stat Cards --- */}
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatCard 
-            title="Online Nodes" 
-            value={onlineNodes.length} 
+          <StatCard
+            title="Online Nodes"
+            value={onlineNodes.length}
             unit={`/ ${totalNodes}`}
             color="#10b981"
-            data={historyData.map(d => ({ value: d.onlineNodes }))} 
+            data={historyData.map((d) => ({ value: d.onlineNodes }))}
             type="area"
           />
-          <StatCard 
-            title="Avg Temp" 
-            value={avgTemp.toFixed(1)} 
+          <StatCard
+            title="Avg Temp"
+            value={avgTemp.toFixed(1)}
             unit="°C"
             color={avgTemp > 75 ? "#ef4444" : "#f97316"}
-            data={historyData.map(d => ({ value: d.avgTemp }))} 
+            data={historyData.map((d) => ({ value: d.avgTemp }))}
           />
-          <StatCard 
-            title="CP Procs" 
-            value={controlPlane ? controlPlane.Procs : 0} 
+          <StatCard
+            title="CP Procs"
+            value={controlPlane ? controlPlane.Procs : 0}
             unit="tasks"
             color="#3b82f6"
-            data={historyData.map(() => ({ value: controlPlane ? controlPlane.Procs : 0 }))} 
+            data={historyData.map(() => ({
+              value: controlPlane ? controlPlane.Procs : 0,
+            }))}
             type="area"
           />
-          <StatCard 
-            title="Total Power" 
-            value={totalWatt.toFixed(1)} 
+          <StatCard
+            title="Total Power"
+            value={totalWatt.toFixed(1)}
             unit="W"
             color="#f59e0b"
-            data={powerHistory.map(p => ({ value: p.totalWatt }))} 
+            data={powerHistory.map((p) => ({ value: p.totalWatt }))}
             type="area"
           />
-          <StatCard 
-            title="Avg Voltage" 
-            value={avgVolt.toFixed(1)} 
+          <StatCard
+            title="Avg Voltage"
+            value={avgVolt.toFixed(1)}
             unit="V"
             color="#8b5cf6"
-            data={powerHistory.map(p => ({ value: p.avgVolt }))} 
+            data={powerHistory.map((p) => ({ value: p.avgVolt }))}
           />
-          <StatCard 
-            title="Active Load" 
-            value={activePowerNodes} 
+          <StatCard
+            title="Active Load"
+            value={activePowerNodes}
             unit={`/ ${powers.length}`}
             color="#06b6d4"
-            data={powerHistory.map(() => ({ value: activePowerNodes }))} 
+            data={powerHistory.map(() => ({ value: activePowerNodes }))}
             type="bar"
           />
         </div>
@@ -403,43 +512,94 @@ export default function IPCmanagement() {
             <div className="flex items-center gap-2 mb-6">
               <Activity className="h-5 w-5 text-orange-500" />
               <h2 className="text-base font-extrabold text-gray-800">
-                Average Temperature 
+                Average Temperature
                 <span className="ml-2 text-sm font-medium text-orange-500 bg-orange-50 px-2 py-0.5 rounded-md">
-                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                  ({TIME_RANGES.find((r) => r.value === timeRange)?.label})
                 </span>
               </h2>
             </div>
             <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={historyData} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" vertical={false} />
-                  <XAxis 
-                    dataKey="time" 
-                    stroke="#9ca3af" 
-                    tick={{ fill: '#6b7280', fontSize: 12 }} 
-                    tickMargin={10} 
-                    axisLine={false} 
+                <LineChart
+                  data={historyData.filter((_, idx) =>
+                    timeRange === "7d"
+                      ? idx % 2 === 0
+                      : timeRange === "30d"
+                        ? idx % 4 === 0
+                        : true,
+                  )}
+                  margin={{ left: -15, right: 10, top: 10, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="#d1d5db"
+                    vertical={false}
+                  />
+                  <XAxis
+                    dataKey="time"
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickMargin={10}
+                    axisLine={false}
                     tickLine={false}
+                    minTickGap={50} // บังคับให้ป้ายห่างกันอย่างน้อย 50px
                     tickFormatter={(val) => {
                       const date = new Date(val);
-                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                      if (isNaN(date.getTime())) return val;
+                      // ถ้าเลือก 7d หรือ 30d ให้แสดงเป็น วัน/เดือน (เช่น 13 ก.ย.) เหมือนกราฟ Power เป๊ะๆ
+                      if (timeRange === "7d" || timeRange === "30d") {
+                        return date.toLocaleDateString("th-TH", {
+                          day: "numeric",
+                          month: "short",
+                        });
+                      }
+                      return date.toLocaleTimeString("th-TH", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
                     }}
                   />
-                  <YAxis 
-                    stroke="#9ca3af" 
-                    tick={{ fill: '#6b7280', fontSize: 12, fontWeight: 500 }} 
-                    domain={['dataMin - 2', 'dataMax + 2']} 
+                  <YAxis
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12, fontWeight: 500 }}
+                    domain={["dataMin - 2", "dataMax + 2"]}
                     tickFormatter={(value) => `${Math.round(value)}°C`}
-                    axisLine={false} 
+                    axisLine={false}
                     tickLine={false}
                   />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    itemStyle={{ color: '#f97316', fontWeight: 'bold' }}
-                    labelFormatter={formatTooltipTime}
-                    formatter={(value: any) => [Number(value).toFixed(1), "Avg Temp (°C)"]} 
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#ffffff",
+                      borderColor: "#e5e7eb",
+                      borderRadius: "8px",
+                      boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                    }}
+                    itemStyle={{ color: "#f97316", fontWeight: "bold" }}
+                    labelFormatter={(label) => {
+                      // 🚨 ทำให้ Tooltip หน้าตาเหมือน "13 ก.ย. 19:00" เหมือนของ Power เป๊ะ
+                      const date = new Date(String(label));
+                      if (isNaN(date.getTime())) return String(label);
+                      return date.toLocaleString("th-TH", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                    }}
+                    formatter={(value: any) => [
+                      Number(value).toFixed(1),
+                      "Avg Temp (°C)",
+                    ]}
                   />
-                  <Line type="monotone" dataKey="avgTemp" name="Avg Temp (°C)" stroke="#f97316" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="avgTemp"
+                    name="Avg Temp (°C)"
+                    stroke="#f97316"
+                    strokeWidth={3}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -450,54 +610,103 @@ export default function IPCmanagement() {
             <div className="flex items-center gap-2 mb-6">
               <HardDrive className="h-5 w-5 text-blue-500" />
               <h2 className="text-base font-extrabold text-gray-800">
-                Memory Allocation 
+                Memory Allocation
                 <span className="ml-2 text-sm font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-md">
-                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                  ({TIME_RANGES.find((r) => r.value === timeRange)?.label})
                 </span>
               </h2>
             </div>
             <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={historyData} margin={{ left: -5, right: 10, top: 10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" vertical={false} />
-                  <XAxis 
-                    dataKey="time" 
-                    stroke="#9ca3af" 
-                    tick={{ fill: '#6b7280', fontSize: 12 }} 
-                    tickMargin={10} 
-                    axisLine={false} 
+                <AreaChart
+                  data={historyData.filter((_, idx) =>
+                    timeRange === "7d"
+                      ? idx % 2 === 0
+                      : timeRange === "30d"
+                        ? idx % 4 === 0
+                        : true,
+                  )}
+                  margin={{ left: -5, right: 10, top: 10, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="#d1d5db"
+                    vertical={false}
+                  />
+                  <XAxis
+                    dataKey="time"
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickMargin={10}
+                    axisLine={false}
                     tickLine={false}
+                    minTickGap={50}
                     tickFormatter={(val) => {
                       const date = new Date(val);
-                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                      if (isNaN(date.getTime())) return val;
+                      if (timeRange === "7d" || timeRange === "30d") {
+                        return date.toLocaleDateString("th-TH", {
+                          day: "numeric",
+                          month: "short",
+                        });
+                      }
+                      return date.toLocaleTimeString("th-TH", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
                     }}
                   />
-                  <YAxis 
-                    stroke="#9ca3af" 
-                    tick={{ fill: '#6b7280', fontSize: 12, fontWeight: 500 }} 
-                    tickFormatter={(value) => `${(value / 1024).toFixed(0)} GB`}
-                    axisLine={false} 
+                  <YAxis
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickFormatter={(val) => `${(val / 1024).toFixed(0)} GB`}
+                    axisLine={false}
                     tickLine={false}
                   />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
-                    labelFormatter={formatTooltipTime}
-                    formatter={(value: any) => [(Number(value) / 1024).toFixed(2), "RAM Used (GB)"]} 
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#ffffff",
+                      borderColor: "#e5e7eb",
+                      borderRadius: "8px",
+                      boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                    }}
+                    itemStyle={{ color: "#3b82f6", fontWeight: "bold" }}
+                    labelFormatter={(label) => {
+                      const date = new Date(String(label));
+                      if (isNaN(date.getTime())) return String(label);
+                      return date.toLocaleString("th-TH", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                    }}
+                    formatter={(value: any) => [
+                      (Number(value) / 1024).toFixed(2),
+                      "RAM Used (GB)",
+                    ]}
                   />
                   <defs>
                     <linearGradient id="colorRam" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <Area type="monotone" dataKey="totalRam" name="RAM Used (MB)" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorRam)" />
+                  <Area
+                    type="monotone"
+                    dataKey="totalRam"
+                    name="RAM Used (GB)"
+                    stroke="#3b82f6"
+                    strokeWidth={3}
+                    fillOpacity={1}
+                    fill="url(#colorRam)"
+                    isAnimationActive={false}
+                  />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
-
         {/* --- Main Charts Area (Row 2: Power Metrics History) --- */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
           {/* Total Power Trend */}
@@ -507,39 +716,63 @@ export default function IPCmanagement() {
               <h2 className="text-base font-extrabold text-gray-800">
                 Total Power Consumption
                 <span className="ml-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-100 px-2.5 py-0.5 rounded-md">
-                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                  ({TIME_RANGES.find((r) => r.value === timeRange)?.label})
                 </span>
               </h2>
             </div>
             <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={powerHistory} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
+                <AreaChart
+                  data={powerHistory}
+                  margin={{ left: -15, right: 10, top: 10, bottom: 0 }}
+                >
                   <defs>
                     <linearGradient id="colorPower" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                  <XAxis 
-                    dataKey="time" 
-                    stroke="#9ca3af" 
-                    tick={{ fill: '#6b7280', fontSize: 12 }} 
-                    tickMargin={10} 
-                    axisLine={false} 
-                    tickLine={false}
-                    tickFormatter={(val) => {
-                      const date = new Date(val);
-                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-                    }}
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="#e5e7eb"
+                    vertical={false}
                   />
-                  <YAxis stroke="#9ca3af" tick={{ fill: '#6b7280', fontSize: 12 }} tickFormatter={(val) => `${val}W`} axisLine={false} tickLine={false} />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    itemStyle={{ color: '#b45309', fontWeight: 'bold' }}
+                  <XAxis
+                    dataKey="time"
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickMargin={10}
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={40}
+                    tickFormatter={(val) => formatXAxisTime(val, timeRange)} // <-- เรียกใช้ง่ายๆ แบบนี้เลย
+                  />
+                  <YAxis
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickFormatter={(val) => `${val}W`}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: "8px",
+                      border: "none",
+                      boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                    }}
+                    itemStyle={{ color: "#b45309", fontWeight: "bold" }}
                     labelFormatter={formatTooltipTime}
                   />
-                  <Area type="monotone" dataKey="totalWatt" name="Total Power (W)" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorPower)" isAnimationActive={false} />
+                  <Area
+                    type="monotone"
+                    dataKey="totalWatt"
+                    name="Total Power (W)"
+                    stroke="#f59e0b"
+                    strokeWidth={3}
+                    fillOpacity={1}
+                    fill="url(#colorPower)"
+                    isAnimationActive={false}
+                  />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -552,36 +785,80 @@ export default function IPCmanagement() {
               <h2 className="text-base font-extrabold text-gray-800">
                 Current & Avg Voltage
                 <span className="ml-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md">
-                  ({TIME_RANGES.find(r => r.value === timeRange)?.label})
+                  ({TIME_RANGES.find((r) => r.value === timeRange)?.label})
                 </span>
               </h2>
             </div>
             <div className="flex-1 w-full min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={powerHistory} margin={{ left: -15, right: 10, top: 10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                  <XAxis 
-                    dataKey="time" 
-                    stroke="#9ca3af" 
-                    tick={{ fill: '#6b7280', fontSize: 12 }} 
-                    tickMargin={10} 
-                    axisLine={false} 
-                    tickLine={false}
-                    tickFormatter={(val) => {
-                      const date = new Date(val);
-                      return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-                    }}
+                <ComposedChart
+                  data={powerHistory}
+                  margin={{ left: -15, right: 10, top: 10, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="#e5e7eb"
+                    vertical={false}
                   />
-                  <YAxis yAxisId="left" stroke="#9ca3af" tick={{ fill: '#6b7280', fontSize: 12 }} tickFormatter={(val) => `${val}A`} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#9ca3af" domain={['dataMin - 1', 'dataMax + 1']} tick={{ fill: '#6b7280', fontSize: 12 }} tickFormatter={(val) => `${val}V`} axisLine={false} tickLine={false} />
-                  
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  <XAxis
+                    dataKey="time"
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickMargin={10}
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={40}
+                    tickFormatter={(val) => formatXAxisTime(val, timeRange)} // <-- เรียกใช้ง่ายๆ แบบนี้เลย
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    stroke="#9ca3af"
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickFormatter={(val) => `${val}A`}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    stroke="#9ca3af"
+                    domain={["dataMin - 1", "dataMax + 1"]}
+                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tickFormatter={(val) => `${val}V`}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: "8px",
+                      border: "none",
+                      boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                    }}
                     labelFormatter={formatTooltipTime}
                   />
-                  <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '13px' }} />
-                  <Bar yAxisId="left" dataKey="totalAmp" name="Total Current (A)" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} isAnimationActive={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="avgVolt" name="Avg Voltage (V)" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
+                  <Legend
+                    wrapperStyle={{ paddingTop: "20px", fontSize: "13px" }}
+                  />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="totalAmp"
+                    name="Total Current (A)"
+                    fill="#3b82f6"
+                    radius={[4, 4, 0, 0]}
+                    barSize={20}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="avgVolt"
+                    name="Avg Voltage (V)"
+                    stroke="#8b5cf6"
+                    strokeWidth={3}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -593,7 +870,9 @@ export default function IPCmanagement() {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <Server className="h-5 w-5 text-gray-500" />
-              <h2 className="text-base font-extrabold text-gray-800">Node Cluster Status</h2>
+              <h2 className="text-base font-extrabold text-gray-800">
+                Node Cluster Status
+              </h2>
             </div>
             <div className="flex items-center gap-3">
               <SearchStatus />
@@ -602,7 +881,7 @@ export default function IPCmanagement() {
               </span>
             </div>
           </div>
-          
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
             {/* control plane อยู่ใบแรกเสมอเพราะเป็นเครื่องที่ต้องมองก่อน — แต่ถ้ากรองแล้วไม่ตรงก็ต้องหายไปด้วย */}
             {controlPlane && visibleIds.has(controlPlane.ID) && (
@@ -626,20 +905,21 @@ export default function IPCmanagement() {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <Zap className="h-5 w-5 text-amber-500" />
-              <h2 className="text-base font-extrabold text-gray-800">Power Relays (KWS-303L)</h2>
+              <h2 className="text-base font-extrabold text-gray-800">
+                Power Relays (KWS-303L)
+              </h2>
             </div>
             <span className="text-xs font-bold bg-amber-50 text-amber-600 px-3 py-1 rounded-full border border-amber-200">
               Total Active Load: {totalWatt.toFixed(1)} W
             </span>
           </div>
-          
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {powers.map(power => (
+            {powers.map((power) => (
               <PowerGridItem key={`p-${power.ModbusID}`} power={power} />
             ))}
           </div>
         </div>
-
       </div>
     </div>
   );
