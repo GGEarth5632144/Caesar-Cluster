@@ -16,6 +16,7 @@ var (
 	ErrRequestTemplateNotFound = errors.New("ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
 	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
 	ErrServiceNotReady         = errors.New("service ยังไม่พร้อม — รอให้ deploy เสร็จก่อนค่อยปรับจำนวน replica")
+	ErrLogsUnavailable         = errors.New("ยังอ่าน log ไม่ได้ — container ของ service นี้ยังไม่เริ่มทำงาน (ถ้าเพิ่ง deploy รอสักครู่แล้วกดลองใหม่)")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง

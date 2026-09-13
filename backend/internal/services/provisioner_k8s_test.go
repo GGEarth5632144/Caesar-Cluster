@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -182,6 +184,44 @@ func TestScaleServiceOnlyTouchesReplicas(t *testing.T) {
 
 	if err := k.ScaleService(ctx, "ns-7", "ghost", 2); err == nil {
 		t.Error("scale Deployment ที่ไม่มีอยู่ต้องได้ error")
+	}
+}
+
+// TestLogsMergesPodsOfService ยืนยันว่าอ่าน log ครบทุก replica ของ service (และไม่ปน Pod ของ service อื่น)
+// โดยแต่ละบรรทัดถูกแปะชื่อ pod ไว้ — ส่วนไม่มี Pod เลยต้องได้ ErrLogsUnavailable ให้ controller ตอบ 409
+func TestLogsMergesPodsOfService(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ctx := context.Background()
+
+	if _, err := k.Logs(ctx, "ns-7", "web", LogOptions{}); !errors.Is(err, ErrLogsUnavailable) {
+		t.Fatalf("ไม่มี Pod ต้องได้ ErrLogsUnavailable ได้: %v", err)
+	}
+
+	for name, svc := range map[string]string{"web-a": "web", "web-b": "web", "db-a": "db"} {
+		_, err := cs.CoreV1().Pods("ns-7").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: "ns-7", Labels: map[string]string{labelServiceName: svc},
+		}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("เตรียม Pod ไม่สำเร็จ: %v", err)
+		}
+	}
+
+	stream, err := k.Logs(ctx, "ns-7", "web", LogOptions{Timestamps: true})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	defer stream.Close()
+	out, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("อ่าน stream: %v", err)
+	}
+
+	got := string(out)
+	if strings.Count(got, "\n") != 2 || !strings.Contains(got, "[web-a]") || !strings.Contains(got, "[web-b]") {
+		t.Errorf("ต้องได้ 2 บรรทัดจาก web-a กับ web-b ได้ %q", got)
+	}
+	if strings.Contains(got, "[db-a]") {
+		t.Errorf("ต้องไม่มี log ของ service อื่นปน ได้ %q", got)
 	}
 }
 
