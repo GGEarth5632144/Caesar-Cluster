@@ -19,14 +19,207 @@ import (
 	"backend/internal/entity"
 )
 
-// เทสต์ชุดนี้ใช้ fake clientset ของ client-go: API server ปลอมในหน่วยความจำที่รับ apply/patch/delete
-// ได้เหมือนของจริง แต่ไม่มี controller (ไม่มีใครสร้าง pod จาก Deployment ให้) — จึงตรวจได้ว่า
-// "manifest ที่ส่งไปถูกไหม" กับ "อ่านสภาพ pod กลับมาแปลถูกไหม" แต่ยืนยันไม่ได้ว่า container
-// จะขึ้นจริงบนคลัสเตอร์ อันนั้นต้องลองบนเครื่องจริง
-
-func newFakeK8s(objects ...runtime.Object) (*KubernetesProvisioner, *fake.Clientset) {
+// newFakeProvisioner ประกอบ KubernetesProvisioner ที่ยิงใส่คลัสเตอร์ปลอมของ client-go
+//
+// once.Do(ไม่ทำอะไร) คือการ "ปิดสวิตช์" ตัวสร้าง clientset ของจริงทิ้ง — พอ sync.Once ถูกใช้ไปแล้ว
+// client() จะข้ามการอ่าน kubeconfig แล้วคืน clientset ที่เรายัดไว้แทน ทำให้เทสต์ทั้งไฟล์นี้
+// เดินผ่าน method ตัวจริงได้โดยไม่ต้องมีคลัสเตอร์
+//
+// fake API ไม่มี controller (ไม่มีใครสร้าง pod จาก Deployment หรือจ่าย NodePort ให้) — จึงตรวจได้ว่า
+// "object ที่ส่งไปถูกไหม" กับ "อ่านสภาพ pod กลับมาแปลถูกไหม" แต่ยืนยันไม่ได้ว่า container ขึ้นจริง
+func newFakeProvisioner(objects ...runtime.Object) (*KubernetesProvisioner, *fake.Clientset) {
 	cs := fake.NewClientset(objects...)
-	return &KubernetesProvisioner{client: cs}, cs
+	k := &KubernetesProvisioner{clientset: cs}
+	k.once.Do(func() {})
+	return k, cs
+}
+
+func testNamespace() *entity.Namespace {
+	return &entity.Namespace{
+		ID:             7,
+		Name:           "สเปซของเอิร์ธ", // ตั้งใจใช้ภาษาไทย: ชื่อแบบนี้เป็นชื่อ namespace ของ k8s ไม่ได้
+		ContributorID:  42,
+		CPULimitMilli:  entity.DefaultCPULimitMilli,
+		RAMLimitMB:     entity.DefaultRAMLimitMB,
+		StorageLimitMB: entity.DefaultStorageLimitMB,
+	}
+}
+
+// TestEnsureNamespaceCreatesQuotaAndLimits ยืนยันว่าเรียกครั้งเดียวได้ครบทั้ง 3 อย่าง
+// และชื่อ namespace มาจาก id ไม่ใช่ชื่อที่ผู้ใช้ตั้ง (ซึ่งในเทสต์นี้เป็นภาษาไทย ใช้ไม่ได้แน่ๆ)
+func TestEnsureNamespaceCreatesQuotaAndLimits(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ns := testNamespace()
+	ctx := context.Background()
+
+	if err := k.EnsureNamespace(ctx, ns); err != nil {
+		t.Fatalf("EnsureNamespace: %v", err)
+	}
+
+	name := K8sNamespaceName(ns.ID)
+	if name != "ns-7" {
+		t.Fatalf("ชื่อ namespace บนคลัสเตอร์ต้องมาจาก id ได้ %q", name)
+	}
+
+	got, err := cs.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา namespace ที่เพิ่งสร้างไม่เจอ: %v", err)
+	}
+	if got.Labels[labelNamespaceID] != "7" {
+		t.Errorf("label %s = %q ต้องเป็น \"7\"", labelNamespaceID, got.Labels[labelNamespaceID])
+	}
+	// ชื่อที่ผู้ใช้ตั้งต้องไม่หายไปไหน — เก็บเป็น annotation ให้ยังสาวกลับได้ว่า ns-7 คือ space ไหน
+	if got.Annotations[annDisplayName] != ns.Name {
+		t.Errorf("annotation %s = %q ต้องเป็น %q", annDisplayName, got.Annotations[annDisplayName], ns.Name)
+	}
+
+	quota, err := cs.CoreV1().ResourceQuotas(name).Get(ctx, quotaObjectName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา ResourceQuota ไม่เจอ: %v", err)
+	}
+	if cpu := quota.Spec.Hard[corev1.ResourceRequestsCPU]; cpu.MilliValue() != int64(ns.CPULimitMilli) {
+		t.Errorf("requests.cpu = %s ต้องเป็น %dm", cpu.String(), ns.CPULimitMilli)
+	}
+	// limits.* ต้องมีและเท่ากับ requests.* ไม่งั้น container จะ burst เกินโควตาได้ตอนคลัสเตอร์ว่าง
+	if cpu := quota.Spec.Hard[corev1.ResourceLimitsCPU]; cpu.MilliValue() != int64(ns.CPULimitMilli) {
+		t.Errorf("limits.cpu = %s ต้องเท่ากับ requests.cpu (%dm)", cpu.String(), ns.CPULimitMilli)
+	}
+	wantMem := int64(ns.RAMLimitMB) * 1024 * 1024
+	if mem := quota.Spec.Hard[corev1.ResourceRequestsMemory]; mem.Value() != wantMem {
+		t.Errorf("requests.memory = %s ต้องเป็น %d bytes", mem.String(), wantMem)
+	}
+	wantDisk := int64(ns.StorageLimitMB) * 1024 * 1024
+	if disk := quota.Spec.Hard[corev1.ResourceRequestsStorage]; disk.Value() != wantDisk {
+		t.Errorf("requests.storage = %s ต้องเป็น %d bytes", disk.String(), wantDisk)
+	}
+
+	limits, err := cs.CoreV1().LimitRanges(name).Get(ctx, limitsObjectName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา LimitRange ไม่เจอ: %v", err)
+	}
+	if len(limits.Spec.Limits) != 1 {
+		t.Fatalf("LimitRange ต้องมี 1 รายการ ได้ %d", len(limits.Spec.Limits))
+	}
+	item := limits.Spec.Limits[0]
+	// เพดานต่อ container ต้องตรงกับที่ QuotaService.ReserveAndInsert เช็คไว้ ไม่งั้นสองชั้นขัดกันเอง
+	if cpu := item.Max[corev1.ResourceCPU]; cpu.MilliValue() != int64(entity.MaxCPUMilliPerService) {
+		t.Errorf("LimitRange max cpu = %s ต้องเป็น %dm", cpu.String(), entity.MaxCPUMilliPerService)
+	}
+	def, defReq := item.Default[corev1.ResourceCPU], item.DefaultRequest[corev1.ResourceCPU]
+	if def.IsZero() || defReq.IsZero() {
+		t.Error("ต้องมีทั้ง default และ defaultRequest ไม่งั้น container ที่ไม่ระบุ resource จะโดน ResourceQuota ปฏิเสธ")
+	}
+}
+
+// TestEnsureNamespaceIdempotentAndUpdatesQuota จำลองเส้นทางของ NamespaceManager.SetQuota:
+// เรียก EnsureNamespace ซ้ำกับ namespace เดิมที่โควตาเปลี่ยน ต้องไม่ error และค่าใหม่ต้องถูกทับลงไป
+func TestEnsureNamespaceIdempotentAndUpdatesQuota(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ns := testNamespace()
+	ctx := context.Background()
+
+	if err := k.EnsureNamespace(ctx, ns); err != nil {
+		t.Fatalf("เรียกครั้งแรก: %v", err)
+	}
+
+	ns.CPULimitMilli = entity.MaxCPULimitMilli
+	ns.RAMLimitMB = entity.MaxRAMLimitMB
+	ns.Name = "ชื่อใหม่"
+	if err := k.EnsureNamespace(ctx, ns); err != nil {
+		t.Fatalf("เรียกซ้ำต้องผ่าน (SetQuota เรียกทุกครั้งที่แอดมินปรับโควตา): %v", err)
+	}
+
+	name := K8sNamespaceName(ns.ID)
+	quota, err := cs.CoreV1().ResourceQuotas(name).Get(ctx, quotaObjectName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา ResourceQuota ไม่เจอ: %v", err)
+	}
+	if cpu := quota.Spec.Hard[corev1.ResourceRequestsCPU]; cpu.MilliValue() != int64(entity.MaxCPULimitMilli) {
+		t.Errorf("requests.cpu = %s ต้องถูกอัปเดตเป็น %dm", cpu.String(), entity.MaxCPULimitMilli)
+	}
+
+	got, err := cs.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา namespace ไม่เจอ: %v", err)
+	}
+	if got.Annotations[annDisplayName] != "ชื่อใหม่" {
+		t.Errorf("annotation ชื่อ space = %q ต้อง sync ตาม DB เป็น %q", got.Annotations[annDisplayName], "ชื่อใหม่")
+	}
+}
+
+// TestEnsureNamespaceTerminating ยืนยันว่า namespace เดิมที่ยังลบไม่เสร็จให้ error แบบ "รอแล้วลองใหม่"
+// ไม่ใช่ error ทั่วไป — controller พึ่ง errors.Is ตัวนี้ในการตอบ 409 พร้อมคำแนะนำที่ถูก
+func TestEnsureNamespaceTerminating(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ns := testNamespace()
+	ctx := context.Background()
+
+	_, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: K8sNamespaceName(ns.ID)},
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("เตรียม namespace ที่กำลังถูกลบไม่สำเร็จ: %v", err)
+	}
+
+	if err := k.EnsureNamespace(ctx, ns); !errors.Is(err, ErrNamespaceTerminating) {
+		t.Fatalf("ต้องได้ ErrNamespaceTerminating ได้: %v", err)
+	}
+}
+
+// TestScaleServiceOnlyTouchesReplicas ยืนยันว่า scale เปลี่ยนแค่ replicas (pod template เดิม = ไม่เกิด rollout)
+// และ Deployment ที่ไม่มีอยู่ต้องได้ error — ServiceManager.Scale พึ่ง error นี้ในการย้อนโควตาใน DB กลับ
+func TestScaleServiceOnlyTouchesReplicas(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ctx := context.Background()
+	svc := &entity.Service{Name: "web", Image: "nginx", ContainerPort: 80, Replicas: 1, CPUMilli: 100, RAMMB: 128,
+		EnvVars: map[string]string{"A": "1"}}
+
+	if _, err := cs.AppsV1().Deployments("ns-7").Create(ctx, deploymentFor("ns-7", svc), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("เตรียม Deployment ไม่สำเร็จ: %v", err)
+	}
+	if err := k.ScaleService(ctx, "ns-7", "web", 3); err != nil {
+		t.Fatalf("ScaleService: %v", err)
+	}
+
+	got, err := cs.AppsV1().Deployments("ns-7").Get(ctx, "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("หา Deployment ไม่เจอ: %v", err)
+	}
+	if got.Spec.Replicas == nil || *got.Spec.Replicas != 3 {
+		t.Errorf("replicas = %v ต้องเป็น 3", got.Spec.Replicas)
+	}
+	c := got.Spec.Template.Spec.Containers
+	if len(c) != 1 || c[0].Image != "nginx" || len(c[0].Env) != 1 {
+		t.Errorf("pod template ต้องไม่เปลี่ยน ได้ %+v", c)
+	}
+
+	if err := k.ScaleService(ctx, "ns-7", "ghost", 2); err == nil {
+		t.Error("scale Deployment ที่ไม่มีอยู่ต้องได้ error")
+	}
+}
+
+// TestDeleteNamespaceIdempotent ยืนยันสัญญาใน Provisioner: ลบของที่ไม่มีอยู่แล้วต้องคืน nil
+// NamespaceManager.Delete ถอนของบนคลัสเตอร์ก่อนแล้วค่อยลบแถวใน DB — ถ้าล้มกลางคัน
+// การสั่งลบซ้ำต้องเดินจนจบได้ ไม่งั้น namespace นั้นค้างใน DB ตลอดกาล
+func TestDeleteNamespaceIdempotent(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ns := testNamespace()
+	ctx := context.Background()
+	name := K8sNamespaceName(ns.ID)
+
+	if err := k.EnsureNamespace(ctx, ns); err != nil {
+		t.Fatalf("EnsureNamespace: %v", err)
+	}
+	if err := k.DeleteNamespace(ctx, name); err != nil {
+		t.Fatalf("ลบครั้งแรก: %v", err)
+	}
+	if _, err := cs.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{}); err == nil {
+		t.Fatal("namespace ต้องหายไปแล้ว")
+	}
+	if err := k.DeleteNamespace(ctx, name); err != nil {
+		t.Fatalf("ลบซ้ำต้องคืน nil ไม่ใช่ error: %v", err)
+	}
 }
 
 func testDatabaseSvc() *entity.Service {
@@ -45,56 +238,22 @@ func testAppSvc() *entity.Service {
 	}
 }
 
-// TestK8sEnsureNamespaceAppliesQuota — โควตาบน DB ต้องไปโผล่เป็น ResourceQuota บนคลัสเตอร์
-// และเรียกซ้ำด้วยตัวเลขใหม่ (admin ปรับโควตา) ต้องอัปเดต ไม่ใช่ล้มด้วย AlreadyExists
-func TestK8sEnsureNamespaceAppliesQuota(t *testing.T) {
-	k, cs := newFakeK8s()
-	ctx := context.Background()
-	ns := &entity.Namespace{Name: "ns-user-7", CPULimitMilli: 3000, RAMLimitMB: 2048, StorageLimitMB: 10240}
-
-	if err := k.EnsureNamespace(ctx, ns); err != nil {
-		t.Fatalf("EnsureNamespace: %v", err)
-	}
-	if _, err := cs.CoreV1().Namespaces().Get(ctx, ns.Name, metav1.GetOptions{}); err != nil {
-		t.Fatalf("namespace ต้องถูกสร้าง: %v", err)
-	}
-	rq, err := cs.CoreV1().ResourceQuotas(ns.Name).Get(ctx, k8sQuotaName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("ResourceQuota ต้องถูกสร้าง: %v", err)
-	}
-	cpu := rq.Spec.Hard[corev1.ResourceRequestsCPU]
-	mem := rq.Spec.Hard[corev1.ResourceLimitsMemory]
-	disk := rq.Spec.Hard[corev1.ResourceRequestsStorage]
-	if cpu.MilliValue() != 3000 || mem.Value() != 2048<<20 || disk.Value() != 10240<<20 {
-		t.Errorf("โควตาไม่ตรง: cpu=%s mem=%s storage=%s", cpu.String(), mem.String(), disk.String())
-	}
-
-	ns.CPULimitMilli = 8000
-	if err := k.EnsureNamespace(ctx, ns); err != nil {
-		t.Fatalf("EnsureNamespace ซ้ำ (ปรับโควตา): %v", err)
-	}
-	rq, _ = cs.CoreV1().ResourceQuotas(ns.Name).Get(ctx, k8sQuotaName, metav1.GetOptions{})
-	if cpu := rq.Spec.Hard[corev1.ResourceRequestsCPU]; cpu.MilliValue() != 8000 {
-		t.Errorf("ปรับโควตาแล้วต้องได้ 8000m ได้ %s", cpu.String())
-	}
-}
-
 // TestK8sDeployDatabaseIsClosedAndPersistent — สวิตช์ database ต้องออกมาเป็นของ 3 ชิ้นที่ถูกต้อง
 // ทุกชิ้น: StatefulSet ที่มีดิสก์ mount ตรงจุด, Service ที่ไม่มี NodePort, NetworkPolicy ที่รับเฉพาะ
 // namespace ตัวเอง — ข้อไหนหลุดอาการจะต่างกันคนละแบบและทุกแบบ "ดูเหมือนสำเร็จ"
 func TestK8sDeployDatabaseIsClosedAndPersistent(t *testing.T) {
-	k, cs := newFakeK8s()
+	k, cs := newFakeProvisioner()
 	ctx := context.Background()
 	svc := testDatabaseSvc()
 
-	if err := k.DeployService(ctx, "ns-a", svc); err != nil {
+	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
 		t.Fatalf("DeployService: %v", err)
 	}
 	if svc.NodePort != nil {
 		t.Errorf("database ต้องไม่ได้ NodePort แต่ได้ %d", *svc.NodePort)
 	}
 
-	sts, err := cs.AppsV1().StatefulSets("ns-a").Get(ctx, "my-pg", metav1.GetOptions{})
+	sts, err := cs.AppsV1().StatefulSets("ns-7").Get(ctx, "my-pg", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("StatefulSet ต้องถูกสร้าง: %v", err)
 	}
@@ -128,7 +287,7 @@ func TestK8sDeployDatabaseIsClosedAndPersistent(t *testing.T) {
 		t.Error("ลบ StatefulSet แล้วต้องให้ k8s ลบ PVC ตาม")
 	}
 
-	k8sSvc, err := cs.CoreV1().Services("ns-a").Get(ctx, "my-pg", metav1.GetOptions{})
+	k8sSvc, err := cs.CoreV1().Services("ns-7").Get(ctx, "my-pg", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Service ต้องถูกสร้าง: %v", err)
 	}
@@ -139,11 +298,11 @@ func TestK8sDeployDatabaseIsClosedAndPersistent(t *testing.T) {
 		t.Errorf("targetPort ต้องชี้ที่ container port ได้ %v", k8sSvc.Spec.Ports[0].TargetPort)
 	}
 
-	np, err := cs.NetworkingV1().NetworkPolicies("ns-a").Get(ctx, networkPolicyName("my-pg"), metav1.GetOptions{})
+	np, err := cs.NetworkingV1().NetworkPolicies("ns-7").Get(ctx, networkPolicyName("my-pg"), metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("NetworkPolicy ต้องถูกสร้าง: %v", err)
 	}
-	if np.Spec.PodSelector.MatchLabels[labelApp] != "my-pg" {
+	if np.Spec.PodSelector.MatchLabels[labelServiceName] != "my-pg" {
 		t.Errorf("policy ต้องเจาะจง pod ของ database นี้ ได้ %v", np.Spec.PodSelector)
 	}
 	if len(np.Spec.Ingress) != 1 || len(np.Spec.Ingress[0].From) != 1 {
@@ -158,35 +317,34 @@ func TestK8sDeployDatabaseIsClosedAndPersistent(t *testing.T) {
 		t.Errorf("policy ต้องเปิดเฉพาะพอร์ตของ database ได้ %v", np.Spec.Ingress[0].Ports)
 	}
 
-	if _, err := cs.AppsV1().Deployments("ns-a").Get(ctx, "my-pg", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := cs.AppsV1().Deployments("ns-7").Get(ctx, "my-pg", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Error("database ต้องไม่สร้าง Deployment")
 	}
 }
 
 // TestK8sDeployAppGetsNodePort — service ธรรมดาต้องได้ Deployment + NodePort ที่คลัสเตอร์จ่ายให้
-//
-// fake API ไม่มีตัวจ่าย NodePort จึงวาง Service ที่มี nodePort ไว้ก่อน แล้วดูว่า apply ของเรา
-// "ไม่ทับ" เลขที่คลัสเตอร์ถืออยู่ — พฤติกรรมเดียวกับ apply ซ้ำบนของจริง
+// และต้องไม่มีของฝั่ง database ติดมา (ดิสก์ / NetworkPolicy ที่จะทำให้ NodePort เข้าไม่ได้)
 func TestK8sDeployAppGetsNodePort(t *testing.T) {
-	existing := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "ns-a"},
-		Spec: corev1.ServiceSpec{
-			Type:  corev1.ServiceTypeNodePort,
-			Ports: []corev1.ServicePort{{Name: "main", Protocol: corev1.ProtocolTCP, Port: 8080, NodePort: 30123}},
-		},
-	}
-	k, cs := newFakeK8s(existing)
+	k, cs := newFakeProvisioner()
 	ctx := context.Background()
+	// fake API ไม่มีตัวจ่าย NodePort — เติมเลขให้ก่อน object ถูกเก็บ เหมือนที่ apiserver จริงทำ
+	cs.PrependReactor("create", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		s := action.(k8stesting.CreateAction).GetObject().(*corev1.Service)
+		if s.Spec.Type == corev1.ServiceTypeNodePort {
+			s.Spec.Ports[0].NodePort = 30123
+		}
+		return false, nil, nil
+	})
 	svc := testAppSvc()
 
-	if err := k.DeployService(ctx, "ns-a", svc); err != nil {
+	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
 		t.Fatalf("DeployService: %v", err)
 	}
 	if svc.NodePort == nil || *svc.NodePort != 30123 {
-		t.Fatalf("ต้องอ่าน NodePort ที่คลัสเตอร์ถืออยู่กลับมา ได้ %v", svc.NodePort)
+		t.Fatalf("ต้องอ่าน NodePort ที่คลัสเตอร์จ่ายกลับมา ได้ %v", svc.NodePort)
 	}
 
-	dep, err := cs.AppsV1().Deployments("ns-a").Get(ctx, "web", metav1.GetOptions{})
+	dep, err := cs.AppsV1().Deployments("ns-7").Get(ctx, "web", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Deployment ต้องถูกสร้าง: %v", err)
 	}
@@ -196,7 +354,7 @@ func TestK8sDeployAppGetsNodePort(t *testing.T) {
 	if len(dep.Spec.Template.Spec.Containers[0].VolumeMounts) != 0 {
 		t.Error("service ธรรมดาต้องไม่มีดิสก์")
 	}
-	if _, err := cs.NetworkingV1().NetworkPolicies("ns-a").Get(ctx, networkPolicyName("web"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := cs.NetworkingV1().NetworkPolicies("ns-7").Get(ctx, networkPolicyName("web"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Error("service ธรรมดาต้องไม่มี NetworkPolicy (ไม่งั้น NodePort เข้าไม่ได้)")
 	}
 }
@@ -204,20 +362,20 @@ func TestK8sDeployAppGetsNodePort(t *testing.T) {
 // TestK8sDeployCleansUpOnFailure — พลาดกลางทางต้องไม่ทิ้งของค้างบนคลัสเตอร์
 // เพราะ ServiceManager จะลบแถวใน DB ทันที ของที่เหลืออยู่จะกลายเป็น workload ผี
 func TestK8sDeployCleansUpOnFailure(t *testing.T) {
-	k, cs := newFakeK8s()
+	k, cs := newFakeProvisioner()
 	ctx := context.Background()
 	// ให้ NetworkPolicy (ชิ้นสุดท้ายของ database) ล้ม — StatefulSet กับ Service สร้างไปแล้ว
-	cs.PrependReactor("patch", "networkpolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+	cs.PrependReactor("create", "networkpolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("webhook ปฏิเสธ")
 	})
 
-	if err := k.DeployService(ctx, "ns-a", testDatabaseSvc()); err == nil {
+	if err := k.DeployService(ctx, "ns-7", testDatabaseSvc()); err == nil {
 		t.Fatal("ต้องคืน error เมื่อสร้างไม่ครบ")
 	}
-	if _, err := cs.AppsV1().StatefulSets("ns-a").Get(ctx, "my-pg", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := cs.AppsV1().StatefulSets("ns-7").Get(ctx, "my-pg", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Error("StatefulSet ที่สร้างค้างต้องถูกถอนออก")
 	}
-	if _, err := cs.CoreV1().Services("ns-a").Get(ctx, "my-pg", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := cs.CoreV1().Services("ns-7").Get(ctx, "my-pg", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Error("Service ที่สร้างค้างต้องถูกถอนออก")
 	}
 }
@@ -225,52 +383,31 @@ func TestK8sDeployCleansUpOnFailure(t *testing.T) {
 // TestK8sDeleteDatabaseRemovesEverything — ลบ database ต้องเก็บ PVC ด้วย และลบซ้ำต้องไม่ error
 func TestK8sDeleteDatabaseRemovesEverything(t *testing.T) {
 	// PVC ที่ StatefulSet controller จะสร้างจาก volumeClaimTemplates บนคลัสเตอร์จริง
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName("my-pg"), Namespace: "ns-a"}}
-	k, cs := newFakeK8s(pvc)
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName("my-pg"), Namespace: "ns-7"}}
+	k, cs := newFakeProvisioner(pvc)
 	ctx := context.Background()
 	svc := testDatabaseSvc()
 
-	if err := k.DeployService(ctx, "ns-a", svc); err != nil {
+	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
 		t.Fatalf("DeployService: %v", err)
 	}
-	if err := k.DeleteService(ctx, "ns-a", svc); err != nil {
+	if err := k.DeleteService(ctx, "ns-7", svc); err != nil {
 		t.Fatalf("DeleteService: %v", err)
 	}
 
 	checks := map[string]error{}
-	_, checks["StatefulSet"] = cs.AppsV1().StatefulSets("ns-a").Get(ctx, "my-pg", metav1.GetOptions{})
-	_, checks["Service"] = cs.CoreV1().Services("ns-a").Get(ctx, "my-pg", metav1.GetOptions{})
-	_, checks["NetworkPolicy"] = cs.NetworkingV1().NetworkPolicies("ns-a").Get(ctx, networkPolicyName("my-pg"), metav1.GetOptions{})
-	_, checks["PVC"] = cs.CoreV1().PersistentVolumeClaims("ns-a").Get(ctx, pvcName("my-pg"), metav1.GetOptions{})
+	_, checks["StatefulSet"] = cs.AppsV1().StatefulSets("ns-7").Get(ctx, "my-pg", metav1.GetOptions{})
+	_, checks["Service"] = cs.CoreV1().Services("ns-7").Get(ctx, "my-pg", metav1.GetOptions{})
+	_, checks["NetworkPolicy"] = cs.NetworkingV1().NetworkPolicies("ns-7").Get(ctx, networkPolicyName("my-pg"), metav1.GetOptions{})
+	_, checks["PVC"] = cs.CoreV1().PersistentVolumeClaims("ns-7").Get(ctx, pvcName("my-pg"), metav1.GetOptions{})
 	for what, err := range checks {
 		if !apierrors.IsNotFound(err) {
 			t.Errorf("%s ต้องถูกลบ แต่ยังอยู่ (err=%v)", what, err)
 		}
 	}
 
-	if err := k.DeleteService(ctx, "ns-a", svc); err != nil {
+	if err := k.DeleteService(ctx, "ns-7", svc); err != nil {
 		t.Errorf("ลบซ้ำต้องผ่าน (idempotent) ได้ %v", err)
-	}
-}
-
-// TestK8sScaleUpdatesReplicas — scale แตะแค่ replicas ของ Deployment
-func TestK8sScaleUpdatesReplicas(t *testing.T) {
-	k, cs := newFakeK8s()
-	ctx := context.Background()
-	svc := testAppSvc()
-	if err := k.deployApp(ctx, "ns-a", svc); err != nil && !strings.Contains(err.Error(), "NodePort") {
-		t.Fatalf("deployApp: %v", err) // fake ไม่จ่าย NodePort — Deployment ถูกสร้างแล้วก่อนถึงจุดนั้น
-	}
-
-	if err := k.ScaleService(ctx, "ns-a", "web", 5); err != nil {
-		t.Fatalf("ScaleService: %v", err)
-	}
-	dep, _ := cs.AppsV1().Deployments("ns-a").Get(ctx, "web", metav1.GetOptions{})
-	if *dep.Spec.Replicas != 5 {
-		t.Errorf("replicas = %d ต้องเป็น 5", *dep.Spec.Replicas)
-	}
-	if err := k.ScaleService(ctx, "ns-a", "ghost", 2); err == nil {
-		t.Error("scale ของที่ไม่มีอยู่ต้อง error เพื่อให้ ServiceManager ย้อน DB กลับ")
 	}
 }
 
@@ -279,10 +416,10 @@ func TestK8sScaleUpdatesReplicas(t *testing.T) {
 func TestK8sStatusReadsPods(t *testing.T) {
 	ctx := context.Background()
 	svc := testAppSvc()
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "ns-a"}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "ns-7"}}
 	podWith := func(status corev1.PodStatus) *corev1.Pod {
 		return &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "ns-a", Labels: map[string]string{labelApp: "web"}},
+			ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "ns-7", Labels: serviceLabels("web")},
 			Status:     status,
 		}
 	}
@@ -379,8 +516,8 @@ func TestK8sStatusReadsPods(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			k, _ := newFakeK8s(tc.objects...)
-			got, err := k.Status(ctx, "ns-a", svc)
+			k, _ := newFakeProvisioner(tc.objects...)
+			got, err := k.Status(ctx, "ns-7", svc)
 			if err != nil {
 				t.Fatalf("Status: %v", err)
 			}
@@ -406,9 +543,9 @@ func TestK8sStatusAttachesCrashLogs(t *testing.T) {
 	ctx := context.Background()
 	svc := testDatabaseSvc()
 	objects := []runtime.Object{
-		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "ns-a"}},
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "ns-7"}},
 		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "my-pg-0", Namespace: "ns-a", Labels: map[string]string{labelApp: "my-pg"}},
+			ObjectMeta: metav1.ObjectMeta{Name: "my-pg-0", Namespace: "ns-7", Labels: serviceLabels("my-pg")},
 			Status: corev1.PodStatus{
 				Phase: corev1.PodRunning,
 				ContainerStatuses: []corev1.ContainerStatus{{
@@ -419,8 +556,8 @@ func TestK8sStatusAttachesCrashLogs(t *testing.T) {
 			},
 		},
 	}
-	k, _ := newFakeK8s(objects...)
-	got, err := k.Status(ctx, "ns-a", svc)
+	k, _ := newFakeProvisioner(objects...)
+	got, err := k.Status(ctx, "ns-7", svc)
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -435,17 +572,17 @@ func TestK8sStatusAttachesCrashLogs(t *testing.T) {
 // TestK8sLogsStreamsFromPod — Logs ต้องหา pod จาก label แล้วเปิด stream ได้; ไม่มี pod ต้องบอกชัด
 func TestK8sLogsStreamsFromPod(t *testing.T) {
 	ctx := context.Background()
-	k, _ := newFakeK8s()
-	if _, err := k.Logs(ctx, "ns-a", "web", LogOptions{}); err == nil {
+	k, _ := newFakeProvisioner()
+	if _, err := k.Logs(ctx, "ns-7", "web", LogOptions{}); err == nil {
 		t.Error("ไม่มี pod ต้อง error ไม่ใช่คืน stream ว่าง")
 	}
 
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "web-xyz", Namespace: "ns-a", Labels: map[string]string{labelApp: "web"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "web-xyz", Namespace: "ns-7", Labels: serviceLabels("web")},
 		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
 	}
-	k, _ = newFakeK8s(pod)
-	stream, err := k.Logs(ctx, "ns-a", "web", LogOptions{TailLines: 50, Timestamps: true})
+	k, _ = newFakeProvisioner(pod)
+	stream, err := k.Logs(ctx, "ns-7", "web", LogOptions{TailLines: 50, Timestamps: true})
 	if err != nil {
 		t.Fatalf("Logs: %v", err)
 	}

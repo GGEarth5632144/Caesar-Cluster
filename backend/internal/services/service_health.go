@@ -65,16 +65,9 @@ func (m *ServiceHealthMonitor) Start(ctx context.Context) {
 	log.Printf("service health monitor: เริ่มทำงาน (ทุก %v)", healthCheckInterval)
 }
 
-// serviceWithNamespace = service หนึ่งตัวพร้อมชื่อ namespace บนคลัสเตอร์
-// join มาในคำสั่งเดียวแทนที่จะ SELECT namespace ทีละตัว (กัน N+1 ในลูปที่วนทุก 10 วินาที)
-type serviceWithNamespace struct {
-	entity.Service
-	NamespaceName string
-}
-
 // checkOnce เช็คหนึ่งรอบ — เลือกเฉพาะตัวที่ควรเช็คตอนนี้ แล้วอัปเดตตัวที่สถานะเปลี่ยน
 func (m *ServiceHealthMonitor) checkOnce(ctx context.Context) {
-	var rows []serviceWithNamespace
+	var rows []entity.Service
 
 	// เงื่อนไขการเลือก: ตัวที่สถานะยังไม่นิ่ง (creating/pending/crashloop) เอาหมด
 	// ส่วนตัวที่นิ่งแล้วเอาเฉพาะที่ไม่ได้เช็คมานานเกิน settledRecheckAfter
@@ -83,15 +76,12 @@ func (m *ServiceHealthMonitor) checkOnce(ctx context.Context) {
 	// คือตัวที่ผู้ใช้กำลังนั่งดูหน้าจอรออยู่ ต้องได้คิวก่อนเสมอ
 	cutoff := time.Now().UTC().Add(-settledRecheckAfter)
 	err := m.db.WithContext(ctx).
-		Table("services AS s").
-		Select("s.*, n.name AS namespace_name").
-		Joins("JOIN namespaces n ON n.id = s.namespace_id").
-		Where(`s.status IN ? OR s.status_checked_at IS NULL OR s.status_checked_at < ?`,
+		Where(`status IN ? OR status_checked_at IS NULL OR status_checked_at < ?`,
 			[]string{entity.ServiceCreating, entity.ServicePending, entity.ServiceCrashLoop},
 			cutoff).
-		Order("s.status_checked_at ASC NULLS FIRST").
+		Order("status_checked_at ASC NULLS FIRST").
 		Limit(maxServicesPerTick).
-		Scan(&rows).Error
+		Find(&rows).Error
 	if err != nil {
 		log.Printf("service health monitor: อ่านรายการ service ไม่สำเร็จ: %v", err)
 		return
@@ -133,10 +123,8 @@ func (m *ServiceHealthMonitor) checkOnce(ctx context.Context) {
 // checkService ถามคลัสเตอร์เรื่อง service ตัวเดียวแล้วเขียนผลลง DB
 // คืน error เฉพาะกรณี "ถามคลัสเตอร์ไม่ได้" เพื่อให้ผู้เรียกสรุปรวมทีเดียว (ดู checkOnce)
 // ส่วนความผิดพลาดตอนเขียน DB จัดการ+log ในนี้เลย เพราะเป็นคนละเรื่องกับคลัสเตอร์ล่ม
-func (m *ServiceHealthMonitor) checkService(ctx context.Context, row serviceWithNamespace) error {
-	svc := row.Service
-
-	status, err := m.prov.Status(ctx, row.NamespaceName, &svc)
+func (m *ServiceHealthMonitor) checkService(ctx context.Context, svc entity.Service) error {
+	status, err := m.prov.Status(ctx, K8sNamespaceName(svc.NamespaceID), &svc)
 	if err != nil {
 		// ถามไม่ได้ ≠ ของพัง — คลัสเตอร์อาจล่มชั่วคราวหรือเน็ตมีปัญหา
 		// ห้ามเขียน failed ลงไปเด็ดขาด ไม่งั้น service ที่รันอยู่ดีๆ จะกลายเป็นพังทั้งกระดาน

@@ -1289,9 +1289,10 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   <Lock size={14} /> เฉพาะภายในกลุ่มของคุณ
                 </span>
                 {/* บอก host กับพอร์ต ส่วนโปรโตคอลกับชื่อผู้ใช้ผู้ใช้รู้อยู่แล้วว่าใช้อะไร
-                    เพราะเป็นคนเลือก image เอง */}
+                    เพราะเป็นคนเลือก image เอง — namespace บนคลัสเตอร์ชื่อ ns-<id> ไม่ใช่ชื่อกลุ่ม
+                    (ดู K8sNamespaceName ฝั่ง backend) */}
                 <span className="overflow-x-auto whitespace-nowrap font-mono text-sm text-[#211a14]/70">
-                  {`${name.trim() || "ชื่อ-service"}.${namespace?.name ?? "ns"}.svc.cluster.local:${containerPort || "8080"}`}
+                  {`${name.trim() || "ชื่อ-service"}.ns-${namespace?.id ?? "<id>"}.svc.cluster.local:${containerPort || "8080"}`}
                 </span>
                 <span className="text-sm text-[#211a14]/45">
                   ใช้ที่อยู่นี้เชื่อมต่อจาก service อื่นในกลุ่มเดียวกัน คนนอกกลุ่มและคนนอกระบบเข้าไม่ได้

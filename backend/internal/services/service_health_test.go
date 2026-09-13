@@ -222,7 +222,7 @@ func TestHealthMonitorReportsCrashLoopEndToEnd(t *testing.T) {
 	// stub ที่บังคับให้คลัสเตอร์ "ตอบ" ว่ากำลังเตรียม container อยู่
 	prov := &stubProv{
 		MockProvisioner: NewMockProvisioner(),
-		ns:              ns.Name,
+		ns:              K8sNamespaceName(ns.ID),
 		status: WorkloadStatus{
 			Phase: PhasePending, Reason: "ContainerCreating", Message: "กำลังเตรียม container",
 		},
@@ -307,7 +307,7 @@ func TestMonitorKeepsStatusWhenClusterUnreachable(t *testing.T) {
 	ns := dbTestNamespace(t, db, "health-unreachable-test-ns")
 	ctx := context.Background()
 
-	prov := &stubProv{MockProvisioner: NewMockProvisioner(), ns: ns.Name,
+	prov := &stubProv{MockProvisioner: NewMockProvisioner(), ns: K8sNamespaceName(ns.ID),
 		status: WorkloadStatus{Phase: PhaseRunning}}
 	mgr := NewServiceManager(db, NewQuotaService(db), prov)
 	monitor := NewServiceHealthMonitor(db, prov)

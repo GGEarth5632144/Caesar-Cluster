@@ -36,12 +36,7 @@ func main() {
 	// เลือกตัวสร้างของจริงบน cluster: kubernetes ของจริง หรือ mock ตอน dev
 	var prov services.Provisioner
 	if cfg.Provisioner == config.ProvisionerKubernetes {
-		// ต่อคลัสเตอร์ไม่ได้ = หยุดตั้งแต่ตรงนี้ ไม่ปล่อยให้ start แล้วไปพังตอนมีคนกด deploy
-		k8s, err := services.NewKubernetesProvisioner(cfg.KubeConfig)
-		if err != nil {
-			log.Fatalf("PROVISIONER=kubernetes แต่ใช้คลัสเตอร์ไม่ได้: %v", err)
-		}
-		prov = k8s
+		prov = services.NewKubernetesProvisioner(cfg.KubeConfig)
 		log.Println("provisioner: KUBERNETES")
 	} else {
 		prov = services.NewMockProvisioner()

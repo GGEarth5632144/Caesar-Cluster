@@ -185,7 +185,7 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 	}
 
 	// deploy ของจริงขึ้น cluster
-	if err := m.prov.DeployService(ctx, ns.Name, svc); err != nil {
+	if err := m.prov.DeployService(ctx, K8sNamespaceName(ns.ID), svc); err != nil {
 		// deploy ไม่สำเร็จ → ลบ row ทิ้ง เพื่อคืนโควตาให้ namespace ทันที
 		m.releaseReservation(ctx, svc.ID, err)
 		return nil, err
@@ -292,7 +292,7 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 		return nil, err
 	}
 
-	if err := m.prov.ScaleService(ctx, ns.Name, svc.Name, replicas); err != nil {
+	if err := m.prov.ScaleService(ctx, K8sNamespaceName(ns.ID), svc.Name, replicas); err != nil {
 		// คลัสเตอร์ไม่รับ → คืนค่าเดิม ไม่งั้นโควตาถูกจองไว้เกินของจริง
 		// WithoutCancel ด้วยเหตุผลเดียวกับ releaseReservation (ผู้ใช้ปิดหน้าเว็บระหว่างรอ)
 		if rbErr := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).
@@ -334,7 +334,7 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 	}
 
 	// ส่งทั้ง svc ไปเพราะ database ต้องถอน PVC + NetworkPolicy เพิ่มด้วย (ดู Provisioner.DeleteService)
-	if err := m.prov.DeleteService(ctx, ns.Name, &svc); err != nil {
+	if err := m.prov.DeleteService(ctx, K8sNamespaceName(ns.ID), &svc); err != nil {
 		return err
 	}
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
@@ -362,7 +362,7 @@ func (m *ServiceManager) Logs(ctx context.Context, serviceID, namespaceID int, o
 		return nil, err
 	}
 
-	return m.prov.Logs(ctx, ns.Name, svc.Name, opts)
+	return m.prov.Logs(ctx, K8sNamespaceName(ns.ID), svc.Name, opts)
 }
 
 // ── จุด mount ของดิสก์ถาวร ─────────────────────────────────────────────────────────

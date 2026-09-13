@@ -1,0 +1,113 @@
+# ตัวตน + สิทธิ์ของ Caesar Cluster backend บนคลัสเตอร์ — ใช้แทน admin.conf (cluster-admin)
+#
+# ทำไมไม่ใช้ admin.conf: backend รับ request จากนักศึกษาโดยตรง ถ้าถูกยึดหรือมีบั๊ก ความเสียหายต้องจำกัด
+# อยู่แค่ของที่ provisioner ทำจริง · token ของ SA เพิกถอนได้ทันทีด้วยการลบ Secret และไม่หมดอายุ
+# ต่างจาก client cert ของ admin.conf ที่เพิกถอนไม่ได้และหมดอายุทุกปี
+#
+# สิทธิ์ = เท่าที่ backend/internal/services/provisioner_k8s.go เรียก client-go อยู่ตอนนี้เป๊ะๆ ไม่เผื่ออนาคต
+# เพิ่มฟีเจอร์ที่เรียก API ใหม่แล้ว backend ได้ 403 "cannot <verb> resource <x>" → เพิ่ม rule ในไฟล์นี้แล้ว apply ใหม่
+# (มีผลกับ request ถัดไปทันที ไม่ต้อง restart backend / ไม่ต้องเปลี่ยน token)
+# แก้ที่ไฟล์นี้เสมอ อย่า `kubectl edit` บนคลัสเตอร์ ไม่งั้น apply รอบหน้าจะทับสิทธิ์ที่เพิ่มไว้หาย
+#
+# apply (บน NUC ด้วย kubeconfig admin):
+#   kubectl apply -f caesar-backend-rbac.yaml
+# ตรวจสิทธิ์:
+#   kubectl auth can-i --list --as=system:serviceaccount:caesar-system:caesar-backend
+#
+# ต้องเป็น ClusterRole (ไม่ใช่ Role ต่อ namespace) เพราะ namespace ns-<id> ถูกสร้างขึ้นตอนใช้งาน
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: caesar-system
+  labels:
+    # ห้ามใส่ app.kubernetes.io/managed-by=caesar-cluster — label นั้นคือเครื่องหมายของ namespace
+    # นักศึกษาที่ backend สร้างและจัดการเอง
+    app.kubernetes.io/part-of: caesar-cluster
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caesar-backend
+  namespace: caesar-system
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: backend
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: caesar-backend
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: backend
+rules:
+  # EnsureNamespace: Create ns-<id> → เจอ AlreadyExists ก็ Get มาเช็ค Terminating/adopt แล้ว Update label
+  # DeleteNamespace และ rollbackFreshNamespace: Delete
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, create, update, delete]
+  # ensureResourceQuota / ensureLimitRange (EnsureNamespace, SetQuota): Create ก่อน มีแล้วค่อย Get + Update ทับ
+  - apiGroups: [""]
+    resources: [resourcequotas, limitranges]
+    verbs: [get, create, update]
+  # createNodePortService (DeployService): Create — ไม่เลือก nodePort เอง · DeleteService: Delete
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, delete]
+  # DeployService: Create (+ Delete ตอน rollback เมื่อสร้าง Service ไม่ผ่าน)
+  # ScaleService: merge patch spec.replicas · DeleteService: Delete · Status: Get
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, create, patch, delete]
+  # DeployService (database): Create StatefulSet · DeleteService / rollback: Delete · Status: Get
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, create, delete]
+  # DeployService (database): Create NetworkPolicy · DeleteService / rollback: Delete
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete]
+  # DeleteService (database): PVC จาก volumeClaimTemplates — StatefulSet controller สร้างให้ เราแค่ตามลบ
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [delete]
+  # Status (ServiceHealthMonitor) และ Logs: List pod ของ service แล้วอ่าน log
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: caesar-backend
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: caesar-backend
+subjects:
+  - kind: ServiceAccount
+    name: caesar-backend
+    namespace: caesar-system
+---
+# token แบบไม่หมดอายุ สำหรับ backend ที่รันนอกคลัสเตอร์ (docker บน NUC) — ประกอบเป็น kubeconfig ไฟล์แยก
+# สร้างแค่เปลือก k8s เติม data.token / data.ca.crt ให้เอง (ไฟล์นี้จึง commit ได้ ไม่มีความลับ)
+# หลุด → `kubectl -n caesar-system delete secret caesar-backend-token` แล้ว apply ใหม่ได้ token ใหม่
+# ถ้าวันหน้า backend ย้ายไปเป็น pod ใช้ serviceAccountName: caesar-backend แทน แล้วลบ Secret นี้ทิ้งได้
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/service-account-token
+metadata:
+  name: caesar-backend-token
+  namespace: caesar-system
+  labels:
+    app.kubernetes.io/part-of: caesar-cluster
+    app.kubernetes.io/component: backend
+  annotations:
+    kubernetes.io/service-account.name: caesar-backend

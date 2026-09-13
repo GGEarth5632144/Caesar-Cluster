@@ -2,12 +2,14 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
-	"sort"
+	"maps"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -18,10 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
-	netv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -29,239 +27,776 @@ import (
 	"backend/internal/entity"
 )
 
-// KubernetesProvisioner = provisioner ของจริง คุยกับ Kubernetes API ผ่าน client-go
-// ถูกเลือกใช้ใน main เมื่อ PROVISIONER=kubernetes
+// ป้ายกำกับที่เราแปะไว้บนทุก object ที่ระบบนี้สร้าง
 //
-// ทุกอย่างใช้ server-side apply (field manager "caesar-cluster") จึงเรียกซ้ำได้ปลอดภัย:
-// deploy ซ้ำชื่อเดิม = อัปเดต ไม่ต้องแยกทาง create/update เอง
-//
-// ข้อควรรู้ตอนเอาขึ้นคลัสเตอร์จริง:
-//   - PVC ไม่ระบุ storageClassName จึงใช้ StorageClass default ของคลัสเตอร์ (k3s = local-path)
-//     ถ้าคลัสเตอร์ไม่มี default pod ของ database จะค้าง Pending ว่า "unbound PersistentVolumeClaims"
-//   - NetworkPolicy มีผลก็ต่อเมื่อ CNI บังคับใช้ (k3s เปิดให้ตั้งแต่ต้น) ทดสอบได้ด้วยการยิงจาก
-//     pod ใน namespace อื่นเข้าพอร์ตของ database แล้วต้อง timeout
-//   - สิทธิ์ที่ kubeconfig/ServiceAccount ต้องมี: namespaces + resourcequotas, และใน namespace
-//     deployments, statefulsets, services, networkpolicies, pvc, pods กับ pods/log
-type KubernetesProvisioner struct {
-	client kubernetes.Interface
-}
-
+// แยกเป็น label กับ annotation ตามข้อจำกัดของ k8s: ค่าของ label ต้องเป็น [a-zA-Z0-9._-]
+// ยาวไม่เกิน 63 ตัว จึงใส่ได้แค่ค่าที่เรารู้รูปแบบแน่ (id, ชื่อระบบ) ส่วนชื่อที่ผู้ใช้พิมพ์เอง
+// (มีเว้นวรรค/ภาษาไทยได้) ต้องไปอยู่ใน annotation ที่ไม่จำกัดรูปแบบ
 const (
-	k8sFieldManager = "caesar-cluster"
+	labelManagedBy   = "app.kubernetes.io/managed-by"
+	labelNamespaceID = "caesar-cluster.io/namespace-id"
 
-	// labelApp = label ที่ผูก Pod / Service / NetworkPolicy ของ service เดียวกันไว้ด้วยกัน
-	// Status กับ Logs ใช้ label นี้หา pod — เปลี่ยนแล้วต้องเปลี่ยนทุกที่พร้อมกัน
-	labelApp = "app"
+	// labelServiceName เป็นทั้งป้ายบน Pod และ selector ของ Deployment/Service — ใช้ชื่อ service ดิบได้
+	// เพราะ ServiceController.Create บังคับ isValidK8sName มาแล้ว (ตัวพิมพ์เล็ก/เลข/ขีดกลาง)
+	labelServiceName = "caesar-cluster.io/service"
 
-	k8sQuotaName  = "caesar-quota"
-	k8sVolumeName = "data" // ชื่อ volume ใน StatefulSet → PVC จะชื่อ data-<service>-0
+	annDisplayName   = "caesar-cluster.io/display-name"
+	annContributorID = "caesar-cluster.io/contributor-id"
 
-	crashLogTailLines = 15   // log กี่บรรทัดท้ายที่เก็บติดไปกับสถานะ crash loop
+	managedByCaesar = "caesar-cluster"
+)
+
+// ชื่อ object ที่เราสร้างไว้ใน namespace ของผู้ใช้ — ตั้งตายตัวเพราะมีอันเดียวต่อ namespace
+// (ไม่ได้ตั้งตาม id เพราะมันอยู่ใน namespace ของตัวเองอยู่แล้ว ไม่มีทางชนกับของ namespace อื่น)
+const (
+	quotaObjectName  = "caesar-quota"
+	limitsObjectName = "caesar-limits"
+)
+
+// dataVolumeName = ชื่อ volumeClaimTemplate ของ database — PVC จริงจะชื่อ data-<service>-0
+// ตามกติกาการตั้งชื่อของ StatefulSet (ดู pvcName)
+const dataVolumeName = "data"
+
+// ขอบเขตของข้อความสถานะที่ Status ส่งกลับไปให้ ServiceHealthMonitor เขียนลง DB
+const (
+	crashLogTailLines = 15   // log กี่บรรทัดท้ายที่แนบไปกับสถานะ crash loop
 	maxStatusMessage  = 2000 // กัน message ยาวจนตาราง services บวม
 	maxStatusReason   = 60   // ต้องเท่ากับความกว้างคอลัมน์ status_reason
 )
 
-// NewKubernetesProvisioner ต่อคลัสเตอร์แล้วยืนยันว่าคุยกันรู้เรื่องก่อนคืน — ต่อไม่ได้ต้องรู้ตั้งแต่
-// start ไม่ใช่ตอนมีคนกด deploy ครั้งแรก
+// ค่า default ที่ LimitRange เติมให้ container ที่ไม่ได้ระบุ resource มาเอง
 //
-// kubeConfig ว่าง = รันอยู่ใน cluster เอง (ใช้ ServiceAccount ของ pod)
-func NewKubernetesProvisioner(kubeConfig string) (*KubernetesProvisioner, error) {
-	var (
-		cfg *rest.Config
-		err error
-	)
-	if kubeConfig == "" {
-		cfg, err = rest.InClusterConfig()
-	} else {
-		cfg, err = clientcmd.BuildConfigFromFlags("", kubeConfig)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("โหลด kubeconfig ไม่ได้: %w", err)
-	}
-	// ServiceHealthMonitor ยิงถามหลาย service ต่อรอบ — ค่า default (5 req/s) จะโดน throttle
-	cfg.QPS = 20
-	cfg.Burst = 40
+// ตัวเลขตรงกับค่าต่ำสุดที่ dto.CreateServiceRequest ยอมรับ (cpu_milli min=100, ram_mb min=128)
+// เพื่อให้ "ก้อนที่เล็กที่สุดที่ผู้ใช้ขอผ่าน API ได้" กับ "ก้อนที่คลัสเตอร์แจกให้ฟรีเมื่อไม่ระบุ"
+// เป็นขนาดเดียวกัน — ไม่มีทางที่ pod ซึ่ง backend ยอมให้เกิด จะโดน LimitRange ตีกลับ
+const (
+	defaultContainerCPUMilli = 100
+	defaultContainerRAMMB    = 128
+)
 
-	cs, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("สร้าง client ไม่ได้: %w", err)
-	}
-	ver, err := cs.Discovery().ServerVersion()
-	if err != nil {
-		return nil, fmt.Errorf("ต่อ Kubernetes API ไม่ได้: %w", err)
-	}
-	log.Printf("kubernetes provisioner: ต่อคลัสเตอร์ได้ (server %s)", ver.GitVersion)
-	return &KubernetesProvisioner{client: cs}, nil
+// KubernetesProvisioner = provisioner ของจริงที่คุยกับ Kubernetes API ผ่าน client-go
+// ถูกเลือกใช้ใน main เมื่อ PROVISIONER=kubernetes
+//
+// โครงที่มีต่อ namespace 1 อัน (ทำไปแล้ว = ✓):
+//  1. Namespace ✓
+//  2. ResourceQuota ✓ — requests/limits ของ cpu กับ memory และ requests.storage ตาม limit ของ entity.Namespace
+//     (นี่คือตัวบังคับโควตาชั้นสุดท้าย ต่อให้ backend เราพลาด k8s ก็ยังไม่ให้เกิน)
+//  3. LimitRange ✓ — กันไม่ให้ container ที่ไม่ได้ระบุ resource แอบกินเกิน
+//  4. NetworkPolicy default-deny — กัน traffic ข้าม namespace (ข้อกำหนดเรื่องแยก network) ยังไม่ทำ
+//
+// database (svc.IsDatabase) พึ่งของสองอย่างบนคลัสเตอร์:
+//   - StorageClass default — PVC ไม่ระบุ storageClassName (k3s = local-path) ถ้าไม่มี pod จะค้าง
+//     Pending ว่า "unbound PersistentVolumeClaims"
+//   - CNI ที่บังคับใช้ NetworkPolicy (k3s เปิดให้ตั้งแต่ต้น) — ไม่งั้น policy ของ database ไม่มีผล
+type KubernetesProvisioner struct {
+	kubeConfig string // path ของ kubeconfig; ว่าง = in-cluster
+
+	// clientset ถูกสร้างครั้งเดียวตอนถูกใช้ครั้งแรก ไม่ใช่ตอน New
+	//
+	// ที่ไม่สร้างใน constructor เพราะ NewKubernetesProvisioner ไม่คืน error (main เรียกแบบ
+	// assign ตรงๆ) และการอ่าน kubeconfig ก็ล้มได้จริง — เก็บ error ไว้แล้วคืนทุกครั้งที่ถูกเรียก
+	// ดีกว่า panic ตอน start หรือกลืน error ไปเงียบๆ
+	//
+	// หมายเหตุ: การสร้าง clientset ไม่ได้ต่อเน็ตเวิร์ก แค่ parse config — คลัสเตอร์ล่มจะรู้ตอนยิงจริง
+	once      sync.Once
+	clientset kubernetes.Interface
+	clientErr error
 }
 
-func applyOpts() metav1.ApplyOptions {
-	return metav1.ApplyOptions{FieldManager: k8sFieldManager, Force: true}
+// NewKubernetesProvisioner ประกอบ provisioner — ถูกเรียกจาก main เมื่อ PROVISIONER=kubernetes
+func NewKubernetesProvisioner(kubeConfig string) *KubernetesProvisioner {
+	return &KubernetesProvisioner{kubeConfig: kubeConfig}
 }
 
-// EnsureNamespace สร้างหรืออัปเดต Namespace + ResourceQuota ให้ตรงกับ limit ใน DB
-// เรียกได้ทั้งตอนสร้างใหม่และตอน admin ปรับโควตา — ResourceQuota คือด่านสุดท้ายของโควตา
-// ต่อให้ backend คิดเลขพลาด k8s ก็ยังไม่ให้เกิน และการใส่ limits.* ไว้ด้วยทำให้ pod ที่ไม่ระบุ
-// เพดานของตัวเองถูกปฏิเสธไปเลย
+// client คืน clientset ที่พร้อมใช้ (สร้างครั้งแรกที่ถูกเรียก แล้วใช้ซ้ำตลอดอายุ process)
+// kubeConfig ว่าง = สมมติว่ารันเป็น Pod อยู่ในคลัสเตอร์ ให้ใช้ ServiceAccount ที่ mount มาให้
+func (k *KubernetesProvisioner) client() (kubernetes.Interface, error) {
+	k.once.Do(func() {
+		var cfg *rest.Config
+		var err error
+
+		if k.kubeConfig == "" {
+			cfg, err = rest.InClusterConfig()
+			if err != nil {
+				k.clientErr = fmt.Errorf("อ่าน in-cluster config ไม่สำเร็จ "+
+					"(ถ้ารัน backend นอกคลัสเตอร์ ต้องตั้ง KUBECONFIG ให้ชี้ไฟล์ kubeconfig): %w", err)
+				return
+			}
+		} else {
+			cfg, err = clientcmd.BuildConfigFromFlags("", k.kubeConfig)
+			if err != nil {
+				k.clientErr = fmt.Errorf("อ่าน kubeconfig %q ไม่สำเร็จ: %w", k.kubeConfig, err)
+				return
+			}
+		}
+
+		// ServiceHealthMonitor ถามสถานะหลาย service ต่อรอบ — ค่า default ของ client-go (5 req/s) จะโดน throttle
+		cfg.QPS = 20
+		cfg.Burst = 40
+
+		cs, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			k.clientErr = fmt.Errorf("สร้าง kubernetes client ไม่สำเร็จ: %w", err)
+			return
+		}
+		k.clientset = cs
+	})
+	return k.clientset, k.clientErr
+}
+
+// EnsureNamespace สร้าง/ปรับ namespace บนคลัสเตอร์ให้ตรงกับแถวใน DB
+//
+// data flow: NamespaceManager.Create (หรือ SetQuota) ส่ง entity.Namespace ที่เพิ่งบันทึกลง DB มา
+// → แปลง ns.ID เป็นชื่อบนคลัสเตอร์ด้วย K8sNamespaceName → สร้าง 3 อย่างตามลำดับ:
+// Namespace → ResourceQuota (โควตารวมของทั้ง space) → LimitRange (ค่า default/เพดานต่อ container)
+//
+// ต้อง idempotent ทั้งก้อนเพราะถูกเรียกซ้ำได้จริง: SetQuota เรียก method นี้ทุกครั้งที่แอดมิน
+// ปรับโควตาของ space เดิม เจอของเดิมอยู่แล้วจึงไม่ใช่ error — ให้ทับค่าใหม่ลงไปแทน
 func (k *KubernetesProvisioner) EnsureNamespace(ctx context.Context, ns *entity.Namespace) error {
-	nsAC := corev1ac.Namespace(ns.Name).
-		WithLabels(map[string]string{"caesar-cluster.io/managed": "true"})
-	if _, err := k.client.CoreV1().Namespaces().Apply(ctx, nsAC, applyOpts()); err != nil {
-		return fmt.Errorf("สร้าง namespace %s: %w", ns.Name, err)
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+	name := K8sNamespaceName(ns.ID)
+
+	created, err := k.ensureNamespaceObject(ctx, cs, name, ns)
+	if err != nil {
+		return err
 	}
 
-	hard := corev1.ResourceList{
-		corev1.ResourceRequestsCPU:     milliCPU(ns.CPULimitMilli),
-		corev1.ResourceLimitsCPU:       milliCPU(ns.CPULimitMilli),
-		corev1.ResourceRequestsMemory:  mebibytes(ns.RAMLimitMB),
-		corev1.ResourceLimitsMemory:    mebibytes(ns.RAMLimitMB),
-		corev1.ResourceRequestsStorage: mebibytes(ns.StorageLimitMB),
+	// ตั้งโควตาต่อ — พลาดตรงนี้แล้ว namespace จะ "มีอยู่แต่ไม่มีเพดาน" ซึ่งอันตรายกว่าไม่มีเลย
+	// (ผู้ใช้ deploy ได้ไม่จำกัดจนกินทั้งคลัสเตอร์) จึงต้องเก็บกวาดให้เรียบร้อยก่อนคืน error
+	if err := k.ensureResourceQuota(ctx, cs, name, ns); err != nil {
+		k.rollbackFreshNamespace(ctx, cs, name, created, err)
+		return err
 	}
-	quota := corev1ac.ResourceQuota(k8sQuotaName, ns.Name).
-		WithSpec(corev1ac.ResourceQuotaSpec().WithHard(hard))
-	if _, err := k.client.CoreV1().ResourceQuotas(ns.Name).Apply(ctx, quota, applyOpts()); err != nil {
-		return fmt.Errorf("ตั้ง ResourceQuota ของ %s: %w", ns.Name, err)
+	if err := k.ensureLimitRange(ctx, cs, name); err != nil {
+		k.rollbackFreshNamespace(ctx, cs, name, created, err)
+		return err
 	}
 	return nil
 }
 
-// DeleteNamespace ลบ namespace ทิ้งทั้งก้อน — workload, PVC, NetworkPolicy ข้างในหายตามหมด
-// NotFound = สำเร็จ ตามสัญญา idempotent ใน Provisioner (สั่งลบซ้ำต้องเดินจนจบได้)
-func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName string) error {
-	err := k.client.CoreV1().Namespaces().Delete(ctx, nsName, metav1.DeleteOptions{})
+// rollbackFreshNamespace ลบ namespace ที่ "เราเพิ่งสร้างในการเรียกครั้งนี้" ทิ้ง เมื่อขั้นตอนถัดไปพัง
+//
+// เงื่อนไข created สำคัญมาก: EnsureNamespace ถูกเรียกซ้ำจาก SetQuota กับ namespace ที่มี service
+// ของผู้ใช้รันอยู่จริง ถ้าเผลอลบเพราะแค่ตั้ง ResourceQuota พลาด งานของทั้งกลุ่มหายทันที
+// ลบได้เฉพาะตอนที่มันเพิ่งเกิดจากการเรียกครั้งนี้เท่านั้น (ยังไม่มีอะไรอยู่ข้างในแน่นอน)
+//
+// WithoutCancel ด้วยเหตุผลเดียวกับ NamespaceManager.Create: ถ้าที่พังคือ ctx ถูก cancel
+// (ผู้ใช้ปิดหน้าเว็บ) การลบด้วย ctx ตัวเดิมจะล้มตามทันที แล้ว namespace เปล่าค้างบนคลัสเตอร์ถาวร
+func (k *KubernetesProvisioner) rollbackFreshNamespace(
+	ctx context.Context, cs kubernetes.Interface, name string, created bool, cause error,
+) {
+	if !created {
+		return
+	}
+	err := cs.CoreV1().Namespaces().Delete(context.WithoutCancel(ctx), name, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("ลบ namespace %s: %w", nsName, err)
+		log.Printf("!! ตั้งค่า namespace '%s' ไม่สำเร็จ (%v) และลบตัวที่เพิ่งสร้างทิ้งไม่สำเร็จด้วย: %v "+
+			"— เหลือ namespace เปล่าที่ไม่มีเพดานค้างบนคลัสเตอร์ ต้องลบมือ", name, cause, err)
 	}
-	return nil
 }
 
-// DeployService สร้าง workload จริงตาม svc.IsDatabase (ดูสัญญาใน Provisioner)
+// ensureNamespaceObject สร้างตัว Namespace เอง — คืน created=true เมื่อเป็นการสร้างใหม่จริงในรอบนี้
 //
-// พลาดกลางทางแล้วต้องถอนของที่สร้างไปแล้วออกก่อนคืน error เพราะ ServiceManager กำลังจะลบแถว
-// ใน DB อยู่แล้ว — ไม่ถอนก็จะเหลือ workload ผีที่กินทรัพยากรโดยไม่มีใครเห็นในระบบ
-func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
-	var err error
-	if svc.IsDatabase {
-		err = k.deployDatabase(ctx, nsName, svc)
-	} else {
-		err = k.deployApp(ctx, nsName, svc)
+// กรณีที่ต้องแยกให้ออกคือ namespace เดิมยังอยู่ในสถานะ Terminating (การลบ namespace ของ k8s
+// เป็น async ใช้เวลาเก็บของข้างในสักพัก) — อันนี้ "รอแล้วลองใหม่ได้" ไม่ใช่ชื่อซ้ำถาวร
+// จึงคืน ErrNamespaceTerminating ให้ controller แปลงเป็น 409 พร้อมข้อความว่าให้รอ
+// (ดู NamespaceManager.Create ที่ส่ง error ตัวนี้ต่อแบบไม่ห่อทับ)
+func (k *KubernetesProvisioner) ensureNamespaceObject(
+	ctx context.Context, cs kubernetes.Interface, name string, ns *entity.Namespace,
+) (bool, error) {
+	labels := map[string]string{
+		labelManagedBy:   managedByCaesar,
+		labelNamespaceID: strconv.Itoa(ns.ID),
 	}
+	annotations := map[string]string{
+		annDisplayName:   ns.Name,
+		annContributorID: strconv.Itoa(ns.ContributorID),
+	}
+
+	_, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+	}, metav1.CreateOptions{})
 	if err == nil {
-		return nil
+		log.Printf("[k8s] สร้าง namespace '%s' (space '%s' ของ user id=%d) แล้ว",
+			name, ns.Name, ns.ContributorID)
+		return true, nil
 	}
-	// WithoutCancel: ผู้ใช้ปิดหน้าเว็บคือสาเหตุยอดฮิตที่ deploy ล้ม — การเก็บกวาดต้องเดินต่อได้
-	if cleanupErr := k.DeleteService(context.WithoutCancel(ctx), nsName, svc); cleanupErr != nil {
-		log.Printf("!! deploy '%s' ใน %s ล้มเหลว (%v) และถอนของที่สร้างค้างไว้ไม่สำเร็จด้วย: %v — ต้องลบมือ",
-			svc.Name, nsName, err, cleanupErr)
-	}
-	return err
-}
-
-// deployApp = Deployment + Service ชนิด NodePort แล้วอ่านพอร์ตที่ k8s จ่ายให้กลับมาใส่ svc.NodePort
-func (k *KubernetesProvisioner) deployApp(ctx context.Context, nsName string, svc *entity.Service) error {
-	labels := labelsFor(svc)
-	dep := appsv1ac.Deployment(svc.Name, nsName).WithLabels(labels).
-		WithSpec(appsv1ac.DeploymentSpec().
-			WithReplicas(int32(svc.Replicas)).
-			WithSelector(metav1ac.LabelSelector().WithMatchLabels(labels)).
-			WithTemplate(podTemplate(svc, labels, nil)))
-	if _, err := k.client.AppsV1().Deployments(nsName).Apply(ctx, dep, applyOpts()); err != nil {
-		return fmt.Errorf("สร้าง Deployment: %w", err)
+	if !apierrors.IsAlreadyExists(err) {
+		return false, fmt.Errorf("สร้าง namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", name, err)
 	}
 
-	result, err := k.client.CoreV1().Services(nsName).
-		Apply(ctx, serviceFor(svc, nsName, corev1.ServiceTypeNodePort), applyOpts())
+	// มีอยู่แล้ว — เป็นได้ทั้ง "เรียกซ้ำตามปกติ" และ "ตัวเดิมยังลบไม่เสร็จ" ต้องอ่านมาดูก่อนว่าอันไหน
+	existing, err := cs.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("สร้าง Service: %w", err)
+		if apierrors.IsNotFound(err) {
+			// หายไประหว่าง Create กับ Get พอดี = ตัวเดิมเพิ่งลบเสร็จ สั่งใหม่อีกรอบได้เลย
+			return false, fmt.Errorf("%w (namespace '%s')", ErrNamespaceTerminating, name)
+		}
+		return false, fmt.Errorf("อ่าน namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", name, err)
 	}
-	// ไม่ได้ระบุ nodePort ไป k8s จึงเป็นคนสุ่มจ่าย (30000-32767) และคงเลขเดิมไว้ถ้า apply ซ้ำ
-	port := assignedNodePort(result)
-	if port == 0 {
-		return errors.New("คลัสเตอร์ไม่ได้จ่าย NodePort กลับมา")
+	if existing.Status.Phase == corev1.NamespaceTerminating || existing.DeletionTimestamp != nil {
+		return false, fmt.Errorf("%w (namespace '%s')", ErrNamespaceTerminating, name)
 	}
-	svc.NodePort = &port
-	return nil
+
+	// ของเดิมใช้ได้ — เหลือแค่ดัน metadata ให้ตรงกับ DB (ผู้ใช้อาจเปลี่ยนชื่อ space ทีหลัง)
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	changed := false
+	for key, val := range labels {
+		if existing.Labels[key] != val {
+			existing.Labels[key] = val
+			changed = true
+		}
+	}
+	for key, val := range annotations {
+		if existing.Annotations[key] != val {
+			existing.Annotations[key] = val
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+
+	if _, err := cs.CoreV1().Namespaces().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		// ไม่คืน error: สิ่งที่ผู้เรียกต้องการคือ "namespace นี้มีอยู่จริงบนคลัสเตอร์" ซึ่งจริงแล้ว
+		// ส่วนที่พลาดเป็นแค่ป้ายชื่อไว้ให้คนอ่าน ถ้าคืน error ขึ้นไป NamespaceManager.Create
+		// จะถอยไปลบแถวใน DB ทิ้งทั้งที่ namespace ใช้งานได้ปกติ — เสียหายกว่าป้ายไม่ตรงเยอะ
+		log.Printf("!! อัปเดต metadata ของ namespace '%s' ไม่สำเร็จ (namespace ใช้งานได้ปกติ): %v", name, err)
+	}
+	return false, nil
 }
 
-// deployDatabase = StatefulSet + PVC + Service ชนิด ClusterIP + NetworkPolicy
-// ห้ามแตะ svc.NodePort — ปล่อย nil ไว้ นี่คือชั้นแรกของ "เข้าถึงได้เฉพาะใน namespace"
-func (k *KubernetesProvisioner) deployDatabase(ctx context.Context, nsName string, svc *entity.Service) error {
-	labels := labelsFor(svc)
-	mount := corev1ac.VolumeMount().WithName(k8sVolumeName).WithMountPath(svc.DataPath)
-
-	// ใช้ struct เปล่าแทน corev1ac.PersistentVolumeClaim() เพราะตัวนั้นใส่ kind/apiVersion/namespace
-	// มาให้ด้วย ซึ่งไม่ใช่ที่ของมันใน volumeClaimTemplates
-	pvc := (&corev1ac.PersistentVolumeClaimApplyConfiguration{}).
-		WithName(k8sVolumeName).
-		WithSpec(corev1ac.PersistentVolumeClaimSpec().
-			WithAccessModes(corev1.ReadWriteOnce).
-			WithResources(corev1ac.VolumeResourceRequirements().
-				WithRequests(corev1.ResourceList{corev1.ResourceStorage: mebibytes(svc.StorageMB)})))
-
-	sts := appsv1ac.StatefulSet(svc.Name, nsName).WithLabels(labels).
-		WithSpec(appsv1ac.StatefulSetSpec().
-			WithReplicas(int32(entity.DatabaseReplicas)).
-			WithServiceName(svc.Name).
-			WithSelector(metav1ac.LabelSelector().WithMatchLabels(labels)).
-			WithTemplate(podTemplate(svc, labels, mount)).
-			WithVolumeClaimTemplates(pvc).
-			// ลบ StatefulSet แล้วให้ k8s ลบ PVC ตาม (k8s 1.27+) — DeleteService ยังตามไปลบเองอีกชั้น
-			// เผื่อคลัสเตอร์เก่าที่ยังไม่รู้จัก field นี้
-			WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
-				WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType).
-				WithWhenScaled(appsv1.RetainPersistentVolumeClaimRetentionPolicyType)))
-	if _, err := k.client.AppsV1().StatefulSets(nsName).Apply(ctx, sts, applyOpts()); err != nil {
-		return fmt.Errorf("สร้าง StatefulSet: %w", err)
-	}
-
-	if _, err := k.client.CoreV1().Services(nsName).
-		Apply(ctx, serviceFor(svc, nsName, corev1.ServiceTypeClusterIP), applyOpts()); err != nil {
-		return fmt.Errorf("สร้าง Service: %w", err)
-	}
-
-	if _, err := k.client.NetworkingV1().NetworkPolicies(nsName).
-		Apply(ctx, networkPolicyFor(svc, nsName), applyOpts()); err != nil {
-		return fmt.Errorf("สร้าง NetworkPolicy: %w", err)
-	}
-	return nil
-}
-
-// ScaleService แก้เฉพาะ spec.replicas ของ Deployment — ไม่แตะ Service/NodePort ที่จ่ายไปแล้ว
-func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcName string, replicas int) error {
-	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas)
-	_, err := k.client.AppsV1().Deployments(nsName).
-		Patch(ctx, svcName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
-	if err != nil {
-		return fmt.Errorf("scale Deployment %s: %w", svcName, err)
-	}
-	return nil
-}
-
-// DeleteService ถอนทุกชิ้นของ service ตัวเดียว — NotFound ทุกชิ้นถือว่าสำเร็จ (idempotent)
+// ensureResourceQuota ตั้งเพดานทรัพยากร "รวมทั้ง namespace" ให้ตรงกับ ns.CPULimitMilli / ns.RAMLimitMB / ns.StorageLimitMB
 //
-// database ต้องลบ PVC เองด้วย: k8s ไม่ลบ PVC ที่เกิดจาก volumeClaimTemplates ให้ตอนลบ StatefulSet
-// (ยกเว้นตั้ง retention policy ซึ่งคลัสเตอร์เก่าไม่รู้จัก) ไม่ลบแล้วดิสก์จะถูกจองค้างกินโควตาไปเรื่อยๆ
-func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName string, svc *entity.Service) error {
-	propagation := metav1.DeletePropagationBackground
-	opts := metav1.DeleteOptions{PropagationPolicy: &propagation}
+// นี่คือชั้นบังคับจริง ส่วน QuotaService ใน backend เป็นแค่ชั้นที่ตอบผู้ใช้ให้เร็วและมีข้อความสวยๆ
+// ทั้งสองชั้นต้องคิดเลขแบบเดียวกันเป๊ะ ไม่งั้นผู้ใช้จะเจอ "DB บอกว่าโควตาพอ แต่ deploy แล้วโดนปฏิเสธ"
+// ซึ่ง debug ยากมาก — QuotaService หักโควตาเป็น cpu_milli × replicas (ยอดรวมทุก Pod)
+// ตรงกับที่ ResourceQuota นับ requests.cpu รวมทุก Pod ในnamespace พอดี
+//
+// ทำไมตั้งทั้ง requests.* และ limits.* เป็นค่าเดียวกัน:
+//   - ใส่ limits.* ใน Hard ด้วย = บังคับให้ทุก container ต้องมี limit (ไม่มี = ถูกปฏิเสธ)
+//     ซึ่ง LimitRange ด้านล่างเติมให้อยู่แล้ว จึงไม่มีทาง deploy ไม่ผ่านเพราะข้อนี้
+//   - ตั้งเท่ากับ requests = ห้าม burst เกินที่จองไว้ ตรงกับความหมายของ "โควตา 300%" ที่ตกลงกัน
+//     ถ้าปล่อยให้ limits สูงกว่า requests ได้ ผู้ใช้จะแอบใช้เกินโควตาตอนคนอื่นว่าง
+//
+// requests.storage = ขนาดรวมของทุก PVC ใน namespace ตรงกับที่ QuotaService หักจาก storage_mb
+// (StorageLimitMB = 0 จึงแปลว่าสร้าง database ไม่ได้ ทั้งฝั่ง DB และฝั่งคลัสเตอร์)
+//
+// ไม่ใส่ count/pods ใน Hard โดยตั้งใจ: DB ไม่ได้นับจำนวน Pod เป็นแกนโควตา (นับแค่ cpu/ram)
+// ถ้าใส่เพดานที่ backend มองไม่เห็น ก็จะสร้างเคส "DB บอกพอ แต่คลัสเตอร์ปฏิเสธ" ขึ้นมาเอง
+// จำนวน Pod ถูกคุมทางอ้อมอยู่แล้วจาก cpu ขั้นต่ำต่อ service (100m → เต็มที่ 80 Pod ที่โควตาสูงสุด 8 core)
+func (k *KubernetesProvisioner) ensureResourceQuota(
+	ctx context.Context, cs kubernetes.Interface, nsName string, ns *entity.Namespace,
+) error {
+	cpu := *resource.NewMilliQuantity(int64(ns.CPULimitMilli), resource.DecimalSI)
+	mem := *resource.NewQuantity(int64(ns.RAMLimitMB)*1024*1024, resource.BinarySI)
+	disk := *resource.NewQuantity(int64(ns.StorageLimitMB)*1024*1024, resource.BinarySI)
 
-	var errs []error
-	collect := func(what string, err error) {
+	spec := corev1.ResourceQuotaSpec{
+		Hard: corev1.ResourceList{
+			corev1.ResourceRequestsCPU:     cpu,
+			corev1.ResourceLimitsCPU:       cpu,
+			corev1.ResourceRequestsMemory:  mem,
+			corev1.ResourceLimitsMemory:    mem,
+			corev1.ResourceRequestsStorage: disk,
+		},
+	}
+	desired := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      quotaObjectName,
+			Namespace: nsName,
+			Labels:    map[string]string{labelManagedBy: managedByCaesar},
+		},
+		Spec: spec,
+	}
+
+	quotas := cs.CoreV1().ResourceQuotas(nsName)
+	if _, err := quotas.Create(ctx, desired, metav1.CreateOptions{}); err == nil {
+		log.Printf("[k8s] ตั้งโควตา namespace '%s' เป็น %dm CPU / %d MB / ดิสก์ %d MB แล้ว",
+			nsName, ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB)
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("ตั้ง ResourceQuota ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+
+	// มีอยู่แล้ว (มาจาก SetQuota) → ทับ spec ด้วยค่าใหม่
+	//
+	// k8s ยอมให้ลดเพดานลงต่ำกว่ายอดที่ใช้อยู่: Pod เดิมรันต่อได้ แต่สร้างเพิ่มไม่ได้จนกว่าจะลบของเก่า
+	// ซึ่งเป็นพฤติกรรมเดียวกับที่ NamespaceManager.SetQuota ระบุไว้ จึงไม่ต้องเช็คยอดใช้ก่อน
+	existing, err := quotas.Get(ctx, quotaObjectName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("อ่าน ResourceQuota ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	existing.Spec = spec
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	existing.Labels[labelManagedBy] = managedByCaesar
+
+	if _, err := quotas.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("อัปเดต ResourceQuota ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	log.Printf("[k8s] อัปเดตโควตา namespace '%s' เป็น %dm CPU / %d MB / ดิสก์ %d MB แล้ว",
+		nsName, ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB)
+	return nil
+}
+
+// ensureLimitRange ตั้งกติกาต่อ "1 container" ใน namespace — คนละชั้นกับ ResourceQuota ที่คุมยอดรวม
+//
+// ทำ 2 อย่าง:
+//   - Default / DefaultRequest: container ที่ไม่ระบุ resource มาเอง จะถูกเติมค่าให้อัตโนมัติ
+//     จำเป็นเพราะ ResourceQuota ด้านบนมี requests.*/limits.* อยู่ใน Hard — container ที่ไม่มี
+//     ค่าเหล่านี้จะถูก k8s ปฏิเสธทันที LimitRange คือตัวที่ทำให้ไม่มีทางเกิดเคสนั้น
+//   - Max: เพดานของ container เดี่ยวๆ ตรงกับ entity.MaxCPUMilliPerService / MaxRAMMBPerService
+//     ที่ QuotaService.ReserveAndInsert เช็คไว้แล้ว — ตั้งให้ตรงกันเพื่อไม่ให้สองชั้นขัดกันเอง
+//
+// ไม่ตั้ง Min เพราะไม่มีประโยชน์: ทุก Pod ในนี้เกิดจาก DeployService ของเราเอง ซึ่งผ่านด่าน
+// min=100m/128Mi ของ dto.CreateServiceRequest มาแล้ว การเพิ่ม Min มีแต่จะสร้างโอกาสตั้งค่าขัดกัน
+//
+// LimitRange ไม่ขึ้นกับโควตาของ namespace เลย (ทุก namespace ได้ค่าชุดเดียวกัน) จึงไม่ต้องรับ ns
+func (k *KubernetesProvisioner) ensureLimitRange(
+	ctx context.Context, cs kubernetes.Interface, nsName string,
+) error {
+	spec := corev1.LimitRangeSpec{
+		Limits: []corev1.LimitRangeItem{{
+			Type: corev1.LimitTypeContainer,
+			Default: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(defaultContainerCPUMilli, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(defaultContainerRAMMB*1024*1024, resource.BinarySI),
+			},
+			DefaultRequest: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(defaultContainerCPUMilli, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(defaultContainerRAMMB*1024*1024, resource.BinarySI),
+			},
+			Max: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(entity.MaxCPUMilliPerService, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(entity.MaxRAMMBPerService*1024*1024, resource.BinarySI),
+			},
+		}},
+	}
+	desired := &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      limitsObjectName,
+			Namespace: nsName,
+			Labels:    map[string]string{labelManagedBy: managedByCaesar},
+		},
+		Spec: spec,
+	}
+
+	limits := cs.CoreV1().LimitRanges(nsName)
+	if _, err := limits.Create(ctx, desired, metav1.CreateOptions{}); err == nil {
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("ตั้ง LimitRange ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+
+	existing, err := limits.Get(ctx, limitsObjectName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("อ่าน LimitRange ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	existing.Spec = spec
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	existing.Labels[labelManagedBy] = managedByCaesar
+
+	if _, err := limits.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("อัปเดต LimitRange ของ namespace '%s' ไม่สำเร็จ: %w", nsName, err)
+	}
+	return nil
+}
+
+// DeleteNamespace ลบ namespace ทิ้งทั้งก้อน — workload ข้างในถูกเก็บตามไปด้วยโดย k8s เอง
+// data flow: NamespaceManager.Delete ส่งชื่อบนคลัสเตอร์มา → CoreV1().Namespaces().Delete()
+//
+// NotFound = สำเร็จ (คืน nil) ตามสัญญา idempotent ใน Provisioner — NamespaceManager.Delete
+// ถอนของบนคลัสเตอร์ก่อนแล้วค่อยลบแถวใน DB ถ้าล้มตรงกลาง การสั่งลบซ้ำต้องเดินจนจบได้
+//
+// การลบเป็น async: กลับมาแล้ว namespace ยังค้างสถานะ Terminating อยู่พักหนึ่ง เราไม่รอให้จบ
+// (จะบล็อก HTTP request นานเกินไป) — คนที่รีบสร้าง space ชื่อเดิมทันทีจะเจอ ErrNamespaceTerminating
+// จาก EnsureNamespace ซึ่งบอกให้รอแล้วลองใหม่ ไม่ใช่ 500 ที่เดาสาเหตุไม่ได้
+func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName string) error {
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	if err := cs.CoreV1().Namespaces().Delete(ctx, nsName, metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("ลบ namespace '%s' บนคลัสเตอร์ไม่สำเร็จ: %w", nsName, err)
+	}
+	log.Printf("[k8s] สั่งลบ namespace '%s' แล้ว (k8s เก็บของข้างในต่อแบบ async)", nsName)
+	return nil
+}
+
+// DeployService สร้าง Deployment + Service ชนิด NodePort ใน namespace ที่กำหนด
+// (svc.IsDatabase แยกไปทาง deployDatabase — ดูสัญญาใน Provisioner)
+//
+// data flow: รับ entity.Service จาก ServiceManager.Create (สเปกถูก snapshot + จองโควตาใน DB มาแล้ว)
+// → สร้าง Deployment (replicas = svc.Replicas, resources จาก CPUMilli/RAMMB ต่อ 1 Pod, env จาก svc.EnvVars)
+// → สร้าง Service type=NodePort ที่ selector ชี้ Pod ของ Deployment นั้น
+// → อ่าน nodePort ที่ k8s จ่ายให้ → เซ็ตกลับที่ svc.NodePort ให้ ServiceManager เอาไป UPDATE ลง DB
+//
+// ทั้งสอง object ใช้ชื่อเดียวกับ svc.Name — ไม่ต้องเก็บชื่อบนคลัสเตอร์ไว้ใน DB อีกคอลัมน์
+// และ ScaleService/DeleteService/Logs ที่รับมาแค่ svcName ก็หาเจอทันที (ชื่อไม่ซ้ำใน namespace
+// เพราะตาราง services มี unique (namespace_id, name) อยู่แล้ว)
+func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+	if svc.IsDatabase {
+		return k.deployDatabase(ctx, cs, nsName, svc)
+	}
+
+	if _, err := cs.AppsV1().Deployments(nsName).Create(ctx, deploymentFor(nsName, svc), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("สร้าง Deployment '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+
+	nodePort, err := k.createNodePortService(ctx, cs, nsName, svc)
+	if err != nil {
+		// Deployment เกิดไปแล้วแต่ไม่มีทางเข้าถึง — ต้องเก็บทิ้ง เพราะ ServiceManager.Create จะลบแถว
+		// ใน DB (คืนโควตา) เมื่อได้ error ตัวนี้ ปล่อยไว้ = Pod รันกินทรัพยากรจริงโดยไม่มีใครเห็นและลบผ่าน UI ไม่ได้
+		// WithoutCancel เพราะสาเหตุที่พังบ่อยที่สุดคือ ctx ถูก cancel (ผู้ใช้ปิดหน้าเว็บ) — ลบด้วยตัวเดิมจะล้มตาม
+		delErr := cs.AppsV1().Deployments(nsName).Delete(context.WithoutCancel(ctx), svc.Name, metav1.DeleteOptions{})
+		if delErr != nil && !apierrors.IsNotFound(delErr) {
+			log.Printf("!! สร้าง Service ของ '%s' ใน namespace '%s' ไม่สำเร็จ (%v) และลบ Deployment ที่เพิ่งสร้างทิ้งไม่สำเร็จด้วย: %v "+
+				"— เหลือ Pod ที่กินโควตาค้างบนคลัสเตอร์โดยไม่มีแถวใน DB ต้องลบมือ", svc.Name, nsName, err, delErr)
+		}
+		return err
+	}
+
+	svc.NodePort = &nodePort
+	log.Printf("[k8s] deploy '%s' เข้า namespace '%s' แล้ว — %d replica × (%dm CPU / %d MB), เข้าถึงที่ <node-ip>:%d → container port %d",
+		svc.Name, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, nodePort, svc.ContainerPort)
+	return nil
+}
+
+// deployDatabase = StatefulSet + Service ชนิด ClusterIP + NetworkPolicy — ไม่แตะ svc.NodePort เลย
+// ไม่เคยจองพอร์ตบน node ก็ไม่มีประตูให้เคาะจากนอกคลัสเตอร์ ซึ่งเชื่อถือได้กว่าการหวังให้ NetworkPolicy ทำงานถูก
+//
+// StatefulSet เกิดแล้วแต่ชิ้นถัดไปพัง ต้องถอนทิ้งด้วยเหตุผลเดียวกับทางของ Deployment ใน DeployService
+// — ใช้ DeleteService ถอนเพราะเก็บครบทุกชิ้น (รวม PVC ที่ StatefulSet controller อาจสร้างไปแล้ว)
+func (k *KubernetesProvisioner) deployDatabase(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) error {
+	if _, err := cs.AppsV1().StatefulSets(nsName).Create(ctx, statefulSetFor(nsName, svc), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("สร้าง StatefulSet '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+
+	if err := k.createDatabaseNetwork(ctx, cs, nsName, svc); err != nil {
+		if delErr := k.DeleteService(context.WithoutCancel(ctx), nsName, svc); delErr != nil {
+			log.Printf("!! deploy database '%s' ใน namespace '%s' ไม่สำเร็จ (%v) และถอนของที่สร้างค้างไว้ไม่สำเร็จด้วย: %v "+
+				"— เหลือ StatefulSet/PVC ที่กินโควตาค้างบนคลัสเตอร์โดยไม่มีแถวใน DB ต้องลบมือ", svc.Name, nsName, err, delErr)
+		}
+		return err
+	}
+
+	log.Printf("[k8s] deploy database '%s' เข้า namespace '%s' แล้ว — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s, เข้าถึงได้เฉพาะใน namespace ที่ %s:%d",
+		svc.Name, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, svc.Name, svc.ContainerPort)
+	return nil
+}
+
+// createDatabaseNetwork เปิดทางเข้าให้ database เฉพาะจากใน namespace: Service ClusterIP + NetworkPolicy
+func (k *KubernetesProvisioner) createDatabaseNetwork(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) error {
+	if _, err := cs.CoreV1().Services(nsName).Create(ctx,
+		serviceFor(nsName, svc, corev1.ServiceTypeClusterIP), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("สร้าง Service (ClusterIP) '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+	if _, err := cs.NetworkingV1().NetworkPolicies(nsName).Create(ctx,
+		networkPolicyFor(nsName, svc), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("สร้าง NetworkPolicy ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+	return nil
+}
+
+// serviceLabels = ป้ายของทุก object ที่ผูกกับ service ตัวเดียว และเป็น selector ของ workload/Service ด้วย
+// Selector แก้ทีหลังไม่ได้ (k8s ห้าม) — ต้องเป็นชุด label ที่ไม่มีวันเปลี่ยนตามค่าที่ผู้ใช้แก้ได้
+func serviceLabels(svcName string) map[string]string {
+	return map[string]string{
+		labelManagedBy:   managedByCaesar,
+		labelServiceName: svcName,
+	}
+}
+
+func podSelector(svcName string) string       { return labelServiceName + "=" + svcName }
+func networkPolicyName(svcName string) string { return svcName + "-namespace-only" }
+func pvcName(svcName string) string           { return dataVolumeName + "-" + svcName + "-0" }
+
+// deploymentFor แปลง entity.Service → Deployment object (ยังไม่ยิงไปคลัสเตอร์)
+func deploymentFor(nsName string, svc *entity.Service) *appsv1.Deployment {
+	labels := serviceLabels(svc.Name)
+	replicas := int32(svc.Replicas)
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        svc.Name,
+			Namespace:   nsName,
+			Labels:      labels,
+			Annotations: map[string]string{annContributorID: strconv.Itoa(svc.CreatedBy)},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: podTemplateFor(svc, labels),
+		},
+	}
+}
+
+// statefulSetFor แปลง entity.Service ที่เปิดสวิตช์ database → StatefulSet ที่มี PVC ของตัวเอง
+//
+// ใช้ StatefulSet ไม่ใช่ Deployment เพราะ RollingUpdate ของ Deployment ปั้น Pod ใหม่ก่อนฆ่าตัวเก่า
+// สองตัวจะแย่ง PVC แบบ ReadWriteOnce ก้อนเดียวกันจน rollout ค้างถาวร
+func statefulSetFor(nsName string, svc *entity.Service) *appsv1.StatefulSet {
+	labels := serviceLabels(svc.Name)
+	replicas := int32(entity.DatabaseReplicas)
+
+	template := podTemplateFor(svc, labels)
+	template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
+		Name:      dataVolumeName,
+		MountPath: svc.DataPath,
+	}}
+
+	return &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        svc.Name,
+			Namespace:   nsName,
+			Labels:      labels,
+			Annotations: map[string]string{annContributorID: strconv.Itoa(svc.CreatedBy)},
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas:    &replicas,
+			ServiceName: svc.Name,
+			Selector:    &metav1.LabelSelector{MatchLabels: labels},
+			Template:    template,
+			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
+				ObjectMeta: metav1.ObjectMeta{Name: dataVolumeName},
+				Spec: corev1.PersistentVolumeClaimSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Resources: corev1.VolumeResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceStorage: *resource.NewQuantity(int64(svc.StorageMB)*1024*1024, resource.BinarySI),
+						},
+					},
+				},
+			}},
+			// ลบ StatefulSet แล้วให้ k8s ลบ PVC ตาม — DeleteService ยังตามไปลบเองอีกชั้น
+			// เผื่อคลัสเตอร์เก่าที่ยังไม่รู้จัก field นี้
+			PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+				WhenDeleted: appsv1.DeletePersistentVolumeClaimRetentionPolicyType,
+				WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
+			},
+		},
+	}
+}
+
+// podTemplateFor ประกอบ pod 1 container — ใช้ร่วมกันทั้ง Deployment และ StatefulSet
+//
+// requests เท่ากับ limits เสมอ ไม่งั้นชน ResourceQuota ที่ ensureResourceQuota ตั้งไว้: Hard มีทั้ง
+// requests.* และ limits.* เป็นค่าเดียวกัน — limits ที่สูงกว่า requests จะทำให้ยอดรวมฝั่ง limits
+// ทะลุก่อน ทั้งที่ QuotaService ใน backend คิดว่าโควตายังเหลือ (เคสที่ debug ยากที่สุดของระบบนี้)
+//
+// readiness probe แบบ TCP ทำให้ Status แยก "รันอยู่" ออกจาก "โปรเซสขึ้นแต่ยังไม่ฟังพอร์ต" ได้
+// โดยไม่ต้องรู้จัก image
+func podTemplateFor(svc *entity.Service, labels map[string]string) corev1.PodTemplateSpec {
+	port := int32(svc.ContainerPort)
+	res := corev1.ResourceList{
+		corev1.ResourceCPU:    *resource.NewMilliQuantity(int64(svc.CPUMilli), resource.DecimalSI),
+		corev1.ResourceMemory: *resource.NewQuantity(int64(svc.RAMMB)*1024*1024, resource.BinarySI),
+	}
+
+	// เรียง key ก่อนแปลงเป็น env — ลำดับของ map ใน Go สุ่มทุกรอบ ปล่อยไว้แล้ว spec จะ "เปลี่ยน"
+	// ทุกครั้งที่ประกอบใหม่ทั้งที่ค่าเท่าเดิม (กวน diff และทำให้ ScaleService/แก้ไขทีหลังสั่ง rollout เปล่าๆ)
+	env := make([]corev1.EnvVar, 0, len(svc.EnvVars))
+	for _, key := range slices.Sorted(maps.Keys(svc.EnvVars)) {
+		env = append(env, corev1.EnvVar{Name: key, Value: svc.EnvVars[key]})
+	}
+
+	return corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  svc.Name,
+				Image: svc.Image,
+				Ports: []corev1.ContainerPort{{
+					ContainerPort: port,
+					Protocol:      corev1.ProtocolTCP,
+				}},
+				Env:       env,
+				Resources: corev1.ResourceRequirements{Requests: res, Limits: res},
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+					},
+					InitialDelaySeconds: 5,
+					PeriodSeconds:       10,
+					FailureThreshold:    3,
+				},
+			}},
+		},
+	}
+}
+
+// serviceFor แปลง entity.Service → k8s Service ที่ชี้เข้า pod ของ service นี้
+//
+// targetPort ต้องชี้ที่ ContainerPort เสมอ — ตั้งผิดแล้ว Service จะสร้างสำเร็จแต่ traffic เข้าไปไม่มีใครฟัง
+// กลายเป็น connection refused ที่ debug ยากเพราะ deploy "ผ่าน"
+func serviceFor(nsName string, svc *entity.Service, typ corev1.ServiceType) *corev1.Service {
+	labels := serviceLabels(svc.Name)
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svc.Name,
+			Namespace: nsName,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     typ,
+			Selector: labels,
+			Ports: []corev1.ServicePort{{
+				Port:       int32(svc.ContainerPort),
+				TargetPort: intstr.FromInt32(int32(svc.ContainerPort)),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+		},
+	}
+}
+
+// networkPolicyFor รับ ingress เข้า pod ของ database ได้เฉพาะจาก pod ใน namespace เดียวกัน
+//
+// from: [{podSelector: {}}] แปลว่า pod ทุกตัวใน namespace เดียวกับ policy ซึ่งคือที่ต้องการ
+// ห้ามเผลอเขียนเป็น namespaceSelector: {} ที่แปลว่าทุก namespace = เปิดให้ทั้งคลัสเตอร์
+func networkPolicyFor(nsName string, svc *entity.Service) *netv1.NetworkPolicy {
+	labels := serviceLabels(svc.Name)
+	tcp := corev1.ProtocolTCP
+	port := intstr.FromInt32(int32(svc.ContainerPort))
+
+	return &netv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      networkPolicyName(svc.Name),
+			Namespace: nsName,
+			Labels:    labels,
+		},
+		Spec: netv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: labels},
+			PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeIngress},
+			Ingress: []netv1.NetworkPolicyIngressRule{{
+				From:  []netv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}},
+				Ports: []netv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
+			}},
+		},
+	}
+}
+
+// createNodePortService เปิดทางเข้าจากนอกให้ workload แล้วคืนเลข nodePort ที่ k8s จ่ายมา
+//
+// ไม่ระบุ nodePort เอง ปล่อยให้ k8s สุ่มจากช่วง 30000-32767: ถ้าเราเลือกเลขเองต้องมาจดว่าใครใช้เลขไหน
+// แล้วกันชนกันข้าม namespace ซึ่ง k8s ทำให้อยู่แล้ว (คอลัมน์ node_port ใน DB เป็นแค่สำเนาไว้โชว์ URL)
+func (k *KubernetesProvisioner) createNodePortService(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) (int, error) {
+	created, err := cs.CoreV1().Services(nsName).Create(ctx,
+		serviceFor(nsName, svc, corev1.ServiceTypeNodePort), metav1.CreateOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("สร้าง Service (NodePort) '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+
+	// ปกติ k8s จ่ายเลขมาพร้อม response ของ Create เลย — ถ้าไม่มีแปลว่าช่วง NodePort เต็มหรือคลัสเตอร์
+	// ตั้งค่าไว้แปลก คืน error ไปเลยดีกว่าปล่อยผ่าน เพราะ svc.NodePort ที่ว่างแปลว่าผู้ใช้ไม่มี URL ให้เข้า
+	// (ServiceManager.Create จะเก็บกวาดของบนคลัสเตอร์ + คืนโควตาให้เอง)
+	if len(created.Spec.Ports) == 0 || created.Spec.Ports[0].NodePort == 0 {
+		return 0, fmt.Errorf("คลัสเตอร์ไม่ได้จ่าย nodePort ให้ service '%s' ใน namespace '%s' "+
+			"(ช่วง 30000-32767 อาจเต็ม)", svc.Name, nsName)
+	}
+	return int(created.Spec.Ports[0].NodePort), nil
+}
+
+// ScaleService แก้เฉพาะ Deployment.spec.replicas ของ workload ที่ DeployService สร้างไว้ (ชื่อ = svcName)
+// data flow: ServiceManager.Scale จองโควตา + UPDATE replicas ใน DB แล้ว → merge patch replicas บนคลัสเตอร์
+//
+// ใช้ merge patch แทน Get→Update: ยิงครั้งเดียว ไม่มีช่อง conflict กับ controller ที่เขียน status อยู่
+// และไม่แตะ field อื่นของ spec (pod template ไม่เปลี่ยน = ไม่เกิด rollout ใหม่ Pod เดิมรันต่อ)
+//
+// ห้ามแตะ Service/NodePort ที่จ่ายไปแล้ว — ผู้ใช้ถือ URL <node-ip>:<node_port> อยู่
+//
+// NotFound ไม่ถือว่าสำเร็จ (ต่างจาก DeleteService): ต้องคืน error ให้ ServiceManager.Scale ย้อน replicas
+// ใน DB กลับ ไม่งั้นโควตาถูกจองไว้ให้ Pod ที่ไม่มีอยู่จริง
+func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcName string, replicas int) error {
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	patch := fmt.Appendf(nil, `{"spec":{"replicas":%d}}`, replicas)
+	_, err = cs.AppsV1().Deployments(nsName).Patch(ctx, svcName, types.MergePatchType, patch, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("ปรับจำนวน replica ของ Deployment '%s' ใน namespace '%s' เป็น %d ไม่สำเร็จ: %w",
+			svcName, nsName, replicas, err)
+	}
+	log.Printf("[k8s] scale '%s' ใน namespace '%s' เป็น %d replica แล้ว", svcName, nsName, replicas)
+	return nil
+}
+
+// DeleteService ลบของที่ DeployService สร้างไว้ (ทุกชิ้นชื่อตาม svc.Name)
+// data flow: ServiceManager.Delete ส่ง namespace + service มา → ลบ workload → ลบ Service
+// → database ลบ NetworkPolicy กับ PVC ต่อ
+//
+// NotFound = สำเร็จ ตามสัญญา idempotent เดียวกับ DeleteNamespace: ServiceManager.Delete ลบแถวใน DB
+// หลังเราคืน nil เท่านั้น ถ้าลบได้ตัวเดียวแล้วล้ม การกดลบซ้ำต้องเดินผ่านตัวที่หายไปแล้วได้
+// ไม่งั้นแถวใน DB ค้างถาวรและโควตาไม่ถูกคืน
+//
+// ลบ workload ก่อนเพราะเป็นตัวที่กินทรัพยากร — Pod ถูก GC เก็บต่อแบบ async (propagation ของ
+// apps/v1 เป็น Background อยู่แล้ว) เราไม่รอให้หมด ด้วยเหตุผลเดียวกับ DeleteNamespace
+//
+// PVC ต้องตามลบเอง: คลัสเตอร์ที่ไม่รู้จัก PersistentVolumeClaimRetentionPolicy จะไม่ลบ PVC จาก
+// volumeClaimTemplates ให้ ไม่ลบแล้วดิสก์จะถูกจองค้างกินโควตาโดยไม่มีแถวใน DB ให้ตามเก็บ
+func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName string, svc *entity.Service) error {
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	kind, deleteWorkload := "Deployment", cs.AppsV1().Deployments(nsName).Delete
+	if svc.IsDatabase {
+		kind, deleteWorkload = "StatefulSet", cs.AppsV1().StatefulSets(nsName).Delete
+	}
+	if err := deleteWorkload(ctx, svc.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("ลบ %s '%s' ใน namespace '%s' ไม่สำเร็จ: %w", kind, svc.Name, nsName, err)
+	}
+	err = cs.CoreV1().Services(nsName).Delete(ctx, svc.Name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("ลบ Service '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+
+	if svc.IsDatabase {
+		err = cs.NetworkingV1().NetworkPolicies(nsName).Delete(ctx, networkPolicyName(svc.Name), metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("ลบ %s: %w", what, err))
+			return fmt.Errorf("ลบ NetworkPolicy ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+		}
+		// PVC มี finalizer กันลบระหว่าง pod ยังใช้อยู่ — คำสั่งนี้จองการลบไว้ ดิสก์หายจริงหลัง pod ตายสนิท
+		err = cs.CoreV1().PersistentVolumeClaims(nsName).Delete(ctx, pvcName(svc.Name), metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("ลบ PVC ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 		}
 	}
 
-	if svc.IsDatabase {
-		collect("StatefulSet", k.client.AppsV1().StatefulSets(nsName).Delete(ctx, svc.Name, opts))
-		collect("NetworkPolicy", k.client.NetworkingV1().NetworkPolicies(nsName).
-			Delete(ctx, networkPolicyName(svc.Name), opts))
-		// PVC มี finalizer กันลบระหว่าง pod ยังใช้อยู่ — คำสั่งนี้จองการลบไว้ ดิสก์หายจริงหลัง pod ตายสนิท
-		collect("PVC", k.client.CoreV1().PersistentVolumeClaims(nsName).Delete(ctx, pvcName(svc.Name), opts))
-	} else {
-		collect("Deployment", k.client.AppsV1().Deployments(nsName).Delete(ctx, svc.Name, opts))
-	}
-	collect("Service", k.client.CoreV1().Services(nsName).Delete(ctx, svc.Name, opts))
-	return errors.Join(errs...)
+	log.Printf("[k8s] ลบ service '%s' ออกจาก namespace '%s' แล้ว", svc.Name, nsName)
+	return nil
 }
 
 // Status ถามคลัสเตอร์ว่า workload นี้เป็นยังไงจริงๆ (ดูสัญญาใน Provisioner)
@@ -269,6 +804,11 @@ func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName string
 // ดูตามลำดับ: object หลักยังอยู่ไหม → มี pod ไหม → pod อยู่ในสภาพไหน
 // หลาย pod เอาตัวที่แย่ที่สุดเป็นคำตอบ เพราะ "1 ใน 3 ตายซ้ำๆ" ต้องไม่ถูกกลบด้วยอีกสองตัวที่ยังดี
 func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *entity.Service) (WorkloadStatus, error) {
+	cs, err := k.client()
+	if err != nil {
+		return WorkloadStatus{}, err
+	}
+
 	gone := func(kind string) WorkloadStatus {
 		return WorkloadStatus{Phase: PhaseGone, Reason: "NotFound",
 			Message: fmt.Sprintf("ไม่พบ %s '%s' ใน namespace %s แล้ว — อาจถูกลบจากนอกระบบ", kind, svc.Name, nsName)}
@@ -278,7 +818,7 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 	// รายงานผ่าน condition ReplicaFailure ส่วน StatefulSet ไม่มี condition แบบนี้ให้
 	var replicaFailure string
 	if svc.IsDatabase {
-		_, err := k.client.AppsV1().StatefulSets(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
+		_, err := cs.AppsV1().StatefulSets(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return gone("StatefulSet"), nil
 		}
@@ -286,7 +826,7 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 			return WorkloadStatus{}, err
 		}
 	} else {
-		dep, err := k.client.AppsV1().Deployments(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
+		dep, err := cs.AppsV1().Deployments(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return gone("Deployment"), nil
 		}
@@ -300,7 +840,7 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 		}
 	}
 
-	pods, err := k.client.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{LabelSelector: podSelector(svc.Name)})
+	pods, err := cs.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{LabelSelector: podSelector(svc.Name)})
 	if err != nil {
 		return WorkloadStatus{}, err
 	}
@@ -329,7 +869,7 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 	// pod ที่ตายซ้ำๆ ถูกสร้างใหม่เรื่อยๆ log ของรอบที่บอกสาเหตุจริงหายไปก่อนผู้ใช้จะทันเปิดดู
 	// จึงเก็บ log ท้ายๆ ของ container รอบก่อนติดไปกับสถานะเลย
 	if worst.Phase == PhaseCrashLoop {
-		if tail := k.crashLogs(ctx, nsName, worstPod); tail != "" {
+		if tail := crashLogs(ctx, cs, nsName, worstPod); tail != "" {
 			worst.Message = strings.TrimSpace(worst.Message) + "\n\nlog ท้ายๆ ก่อน container ตาย:\n" + tail
 		}
 	}
@@ -343,7 +883,12 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 // container ที่ติด CrashLoopBackOff ไม่มี log ของรอบปัจจุบันเพราะยังไม่ได้เริ่ม ต้องขอรอบก่อน
 // (Previous) ไม่งั้นผู้ใช้เปิดหน้า Logs แล้วเห็นหน้าว่างทั้งที่ container ตายไปแล้วหลายรอบ
 func (k *KubernetesProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
-	pods, err := k.client.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{LabelSelector: podSelector(svcName)})
+	cs, err := k.client()
+	if err != nil {
+		return nil, err
+	}
+
+	pods, err := cs.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{LabelSelector: podSelector(svcName)})
 	if err != nil {
 		return nil, err
 	}
@@ -363,109 +908,7 @@ func (k *KubernetesProvisioner) Logs(ctx context.Context, nsName, svcName string
 	if opts.SinceSeconds > 0 {
 		logOpts.SinceSeconds = &opts.SinceSeconds
 	}
-	return k.client.CoreV1().Pods(nsName).GetLogs(pod.Name, logOpts).Stream(ctx)
-}
-
-// ── ตัวช่วยประกอบ manifest ──────────────────────────────────────────────────────────
-
-func labelsFor(svc *entity.Service) map[string]string {
-	return map[string]string{labelApp: svc.Name}
-}
-
-func podSelector(svcName string) string       { return labelApp + "=" + svcName }
-func networkPolicyName(svcName string) string { return svcName + "-namespace-only" }
-func pvcName(svcName string) string           { return k8sVolumeName + "-" + svcName + "-0" }
-
-func milliCPU(m int) resource.Quantity {
-	return *resource.NewMilliQuantity(int64(m), resource.DecimalSI)
-}
-
-func mebibytes(mb int) resource.Quantity {
-	return *resource.NewQuantity(int64(mb)*1024*1024, resource.BinarySI)
-}
-
-// podTemplate ประกอบ pod 1 container — ใช้ร่วมกันทั้ง Deployment และ StatefulSet
-//
-// requests = limits เพื่อให้ที่จองในโควตาเท่ากับที่ใช้ได้จริง ตรงกับตัวเลขที่ผู้ใช้เห็น ไม่มี overcommit
-// readiness probe แบบ TCP ทำให้ Status แยก "รันอยู่" ออกจาก "โปรเซสขึ้นแต่ยังไม่ฟังพอร์ต" ได้
-// โดยไม่ต้องรู้จัก image
-func podTemplate(svc *entity.Service, labels map[string]string, mount *corev1ac.VolumeMountApplyConfiguration) *corev1ac.PodTemplateSpecApplyConfiguration {
-	port := int32(svc.ContainerPort)
-	res := corev1.ResourceList{
-		corev1.ResourceCPU:    milliCPU(svc.CPUMilli),
-		corev1.ResourceMemory: mebibytes(svc.RAMMB),
-	}
-	container := corev1ac.Container().
-		WithName(svc.Name).
-		WithImage(svc.Image).
-		WithPorts(corev1ac.ContainerPort().WithName("main").WithContainerPort(port).WithProtocol(corev1.ProtocolTCP)).
-		WithEnv(envFor(svc.EnvVars)...).
-		WithResources(corev1ac.ResourceRequirements().WithRequests(res).WithLimits(res)).
-		WithReadinessProbe(corev1ac.Probe().
-			WithTCPSocket(corev1ac.TCPSocketAction().WithPort(intstr.FromInt32(port))).
-			WithInitialDelaySeconds(5).
-			WithPeriodSeconds(10).
-			WithFailureThreshold(3))
-	if mount != nil {
-		container = container.WithVolumeMounts(mount)
-	}
-	return corev1ac.PodTemplateSpec().
-		WithLabels(labels).
-		WithSpec(corev1ac.PodSpec().WithContainers(container))
-}
-
-// envFor แปลง map เป็น env ของ container — เรียงชื่อให้ manifest นิ่ง (apply ซ้ำแล้วไม่ถือว่าเปลี่ยน)
-func envFor(vars entity.EnvVarMap) []*corev1ac.EnvVarApplyConfiguration {
-	keys := make([]string, 0, len(vars))
-	for k := range vars {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]*corev1ac.EnvVarApplyConfiguration, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, corev1ac.EnvVar().WithName(k).WithValue(vars[k]))
-	}
-	return out
-}
-
-// serviceFor = k8s Service ที่ชี้เข้า pod ของ service นี้ — targetPort ต้องเท่ากับ ContainerPort เสมอ
-// ตั้งผิดแล้วสร้างสำเร็จแต่ traffic เข้าไปไม่มีใครฟัง (connection refused ที่ debug ยากเพราะ deploy "ผ่าน")
-func serviceFor(svc *entity.Service, nsName string, typ corev1.ServiceType) *corev1ac.ServiceApplyConfiguration {
-	port := int32(svc.ContainerPort)
-	return corev1ac.Service(svc.Name, nsName).WithLabels(labelsFor(svc)).
-		WithSpec(corev1ac.ServiceSpec().
-			WithType(typ).
-			WithSelector(labelsFor(svc)).
-			WithPorts(corev1ac.ServicePort().
-				WithName("main").
-				WithProtocol(corev1.ProtocolTCP).
-				WithPort(port).
-				WithTargetPort(intstr.FromInt32(port))))
-}
-
-// networkPolicyFor = รับ ingress เข้า pod ของ database ได้เฉพาะจาก pod ใน namespace เดียวกัน
-//
-// from: [{podSelector: {}}] แปลว่า pod ทุกตัวใน namespace เดียวกับ policy ซึ่งคือที่ต้องการ
-// ห้ามเผลอเขียนเป็น namespaceSelector: {} ที่แปลว่าทุก namespace = เปิดให้ทั้งคลัสเตอร์
-func networkPolicyFor(svc *entity.Service, nsName string) *netv1ac.NetworkPolicyApplyConfiguration {
-	return netv1ac.NetworkPolicy(networkPolicyName(svc.Name), nsName).WithLabels(labelsFor(svc)).
-		WithSpec(netv1ac.NetworkPolicySpec().
-			WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labelsFor(svc))).
-			WithPolicyTypes(netv1.PolicyTypeIngress).
-			WithIngress(netv1ac.NetworkPolicyIngressRule().
-				WithFrom(netv1ac.NetworkPolicyPeer().WithPodSelector(metav1ac.LabelSelector())).
-				WithPorts(netv1ac.NetworkPolicyPort().
-					WithProtocol(corev1.ProtocolTCP).
-					WithPort(intstr.FromInt32(int32(svc.ContainerPort))))))
-}
-
-func assignedNodePort(s *corev1.Service) int {
-	for _, p := range s.Spec.Ports {
-		if p.NodePort != 0 {
-			return int(p.NodePort)
-		}
-	}
-	return 0
+	return cs.CoreV1().Pods(nsName).GetLogs(pod.Name, logOpts).Stream(ctx)
 }
 
 // ── ตัวช่วยอ่านสภาพ pod ────────────────────────────────────────────────────────────
@@ -594,10 +1037,10 @@ func inCrashLoop(pod *corev1.Pod) bool {
 
 // crashLogs ดึง log ท้ายๆ ของ container รอบก่อน (ตัวที่ตาย) — ไม่มีก็ลองรอบปัจจุบัน ไม่มีอีกก็ว่าง
 // พลาดตรงนี้ไม่ใช่ error ของ Status: สถานะยังถูก แค่ไม่มี log แนบ
-func (k *KubernetesProvisioner) crashLogs(ctx context.Context, nsName, podName string) string {
+func crashLogs(ctx context.Context, cs kubernetes.Interface, nsName, podName string) string {
 	tail := int64(crashLogTailLines)
 	for _, previous := range []bool{true, false} {
-		stream, err := k.client.CoreV1().Pods(nsName).
+		stream, err := cs.CoreV1().Pods(nsName).
 			GetLogs(podName, &corev1.PodLogOptions{Previous: previous, TailLines: &tail}).Stream(ctx)
 		if err != nil {
 			continue
@@ -616,8 +1059,8 @@ func pickLogPod(pods []corev1.Pod) *corev1.Pod {
 	if len(pods) == 0 {
 		return nil
 	}
-	sort.SliceStable(pods, func(i, j int) bool {
-		return pods[i].CreationTimestamp.After(pods[j].CreationTimestamp.Time)
+	slices.SortStableFunc(pods, func(a, b corev1.Pod) int {
+		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 	})
 	for i := range pods {
 		if pods[i].Status.Phase == corev1.PodRunning {
