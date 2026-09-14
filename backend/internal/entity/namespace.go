@@ -17,15 +17,15 @@ const (
 	MaxCPUMilliPerService = 3000 // 300%
 	MaxRAMMBPerService    = 2048 // 2 GB
 
-	// ── Storage — แกนที่สามของโควตา มาพร้อมสวิตช์ database (ดู entity.Service.IsDatabase) ──
+	// ── Storage — แกนที่สามของโควตา ใช้กับ service ที่มีดิสก์ถาวร (ดู entity.Service.HasStorage) ──
 	//
 	// ต่างจาก CPU/RAM ตรงที่คืนช้า: CPU/RAM ว่างทันทีที่ Pod ตาย แต่ PVC จองดิสก์ไว้จนกว่าจะสั่งลบ
 	// และบน local-path provisioner ดิสก์ผูกกับ node ที่ Pod ลงครั้งแรก ย้ายไม่ได้ — แจกเกินแล้วกู้ยาก
 	DefaultStorageLimitMB = 10240 // 10 GB ต่อ namespace (ต้องเท่ากับ default ของคอลัมน์)
 	MaxStorageLimitMB     = 51200 // เพดานที่ admin ปรับให้ได้ 50 GB
 
-	MaxStorageMBPerService     = 20480 // 20 GB ต่อ 1 database (ต้องตรงกับ binding ใน dto)
-	DefaultStorageMBPerService = 5120  // ใช้เมื่อเปิดสวิตช์ database แต่ไม่ได้ระบุขนาดมา
+	MaxStorageMBPerService     = 20480 // 20 GB ต่อ service 1 ตัว (ต้องตรงกับ binding ใน dto)
+	DefaultStorageMBPerService = 5120  // ใช้เมื่อขอดิสก์ถาวร (database หรือ web) แต่ไม่ได้ระบุขนาดมา
 )
 
 // Namespace = ตาราง namespaces (คือ name_space / group ใน ERD) — "หน่วยที่ถือโควตา" ของระบบนี้

@@ -24,16 +24,16 @@ type CreateServiceRequest struct {
 	// เพราะ go-playground/validator เช็ค map ได้จำกัด (ไม่มี built-in ตรวจ key pattern ของแต่ละ entry)
 	EnvVars map[string]string `json:"env_vars"`
 
-	// IsDatabase = สวิตช์ "service นี้เป็น database" — ใช้กับ image อะไรก็ได้ ระบบไม่แยกชนิด
-	// (ดู entity.Service.IsDatabase ว่าสวิตช์นี้เปลี่ยนอะไรบ้าง)
+	// IsDatabase = สวิตช์ "เข้าได้เฉพาะใน namespace" (ClusterIP + NetworkPolicy แทน NodePort)
+	// ใช้กับ image อะไรก็ได้ ระบบไม่แยกชนิด และ database ได้ดิสก์ถาวรเสมอ (ดู entity.Service.IsDatabase)
 	IsDatabase bool `json:"is_database"`
 
 	// DataPath = ตำแหน่งที่ image เก็บข้อมูล ใช้เป็นจุด mount ของ PVC
-	// บังคับส่งทุกครั้งที่ IsDatabase กติกาของค่าที่รับได้อยู่ใน services.ValidateDataPath
+	// บังคับส่งทุกครั้งที่ขอดิสก์ (database หรือ web ที่ส่ง storage_mb มา) กติกาอยู่ใน services.ValidateDataPath
 	DataPath string `json:"data_path" binding:"omitempty,max=200"`
 
-	// StorageMB = ขนาดดิสก์ที่ขอ เป็น MB เสมอ — ไม่ส่งมาแล้วใช้ entity.DefaultStorageMBPerService
-	// ส่งมาตอน IsDatabase=false จะได้ 400 ส่วนเพดานต้องตรงกับ entity.MaxStorageMBPerService
+	// StorageMB = ขนาดดิสก์ที่ขอ เป็น MB เสมอ — ส่งมา (หรือส่ง data_path มา) = ขอดิสก์ถาวร ได้ทั้ง database และ web
+	// ไม่ส่งแต่ขอดิสก์ใช้ entity.DefaultStorageMBPerService · เพดานต้องตรงกับ entity.MaxStorageMBPerService
 	StorageMB int `json:"storage_mb" binding:"omitempty,min=1024,max=20480"`
 }
 

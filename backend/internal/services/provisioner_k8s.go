@@ -53,13 +53,13 @@ const (
 	limitsObjectName = "caesar-limits"
 )
 
-// dataVolumeName = ชื่อ volumeClaimTemplate ของ database — PVC จริงจะชื่อ data-<service>-0
+// dataVolumeName = ชื่อ volumeClaimTemplate ของ service ที่มีดิสก์ถาวร — PVC จริงจะชื่อ data-<service>-0
 // ตามกติกาการตั้งชื่อของ StatefulSet (ดู pvcName)
 const dataVolumeName = "data"
 
-// databaseStorageClass = StorageClass ของ PVC database (NFS บน NUC) — ต้องตรงกับ deploy/k8s/caesar-nfs-storage.yaml
+// pvcStorageClass = StorageClass ของ PVC ทุกตัว (NFS บน NUC) — ต้องตรงกับ deploy/k8s/caesar-nfs-storage.yaml
 // ระบุชื่อเองทุกครั้ง เพราะคลัสเตอร์ตั้งใจไม่มี default StorageClass (ไม่ระบุ = PVC ค้าง Pending ตลอด)
-const databaseStorageClass = "caesar-nfs"
+const pvcStorageClass = "caesar-nfs"
 
 // ขอบเขตของข้อความสถานะที่ Status ส่งกลับไปให้ ServiceHealthMonitor เขียนลง DB
 const (
@@ -448,7 +448,7 @@ func (k *KubernetesProvisioner) DeleteNamespace(ctx context.Context, nsName stri
 }
 
 // DeployService สร้าง Deployment + Service ชนิด NodePort ใน namespace ที่กำหนด
-// (svc.IsDatabase แยกไปทาง deployDatabase — ดูสัญญาใน Provisioner)
+// (service ที่มีดิสก์ถาวรแยกไปทาง deployStateful — ดูสัญญาใน Provisioner)
 //
 // data flow: รับ entity.Service จาก ServiceManager.Create (สเปกถูก snapshot + จองโควตาใน DB มาแล้ว)
 // → สร้าง Deployment (replicas = svc.Replicas, resources จาก CPUMilli/RAMMB ต่อ 1 Pod, env จาก svc.EnvVars)
@@ -463,8 +463,8 @@ func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string
 	if err != nil {
 		return err
 	}
-	if svc.IsDatabase {
-		return k.deployDatabase(ctx, cs, nsName, svc)
+	if svc.HasStorage() {
+		return k.deployStateful(ctx, cs, nsName, svc)
 	}
 
 	if _, err := cs.AppsV1().Deployments(nsName).Create(ctx, deploymentFor(nsName, svc), metav1.CreateOptions{}); err != nil {
@@ -490,28 +490,43 @@ func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string
 	return nil
 }
 
-// deployDatabase = StatefulSet + Service ชนิด ClusterIP + NetworkPolicy — ไม่แตะ svc.NodePort เลย
-// ไม่เคยจองพอร์ตบน node ก็ไม่มีประตูให้เคาะจากนอกคลัสเตอร์ ซึ่งเชื่อถือได้กว่าการหวังให้ NetworkPolicy ทำงานถูก
+// deployStateful = StatefulSet + PVC ของ service ที่มีดิสก์ถาวร แล้วเปิดทางเข้าตาม svc.IsDatabase
+//   - database → Service ชนิด ClusterIP + NetworkPolicy ไม่แตะ svc.NodePort เลย — ไม่เคยจองพอร์ตบน node
+//     ก็ไม่มีประตูให้เคาะจากนอกคลัสเตอร์ ซึ่งเชื่อถือได้กว่าการหวังให้ NetworkPolicy ทำงานถูก
+//   - web      → Service ชนิด NodePort แบบเดียวกับทางของ Deployment (เช่น Nextcloud ที่เก็บไฟล์ใน /var/www/html)
 //
 // StatefulSet เกิดแล้วแต่ชิ้นถัดไปพัง ต้องถอนทิ้งด้วยเหตุผลเดียวกับทางของ Deployment ใน DeployService
 // — ใช้ DeleteService ถอนเพราะเก็บครบทุกชิ้น (รวม PVC ที่ StatefulSet controller อาจสร้างไปแล้ว)
-func (k *KubernetesProvisioner) deployDatabase(
+func (k *KubernetesProvisioner) deployStateful(
 	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
 ) error {
 	if _, err := cs.AppsV1().StatefulSets(nsName).Create(ctx, statefulSetFor(nsName, svc), metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("สร้าง StatefulSet '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 	}
 
-	if err := k.createDatabaseNetwork(ctx, cs, nsName, svc); err != nil {
+	var nodePort int
+	var err error
+	if svc.IsDatabase {
+		err = k.createDatabaseNetwork(ctx, cs, nsName, svc)
+	} else {
+		nodePort, err = k.createNodePortService(ctx, cs, nsName, svc)
+	}
+	if err != nil {
 		if delErr := k.DeleteService(context.WithoutCancel(ctx), nsName, svc); delErr != nil {
-			log.Printf("!! deploy database '%s' ใน namespace '%s' ไม่สำเร็จ (%v) และถอนของที่สร้างค้างไว้ไม่สำเร็จด้วย: %v "+
+			log.Printf("!! deploy '%s' ใน namespace '%s' ไม่สำเร็จ (%v) และถอนของที่สร้างค้างไว้ไม่สำเร็จด้วย: %v "+
 				"— เหลือ StatefulSet/PVC ที่กินโควตาค้างบนคลัสเตอร์โดยไม่มีแถวใน DB ต้องลบมือ", svc.Name, nsName, err, delErr)
 		}
 		return err
 	}
 
-	log.Printf("[k8s] deploy database '%s' เข้า namespace '%s' แล้ว — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s, เข้าถึงได้เฉพาะใน namespace ที่ %s:%d",
-		svc.Name, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, svc.Name, svc.ContainerPort)
+	if svc.IsDatabase {
+		log.Printf("[k8s] deploy database '%s' เข้า namespace '%s' แล้ว — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s, เข้าถึงได้เฉพาะใน namespace ที่ %s:%d",
+			svc.Name, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, svc.Name, svc.ContainerPort)
+		return nil
+	}
+	svc.NodePort = &nodePort
+	log.Printf("[k8s] deploy '%s' (StatefulSet) เข้า namespace '%s' แล้ว — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s, เข้าถึงที่ <node-ip>:%d → container port %d",
+		svc.Name, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, nodePort, svc.ContainerPort)
 	return nil
 }
 
@@ -563,14 +578,17 @@ func deploymentFor(nsName string, svc *entity.Service) *appsv1.Deployment {
 	}
 }
 
-// statefulSetFor แปลง entity.Service ที่เปิดสวิตช์ database → StatefulSet ที่มี PVC ของตัวเอง
+// statefulSetFor แปลง entity.Service ที่มีดิสก์ถาวร (database หรือ web) → StatefulSet ที่มี PVC ของตัวเอง
 //
 // ใช้ StatefulSet ไม่ใช่ Deployment เพราะ RollingUpdate ของ Deployment ปั้น Pod ใหม่ก่อนฆ่าตัวเก่า
 // สองตัวจะแย่ง PVC แบบ ReadWriteOnce ก้อนเดียวกันจน rollout ค้างถาวร
+//
+// ServiceName ชี้ Service ชื่อเดียวกันซึ่งเป็น ClusterIP (database) หรือ NodePort (web) ไม่ใช่ headless
+// — ใช้ได้ทั้งคู่ แค่ไม่ได้ DNS ราย pod (<pod>.<service>) ซึ่งไม่มีใครใช้เพราะมี pod เดียว
 func statefulSetFor(nsName string, svc *entity.Service) *appsv1.StatefulSet {
 	labels := serviceLabels(svc.Name)
-	replicas := int32(entity.DatabaseReplicas)
-	storageClass := databaseStorageClass
+	replicas := int32(entity.StorageReplicas)
+	storageClass := pvcStorageClass
 
 	template := podTemplateFor(svc, labels)
 	template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
@@ -760,7 +778,7 @@ func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcNam
 
 // DeleteService ลบของที่ DeployService สร้างไว้ (ทุกชิ้นชื่อตาม svc.Name)
 // data flow: ServiceManager.Delete ส่ง namespace + service มา → ลบ workload → ลบ Service
-// → database ลบ NetworkPolicy กับ PVC ต่อ
+// → database ลบ NetworkPolicy ต่อ → service ที่มีดิสก์ (รวม database) ลบ PVC ต่อ
 //
 // NotFound = สำเร็จ ตามสัญญา idempotent เดียวกับ DeleteNamespace: ServiceManager.Delete ลบแถวใน DB
 // หลังเราคืน nil เท่านั้น ถ้าลบได้ตัวเดียวแล้วล้ม การกดลบซ้ำต้องเดินผ่านตัวที่หายไปแล้วได้
@@ -778,7 +796,7 @@ func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName string
 	}
 
 	kind, deleteWorkload := "Deployment", cs.AppsV1().Deployments(nsName).Delete
-	if svc.IsDatabase {
+	if svc.HasStorage() {
 		kind, deleteWorkload = "StatefulSet", cs.AppsV1().StatefulSets(nsName).Delete
 	}
 	if err := deleteWorkload(ctx, svc.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
@@ -794,6 +812,8 @@ func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName string
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("ลบ NetworkPolicy ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 		}
+	}
+	if svc.HasStorage() {
 		// PVC มี finalizer กันลบระหว่าง pod ยังใช้อยู่ — คำสั่งนี้จองการลบไว้ ดิสก์หายจริงหลัง pod ตายสนิท
 		err = cs.CoreV1().PersistentVolumeClaims(nsName).Delete(ctx, pvcName(svc.Name), metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
@@ -823,7 +843,7 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 	// ข้อความจากตัวคุม replica ตอนสร้าง pod ไม่ได้เลย (เช่น ชน ResourceQuota) — Deployment
 	// รายงานผ่าน condition ReplicaFailure ส่วน StatefulSet ไม่มี condition แบบนี้ให้
 	var replicaFailure string
-	if svc.IsDatabase {
+	if svc.HasStorage() {
 		_, err := cs.AppsV1().StatefulSets(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return gone("StatefulSet"), nil
