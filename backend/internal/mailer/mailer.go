@@ -37,8 +37,9 @@ const implicitTLSPort = 465
 // ค่า purpose ที่ Mailer ติดไปกับ Delivery — ตรงกับค่าคงที่ฝั่ง entity.EmailDelivery
 // ประกาศซ้ำไว้ที่นี่เพราะ package mailer ไม่ import entity (เหตุผลเดียวกับที่ Recorder เป็น interface)
 const (
-	PurposeVerification  = "verification"
-	PurposePasswordReset = "password_reset"
+	PurposeVerification     = "verification"
+	PurposePasswordReset    = "password_reset"
+	PurposeNamespaceDeleted = "namespace_deleted"
 )
 
 // Config = ค่าที่ Mailer ต้องใช้ต่อกับ SMTP server — map ตรงกับ env SMTP_*/MAIL_* ใน config.Config
@@ -147,6 +148,31 @@ func (m *Mailer) SendVerificationEmail(ctx context.Context, userID int, toEmail,
 		userID:  &userID,
 		to:      toEmail,
 		subject: "ยืนยันอีเมลของคุณ — Caesar Cluster",
+		text:    content.text(toName),
+		html:    content.html(toName),
+	})
+}
+
+// SendNamespaceDeletedEmail แจ้งสมาชิกว่า namespace ที่สังกัดอยู่ถูกแอดมินลบแล้ว พร้อมเหตุผลที่แอดมินเขียน
+//
+// ปุ่มพากลับเข้าหน้าเว็บ เพราะสิ่งเดียวที่ผู้รับทำต่อได้คือยื่นคำขอ space ใหม่ — service/ข้อมูลเดิมหายไปแล้ว
+// เหตุผลมาจากแอดมินพิมพ์เอง จึงวางใน quote ที่ถูก escape ฝั่ง HTML ไม่ใช่ต่อท้าย intro ดิบๆ
+func (m *Mailer) SendNamespaceDeletedEmail(ctx context.Context, userID int, toEmail, toName, namespaceName, reason, appLink string) error {
+	content := actionEmail{
+		preheader: "namespace ของคุณบน Caesar Cluster ถูกลบโดยผู้ดูแลระบบ",
+		intro: fmt.Sprintf("ผู้ดูแลระบบได้ลบ namespace \"%s\" ที่คุณสังกัดอยู่แล้ว "+
+			"service และข้อมูลทั้งหมดใน namespace นี้ถูกลบออกจากคลัสเตอร์ ไม่สามารถกู้คืนได้", namespaceName),
+		quote:  reason,
+		button: "เข้าสู่ Caesar Cluster",
+		link:   appLink,
+		footnote: "หากยังต้องการใช้งานต่อ สามารถเข้าสู่ระบบแล้วยื่นคำขอ namespace ใหม่ได้ทันที " +
+			"หากมีข้อสงสัยเกี่ยวกับการลบครั้งนี้ กรุณาติดต่อผู้ดูแลระบบ",
+	}
+	return m.send(ctx, outgoing{
+		purpose: PurposeNamespaceDeleted,
+		userID:  &userID,
+		to:      toEmail,
+		subject: "namespace ของคุณถูกลบ — Caesar Cluster",
 		text:    content.text(toName),
 		html:    content.html(toName),
 	})
@@ -381,6 +407,7 @@ func newMessageID(fromAddress string) string {
 type actionEmail struct {
 	preheader string // ข้อความตัวอย่างที่โผล่ข้างหัวข้อในรายการ inbox
 	intro     string // ย่อหน้าอธิบายว่าทำไมถึงได้เมลฉบับนี้
+	quote     string // ข้อความที่คนพิมพ์เอง (เช่น เหตุผลของแอดมิน) ว่าง = ไม่มีกล่องนี้
 	button    string // ข้อความบนปุ่ม
 	link      string // URL ปลายทางของปุ่ม (ระบบสร้างเอง: origin + token hex จึงไม่ต้อง escape)
 	footnote  string // บรรทัดท้ายเรื่องอายุลิงก์ + จะทำอย่างไรถ้าไม่ได้เป็นคนขอ
@@ -411,7 +438,7 @@ const actionEmailTemplate = `<!DOCTYPE html>
             <tr>
               <td style="padding:40px 36px 8px;">
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#211a14;">__GREETING__,</p>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#211a14;">__INTRO__</p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#211a14;">__INTRO__</p>__QUOTE__
               </td>
             </tr>
             <tr>
@@ -455,7 +482,7 @@ const actionEmailTemplate = `<!DOCTYPE html>
 // เพราะตัวกรองเทียบสองส่วนนี้ (ต่างกันมาก = สัญญาณของการซ่อนเนื้อหาจากตัวสแกน)
 const actionEmailTextTemplate = `__GREETING__,
 
-__INTRO__
+__INTRO____QUOTE__
 
 __LINK__
 
@@ -466,20 +493,31 @@ Caesar Cluster - Cloud for CPE Students
 อีเมลนี้ส่งจากระบบอัตโนมัติ
 `
 
-// html/text ประกอบเนื้อความจาก template — escape เฉพาะชื่อผู้ใช้ซึ่งเป็นค่าเดียวที่มาจากผู้ใช้
+// html/text ประกอบเนื้อความจาก template — escape ชื่อผู้ใช้, intro และ quote ซึ่งอาจมีค่าที่คนพิมพ์เอง
+// (ชื่อ namespace, เหตุผลของแอดมิน) ส่วน link/footnote/preheader ระบบสร้างเองทั้งหมด
 // ใช้ NewReplacer ไม่ใช่ Sprintf เพราะ template มี "%" เยอะ (width:100% ฯลฯ) ซึ่งชนกับ verb
 func (a actionEmail) html(toName string) string {
-	return a.replacer(html.EscapeString(toName)).Replace(actionEmailTemplate)
+	quote := ""
+	if a.quote != "" {
+		quote = `<p style="margin:16px 0 0;padding:12px 16px;border-left:3px solid #BB6653;background-color:#FFF8E8;` +
+			`font-size:15px;line-height:1.6;color:#211a14;white-space:pre-wrap;">` +
+			`<strong>เหตุผลจากผู้ดูแลระบบ:</strong><br />` + html.EscapeString(a.quote) + `</p>`
+	}
+	return a.replacer(html.EscapeString(toName), html.EscapeString(a.intro), quote).Replace(actionEmailTemplate)
 }
 
-// text ประกอบเนื้อความ text ล้วน — ไม่ต้อง escape ชื่อเพราะ text ล้วนไม่มี markup ให้แทรก
+// text ประกอบเนื้อความ text ล้วน — ไม่ต้อง escape เพราะ text ล้วนไม่มี markup ให้แทรก
 // (และถ้า escape จะได้ &amp; ติดมาให้คนอ่านเห็นด้วยตาเปล่า)
 func (a actionEmail) text(toName string) string {
-	return a.replacer(toName).Replace(actionEmailTextTemplate)
+	quote := ""
+	if a.quote != "" {
+		quote = "\n\nเหตุผลจากผู้ดูแลระบบ:\n" + a.quote
+	}
+	return a.replacer(toName, a.intro, quote).Replace(actionEmailTextTemplate)
 }
 
-// replacer รวมการแทนค่าที่ทั้งสองเวอร์ชันใช้เหมือนกันไว้ที่เดียว
-func (a actionEmail) replacer(name string) *strings.Replacer {
+// replacer รวมการแทนค่าที่ทั้งสองเวอร์ชันใช้เหมือนกันไว้ที่เดียว (ค่าที่ต้อง escape ต่างกันถูกส่งเข้ามาแล้ว)
+func (a actionEmail) replacer(name, intro, quote string) *strings.Replacer {
 	greeting := "สวัสดี"
 	if name != "" {
 		greeting = "สวัสดีคุณ " + name
@@ -487,7 +525,8 @@ func (a actionEmail) replacer(name string) *strings.Replacer {
 	return strings.NewReplacer(
 		"__GREETING__", greeting,
 		"__PREHEADER__", a.preheader,
-		"__INTRO__", a.intro,
+		"__INTRO__", intro,
+		"__QUOTE__", quote,
 		"__BUTTON__", a.button,
 		"__LINK__", a.link,
 		"__FOOTNOTE__", a.footnote,

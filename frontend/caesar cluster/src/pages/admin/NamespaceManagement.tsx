@@ -27,7 +27,7 @@ import {
 } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
-import { notify, confirmAction } from "@/lib/modal";
+import { notify } from "@/lib/modal";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { AdminModal } from "@/components/ui/admin-modal";
 import { usePageSearch } from "@/hooks/usePageSearch";
@@ -75,6 +75,8 @@ export default function NamespaceManagement() {
   // หลังบันทึก/รีเฟรช (ถ้าเก็บ object ค่าที่โชว์จะค้างอยู่ที่ตอนกดเปิด)
   const [managingId, setManagingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // space ที่เปิดกล่องยืนยันลบอยู่ — เก็บ id ด้วยเหตุผลเดียวกับ managingId
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const fetchNamespaces = async (silent = false) => {
     try {
@@ -104,30 +106,22 @@ export default function NamespaceManagement() {
     );
   };
 
-  const handleDelete = async (ns: NamespaceDetail) => {
-    const consequences = [
-      ns.usage.service_count > 0
-        ? `บริการที่รันอยู่ ${ns.usage.service_count} ตัวจะถูกถอนออกจากคลัสเตอร์`
-        : null,
-      ns.member_count > 0
-        ? `สมาชิก ${ns.member_count} คนจะหลุดออกจาก space (บัญชีไม่ถูกลบ)`
-        : null,
-    ].filter(Boolean);
+  const handleDelete = (ns: NamespaceDetail) => {
+    setManagingId(null);
+    setConfirmDeleteId(ns.id);
+  };
 
-    const confirmed = await confirmAction({
-      title: `ลบเนมสเปซ "${ns.name}"?`,
-      description: [...consequences, "การกระทำนี้ย้อนกลับไม่ได้"].join(" · "),
-      confirmText: "ลบเนมสเปซ",
-      destructive: true,
-    });
-    if (!confirmed) return;
-
+  const confirmDelete = async (ns: NamespaceDetail, reason: string) => {
     setDeletingId(ns.id);
     try {
-      await adminNamespaceApi.remove(ns.id);
+      const { notified } = await adminNamespaceApi.remove(ns.id, reason);
+      setConfirmDeleteId(null);
       setNamespaces((prev) => prev.filter((item) => item.id !== ns.id));
-      setManagingId((current) => (current === ns.id ? null : current));
-      notify.success("ลบเนมสเปซสำเร็จ", `${ns.name} ถูกถอนออกจากระบบแล้ว`);
+      notify.success(
+        "ลบเนมสเปซสำเร็จ",
+        `${ns.name} ถูกถอนออกจากระบบแล้ว` +
+          (notified > 0 ? ` · ส่งอีเมลแจ้งเหตุผลถึงสมาชิก ${notified} คน` : ""),
+      );
     } catch (err) {
       console.error("Failed to delete namespace:", err);
       notify.error("ลบเนมสเปซไม่สำเร็จ", getApiErrorMessage(err, "โปรดลองใหม่อีกครั้ง"));
@@ -189,6 +183,7 @@ export default function NamespaceManagement() {
   ];
 
   const managingNamespace = namespaces.find((ns) => ns.id === managingId) ?? null;
+  const confirmDeleteNamespace = namespaces.find((ns) => ns.id === confirmDeleteId) ?? null;
 
   return (
     <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-6 font-mono">
@@ -439,6 +434,15 @@ export default function NamespaceManagement() {
           onDelete={() => handleDelete(managingNamespace)}
         />
       )}
+
+      {confirmDeleteNamespace && (
+        <DeleteNamespaceModal
+          namespace={confirmDeleteNamespace}
+          isDeleting={deletingId === confirmDeleteNamespace.id}
+          onClose={() => setConfirmDeleteId(null)}
+          onConfirm={(reason) => confirmDelete(confirmDeleteNamespace, reason)}
+        />
+      )}
     </div>
   );
 }
@@ -495,6 +499,92 @@ function UsageBar({ icon: Icon, used, limit, percent }: UsageBarProps) {
         />
       </div>
     </div>
+  );
+}
+
+// ==========================================
+// ยืนยันลบเนมสเปซ — บังคับใส่เหตุผล เพราะข้อความนี้ถูกส่งทางอีเมลถึงสมาชิกทุกคน
+// ==========================================
+interface DeleteNamespaceModalProps {
+  namespace: NamespaceDetail;
+  isDeleting: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}
+
+function DeleteNamespaceModal({ namespace, isDeleting, onClose, onConfirm }: DeleteNamespaceModalProps) {
+  const [reason, setReason] = useState("");
+  const trimmedReason = reason.trim();
+
+  const consequences = [
+    namespace.usage.service_count > 0
+      ? `บริการที่รันอยู่ ${namespace.usage.service_count} ตัวจะถูกถอนออกจากคลัสเตอร์`
+      : null,
+    namespace.member_count > 0
+      ? `สมาชิก ${namespace.member_count} คนจะหลุดออกจาก space (บัญชีไม่ถูกลบ) และได้รับอีเมลแจ้งพร้อมเหตุผลนี้`
+      : null,
+    "การกระทำนี้ย้อนกลับไม่ได้",
+  ].filter((line): line is string => line !== null);
+
+  return (
+    <AdminModal
+      onClose={onClose}
+      busy={isDeleting}
+      size="sm"
+      title={`ลบเนมสเปซ "${namespace.name}"?`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (trimmedReason) onConfirm(trimmedReason);
+      }}
+      footer={(close) => (
+        <>
+          <button
+            type="button"
+            onClick={close}
+            disabled={isDeleting}
+            className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={isDeleting || trimmedReason.length === 0}
+            className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+          >
+            {isDeleting ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <>
+                <Trash2 size={18} />
+                ลบเนมสเปซ
+              </>
+            )}
+          </button>
+        </>
+      )}
+    >
+      <ul className="mb-5 list-disc space-y-1 rounded-2xl border border-red-100 bg-red-50 py-3 pl-8 pr-4 text-sm text-red-600">
+        {consequences.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <label
+        htmlFor="delete-namespace-reason"
+        className="mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]"
+      >
+        เหตุผลในการลบ
+      </label>
+      <textarea
+        id="delete-namespace-reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        disabled={isDeleting}
+        rows={4}
+        maxLength={1000}
+        placeholder="เช่น หมดภาคการศึกษาแล้ว / ไม่มีการใช้งานเกิน 30 วัน — ข้อความนี้จะถูกส่งทางอีเมลถึงสมาชิก"
+        className="w-full resize-none rounded-2xl border border-black/10 bg-white px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none transition-colors focus:border-[#BB6653] focus:ring-2 focus:ring-[#BB6653]/10 disabled:opacity-60"
+      />
+    </AdminModal>
   );
 }
 

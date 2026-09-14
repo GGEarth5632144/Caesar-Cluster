@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -22,8 +23,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"backend/internal/config"
 	"backend/internal/dto"
 	"backend/internal/entity"
+	"backend/internal/mailer"
 	"backend/internal/services"
 	"backend/internal/utils"
 )
@@ -36,15 +39,25 @@ var errRequestNotPending = errors.New("request ถูกดำเนินกา
 // ทุก route ที่ผูกกับ controller นี้ผ่าน middleware AdminOnly มาแล้ว
 // svc ใช้เฉพาะตอน DeleteUser — ต้องถอน service ที่ user ทิ้งไว้ใน space ของคนอื่นออกจากคลัสเตอร์
 // ก่อนที่ FK จะลบแถวมันหายไปเงียบๆ (ดูเหตุผลเต็มใน DeleteUser)
+// mailer ใช้แจ้งสมาชิกตอนแอดมินลบ namespace (ดู DeleteNamespace)
 type AdminController struct {
-	db  *gorm.DB
-	ns  *services.NamespaceManager
-	svc *services.ServiceManager
+	db     *gorm.DB
+	cfg    *config.Config
+	ns     *services.NamespaceManager
+	svc    *services.ServiceManager
+	mailer *mailer.Mailer
 }
 
 // NewAdminController ประกอบ controller — ถูกเรียกจาก router.Setup
-func NewAdminController(db *gorm.DB, ns *services.NamespaceManager, svc *services.ServiceManager) *AdminController {
-	return &AdminController{db: db, ns: ns, svc: svc}
+// mailer ประกอบแบบเดียวกับ NewAuthController ทุกฉบับจึงถูกบันทึกลง email_deliveries เหมือนกัน
+func NewAdminController(db *gorm.DB, cfg *config.Config, ns *services.NamespaceManager, svc *services.ServiceManager) *AdminController {
+	return &AdminController{
+		db:     db,
+		cfg:    cfg,
+		ns:     ns,
+		svc:    svc,
+		mailer: mailer.New(mailerConfigFrom(cfg), services.NewMailJournal(db)),
+	}
 }
 
 // ListEligibleStudents คืนรายชื่อ นศ. ที่มีสิทธิ์ทั้งหมด (ตาราง "match") ให้ admin ตรวจสอบ
@@ -600,8 +613,11 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 // DeleteNamespace ลบ namespace ทิ้งทั้งก้อนตามดุลยพินิจแอดมิน — ลบได้แม้ยังมีสมาชิกอยู่
 // (ต่างจาก NamespaceController.Leave ที่ผู้ใช้ทั่วไปลบเองไม่ได้ถ้ายังมีสมาชิกคนอื่นอยู่)
 //
-// data flow: อ่าน id จาก path → NamespaceManager.Delete (ถอนของบนคลัสเตอร์ก่อน แล้วลบแถว
-// → cascade ลบ services/ai_review_requests/user_containers ตาม, สมาชิกที่เหลือแค่หลุดออกจาก space)
+// data flow: อ่าน id จาก path + JSON body (reason บังคับ) → จดชื่อ namespace และรายชื่อสมาชิกไว้ก่อน
+// → NamespaceManager.Delete (ถอนของบนคลัสเตอร์ก่อน แล้วลบแถว → cascade ลบ services/ai_review_requests/
+// user_containers ตาม, สมาชิกที่เหลือแค่หลุดออกจาก space) → ส่งอีเมลแจ้งสมาชิกทุกคนพร้อมเหตุผลเบื้องหลัง
+//
+// ต้องจดรายชื่อก่อนลบ เพราะหลังลบ FK ตั้ง users.namespace_id เป็น NULL แล้วจะไม่รู้อีกว่าใครเคยอยู่ในนั้น
 func (h *AdminController) DeleteNamespace(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -609,7 +625,37 @@ func (h *AdminController) DeleteNamespace(c *gin.Context) {
 		return
 	}
 
-	if err := h.ns.Delete(c.Request.Context(), id); err != nil {
+	var body dto.DeleteNamespaceRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณาระบุเหตุผลในการลบ namespace")
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณาระบุเหตุผลในการลบ namespace")
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var ns entity.Namespace
+	if err := h.db.WithContext(ctx).First(&ns, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", services.ErrNamespaceNotFound.Error())
+			return
+		}
+		log.Printf("delete namespace: find namespace error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบ namespace ไม่สำเร็จ")
+		return
+	}
+	var members []entity.User
+	if err := h.db.WithContext(ctx).Where("namespace_id = ?", id).Order("id").Find(&members).Error; err != nil {
+		log.Printf("delete namespace: load members error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบ namespace ไม่สำเร็จ")
+		return
+	}
+
+	if err := h.ns.Delete(ctx, id); err != nil {
 		switch {
 		case errors.Is(err, services.ErrNamespaceNotFound):
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -619,7 +665,28 @@ func (h *AdminController) DeleteNamespace(c *gin.Context) {
 		}
 		return
 	}
-	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
+
+	// ส่งเบื้องหลังไม่ให้แอดมินรอ SMTP ทีละฉบับ (ฉบับละได้ถึง 15 วิ) — namespace ถูกลบไปแล้วจริง
+	// ส่งไม่ออกก็ไม่ย้อนการลบ ผลทุกฉบับถูก MailJournal บันทึกลง email_deliveries ให้ตามดูได้
+	go h.notifyNamespaceDeleted(context.WithoutCancel(ctx), ns.Name, members, reason)
+
+	utils.OK(c, http.StatusOK, gin.H{"deleted": id, "notified": len(members)})
+}
+
+// notifyNamespaceDeleted ส่งอีเมลแจ้งสมาชิกทีละคน — คนหนึ่งส่งไม่ผ่านไม่กระทบคนถัดไป
+// ผลการส่ง (รวมกรณีล้มเหลว) ถูก MailJournal บันทึกและ log ให้แล้ว จึงไม่ต้องจัดการ error ซ้ำที่นี่
+func (h *AdminController) notifyNamespaceDeleted(ctx context.Context, nsName string, members []entity.User, reason string) {
+	if len(members) == 0 {
+		return
+	}
+	if !h.mailer.Configured() {
+		log.Printf("delete namespace '%s': ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก %d คน", nsName, len(members))
+		return
+	}
+	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/"
+	for _, u := range members {
+		_ = h.mailer.SendNamespaceDeletedEmail(ctx, u.ID, u.Gmail, u.RealName, nsName, reason, appLink)
+	}
 }
 
 // ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู

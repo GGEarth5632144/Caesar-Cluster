@@ -29,6 +29,13 @@ type SetQuotaRequest struct {
 	StorageLimitMB *int `json:"storage_limit_mb" binding:"required,min=0,max=51200"`
 }
 
+// DeleteNamespaceRequest = body ของ DELETE /api/admin/namespaces/:id (admin เท่านั้น)
+// reason บังคับ — ถูกส่งทางอีเมลถึงสมาชิกทุกคนใน namespace ให้รู้ว่า space ถูกลบเพราะอะไร
+// data flow: JSON จาก client → AdminController.DeleteNamespace → mailer.SendNamespaceDeletedEmail
+type DeleteNamespaceRequest struct {
+	Reason string `json:"reason" binding:"required,min=1,max=1000"`
+}
+
 // CreateInviteRequest = body ของ POST /api/namespaces/invites — เชิญ student_id คนหนึ่งเข้ากลุ่ม
 // data flow: JSON จาก client → InviteController.Create → InviteManager.Create
 type CreateInviteRequest struct {
