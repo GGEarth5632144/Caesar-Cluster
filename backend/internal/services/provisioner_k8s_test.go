@@ -263,6 +263,9 @@ func TestK8sDeployDatabaseIsClosedAndPersistent(t *testing.T) {
 	if len(sts.Spec.VolumeClaimTemplates) != 1 {
 		t.Fatalf("ต้องมี volumeClaimTemplate 1 อัน ได้ %d", len(sts.Spec.VolumeClaimTemplates))
 	}
+	if sc := sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc == nil || *sc != "caesar-nfs" {
+		t.Errorf("PVC ต้องระบุ storageClassName caesar-nfs (คลัสเตอร์ไม่มี default) ได้ %v", sc)
+	}
 	disk := sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]
 	if disk.Value() != 2048<<20 {
 		t.Errorf("ขนาดดิสก์ = %s ต้องเป็น 2Gi", disk.String())
