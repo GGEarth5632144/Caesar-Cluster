@@ -71,8 +71,8 @@ func TestCreateDatabaseAppliesRules(t *testing.T) {
 	if svc.DataPath != "/var/lib/postgresql/data" {
 		t.Errorf("DataPath = %q ไม่ตรงกับที่กรอกมา", svc.DataPath)
 	}
-	if svc.Replicas != entity.DatabaseReplicas {
-		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.DatabaseReplicas)
+	if svc.Replicas != entity.StorageReplicas {
+		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.StorageReplicas)
 	}
 	if svc.StorageMB != entity.DefaultStorageMBPerService {
 		t.Errorf("StorageMB = %d ไม่ได้ระบุมาต้องได้ default %d",
@@ -121,8 +121,8 @@ func TestCreateDatabaseAcceptsAnyImage(t *testing.T) {
 	if svc.DataPath != "/var/lib/customdb" {
 		t.Errorf("DataPath = %q ต้องเป็น /var/lib/customdb (ตัด / ท้ายออก)", svc.DataPath)
 	}
-	if svc.Replicas != entity.DatabaseReplicas {
-		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.DatabaseReplicas)
+	if svc.Replicas != entity.StorageReplicas {
+		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.StorageReplicas)
 	}
 	if svc.NodePort != nil {
 		t.Errorf("ต้องไม่ได้ NodePort แต่ได้ %d — เท่ากับเปิดออกนอกคลัสเตอร์", *svc.NodePort)
@@ -133,6 +133,51 @@ func TestCreateDatabaseAcceptsAnyImage(t *testing.T) {
 	// ไม่ตรวจ env ให้เลย ผู้ใช้ใส่อะไรมาก็ผ่าน (ถ้ากรอกไม่ครบไปรู้ผลที่หน้า Logs แทน)
 	if svc.EnvVars["ANYTHING"] != "goes" {
 		t.Error("env ที่ผู้ใช้กรอกต้องถูกส่งต่อไปตามเดิม")
+	}
+}
+
+// TestCreateWebWithStorage — web ขอดิสก์ถาวรได้โดยไม่ต้องเปิดสวิตช์ database (docs 022)
+//
+// เคสจริง: Nextcloud เก็บไฟล์ผู้ใช้ใน /var/www/html — ไม่มีดิสก์ ไฟล์อยู่บนดิสก์ชั่วคราวของ node
+// หายตอน pod ถูกสร้างใหม่ แต่ถ้าไปเปิดสวิตช์ database แทน จะได้ดิสก์แต่คนนอกเข้าแอปไม่ได้ (ไม่มี NodePort)
+func TestCreateWebWithStorage(t *testing.T) {
+	db := testDB(t)
+	ns := dbTestNamespace(t, db, "web-disk-test-ns")
+	ctx := context.Background()
+	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
+
+	svc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
+		Name: "nextcloud", Image: "nextcloud:apache",
+		CPUMilli: 500, RAMMB: 512, ContainerPort: 80,
+		StorageMB: 2048, DataPath: "/var/www/html/",
+		EnvVars: map[string]string{"MYSQL_HOST": "mariadb"},
+	})
+	if err != nil {
+		t.Fatalf("สร้าง web ที่มีดิสก์ไม่สำเร็จ: %v", err)
+	}
+
+	if svc.IsDatabase {
+		t.Error("ต้องไม่ถูกเปลี่ยนเป็น database")
+	}
+	if !svc.HasStorage() || svc.StorageMB != 2048 {
+		t.Errorf("StorageMB = %d ต้องเป็น 2048 ตามที่ขอ", svc.StorageMB)
+	}
+	if svc.DataPath != "/var/www/html" {
+		t.Errorf("DataPath = %q ต้องเป็น /var/www/html (ตัด / ท้ายออก)", svc.DataPath)
+	}
+	if svc.Replicas != entity.StorageReplicas {
+		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.StorageReplicas)
+	}
+	if svc.NodePort == nil {
+		t.Error("web ที่มีดิสก์ต้องได้ NodePort — ไม่งั้นคนนอกเข้าใช้แอปไม่ได้")
+	}
+
+	usage, err := NewQuotaService(db).Usage(ctx, nil, ns.ID)
+	if err != nil {
+		t.Fatalf("อ่านยอดใช้งานไม่สำเร็จ: %v", err)
+	}
+	if usage.UsedStorageMB != 2048 {
+		t.Errorf("UsedStorageMB = %d ต้องเป็น 2048 (ดิสก์ของ web ต้องหักโควตาเหมือน database)", usage.UsedStorageMB)
 	}
 }
 
@@ -179,15 +224,32 @@ func TestCreateDatabaseRejectsBadRequests(t *testing.T) {
 				Name: "pg-many", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
 				IsDatabase: true, DataPath: "/var/lib/postgresql/data", Replicas: 3,
 			},
-			want: ErrDatabaseReplicas,
+			want: ErrStorageReplicas,
 		},
+		// web ขอดิสก์ได้แล้ว (docs 022) แต่ต้องผ่านกติกาเดียวกับ database ทุกข้อ
 		{
-			name: "ขอดิสก์โดยไม่เปิดสวิตช์",
+			name: "web ขอดิสก์แต่ไม่บอกจุดเก็บข้อมูล",
 			params: CreateServiceParams{
-				Name: "web-disk", Image: "nginx:latest", CPUMilli: 300, RAMMB: 256,
+				Name: "web-disk", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
 				StorageMB: 4096,
 			},
-			want: ErrStorageNotAllowed,
+			want: ErrDataPathRequired,
+		},
+		{
+			name: "web ที่มีดิสก์ขอหลาย replica",
+			params: CreateServiceParams{
+				Name: "web-disk-many", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
+				StorageMB: 4096, DataPath: "/var/www/html", Replicas: 3,
+			},
+			want: ErrStorageReplicas,
+		},
+		{
+			name: "web ส่งแค่ data_path ก็ถือว่าขอดิสก์ ต้องผ่านกติกา path",
+			params: CreateServiceParams{
+				Name: "web-badpath", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
+				DataPath: "/etc/nextcloud",
+			},
+			want: ErrDataPathRequired,
 		},
 	}
 
@@ -210,49 +272,68 @@ func TestCreateDatabaseRejectsBadRequests(t *testing.T) {
 	}
 }
 
-// TestScaleDatabaseIsRejected — หน้าเว็บซ่อน dropdown ให้แล้ว แต่เส้น PATCH เรียกตรงได้
-// ด่านจริงต้องอยู่ที่ service layer ไม่ใช่ที่ UI
-func TestScaleDatabaseIsRejected(t *testing.T) {
+// TestScaleWithStorageIsRejected — หน้าเว็บซ่อน dropdown ให้แล้ว แต่เส้น PATCH เรียกตรงได้
+// ด่านจริงต้องอยู่ที่ service layer ไม่ใช่ที่ UI — กันทุก service ที่มีดิสก์ ไม่ใช่แค่ database
+func TestScaleWithStorageIsRejected(t *testing.T) {
 	db := testDB(t)
 	ns := dbTestNamespace(t, db, "db-scale-test-ns")
 	ctx := context.Background()
 	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
 
-	svc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
-		Name: "pg-scale", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-		IsDatabase: true, DataPath: "/var/lib/postgresql/data",
-	})
-	if err != nil {
-		t.Fatalf("สร้าง database ไม่สำเร็จ: %v", err)
-	}
-
-	if _, err := mgr.Scale(ctx, svc.ID, ns.ID, 3); !errors.Is(err, ErrDatabaseReplicas) {
-		t.Errorf("scale database ต้องถูกปฏิเสธด้วย ErrDatabaseReplicas ได้ %v", err)
+	for _, p := range []CreateServiceParams{
+		{Name: "pg-scale", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
+			IsDatabase: true, DataPath: "/var/lib/postgresql/data"},
+		{Name: "nc-scale", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256, ContainerPort: 80,
+			StorageMB: 2048, DataPath: "/var/www/html"},
+	} {
+		svc, err := mgr.Create(ctx, 1, ns.ID, p)
+		if err != nil {
+			t.Fatalf("สร้าง %s ไม่สำเร็จ: %v", p.Name, err)
+		}
+		if _, err := mgr.Scale(ctx, svc.ID, ns.ID, 3); !errors.Is(err, ErrStorageReplicas) {
+			t.Errorf("scale %s ต้องถูกปฏิเสธด้วย ErrStorageReplicas ได้ %v", p.Name, err)
+		}
 	}
 }
 
-// TestDeleteDatabaseReleasesStorage ยืนยันว่าโควตาดิสก์คืนครบหลังลบ
+// TestDeleteWithStorageReleasesStorage ยืนยันว่าโควตาดิสก์คืนครบหลังลบ ทั้ง database และ web ที่มีดิสก์
 // (บน mock ไม่มี PVC จริง แต่ทดสอบได้ว่าฝั่ง DB ของเราคิดเลขถูก)
-func TestDeleteDatabaseReleasesStorage(t *testing.T) {
+func TestDeleteWithStorageReleasesStorage(t *testing.T) {
 	db := testDB(t)
 	ns := dbTestNamespace(t, db, "db-delete-test-ns")
 	ctx := context.Background()
 	quota := NewQuotaService(db)
 	mgr := NewServiceManager(db, quota, NewMockProvisioner())
 
-	svc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
-		Name: "pg-del", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-		IsDatabase: true, StorageMB: 2048, DataPath: "/var/lib/postgresql/data",
-	})
-	if err != nil {
-		t.Fatalf("สร้าง database ไม่สำเร็จ: %v", err)
-	}
-
-	if err := mgr.Delete(ctx, svc.ID, ns.ID); err != nil {
-		t.Fatalf("ลบ database ไม่สำเร็จ: %v", err)
+	var created []*entity.Service
+	for _, p := range []CreateServiceParams{
+		{Name: "pg-del", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
+			IsDatabase: true, StorageMB: 2048, DataPath: "/var/lib/postgresql/data"},
+		{Name: "nc-del", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256, ContainerPort: 80,
+			StorageMB: 3072, DataPath: "/var/www/html"},
+	} {
+		svc, err := mgr.Create(ctx, 1, ns.ID, p)
+		if err != nil {
+			t.Fatalf("สร้าง %s ไม่สำเร็จ: %v", p.Name, err)
+		}
+		created = append(created, svc)
 	}
 
 	usage, err := quota.Usage(ctx, nil, ns.ID)
+	if err != nil {
+		t.Fatalf("อ่านยอดใช้งานไม่สำเร็จ: %v", err)
+	}
+	if usage.UsedStorageMB != 2048+3072 {
+		t.Errorf("ก่อนลบ UsedStorageMB = %d ต้องเป็น %d (ดิสก์ของ web ต้องถูกหักด้วย)", usage.UsedStorageMB, 2048+3072)
+	}
+
+	for _, svc := range created {
+		if err := mgr.Delete(ctx, svc.ID, ns.ID); err != nil {
+			t.Fatalf("ลบ %s ไม่สำเร็จ: %v", svc.Name, err)
+		}
+	}
+
+	usage, err = quota.Usage(ctx, nil, ns.ID)
 	if err != nil {
 		t.Fatalf("อ่านยอดใช้งานไม่สำเร็จ: %v", err)
 	}
@@ -317,7 +398,7 @@ func TestMockDeployDatabaseNeverAssignsNodePort(t *testing.T) {
 	db := &entity.Service{
 		ID: 1, Name: "my-db", Image: "postgres:16", IsDatabase: true,
 		CPUMilli: 500, RAMMB: 512, ContainerPort: 5432,
-		Replicas: entity.DatabaseReplicas, StorageMB: entity.DefaultStorageMBPerService,
+		Replicas: entity.StorageReplicas, StorageMB: entity.DefaultStorageMBPerService,
 		DataPath: "/var/lib/postgresql/data",
 	}
 	if err := m.DeployService(ctx, "ns-user-12", db); err != nil {
@@ -337,5 +418,18 @@ func TestMockDeployDatabaseNeverAssignsNodePort(t *testing.T) {
 	}
 	if app.NodePort == nil {
 		t.Error("service ธรรมดาต้องยังได้ NodePort เหมือนเดิม")
+	}
+
+	// web ที่มีดิสก์ (แบบ Nextcloud) ต้องได้ NodePort — ดิสก์ถาวรไม่ได้แปลว่าต้องปิดจากคนนอก (docs 022)
+	webDisk := &entity.Service{
+		ID: 3, Name: "nextcloud", Image: "nextcloud:apache",
+		CPUMilli: 500, RAMMB: 512, ContainerPort: 80, Replicas: entity.StorageReplicas,
+		StorageMB: entity.DefaultStorageMBPerService, DataPath: "/var/www/html",
+	}
+	if err := m.DeployService(ctx, "ns-user-12", webDisk); err != nil {
+		t.Fatalf("deploy web ที่มีดิสก์ไม่ควรล้มเหลว: %v", err)
+	}
+	if webDisk.NodePort == nil {
+		t.Error("web ที่มีดิสก์ต้องได้ NodePort — ไม่งั้นคนนอกเข้าใช้แอปไม่ได้")
 	}
 }

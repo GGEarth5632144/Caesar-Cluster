@@ -22,7 +22,7 @@ var (
 // UsedCPUMilli/UsedRAMMB เป็นยอดรวมทุก Pod แล้ว คือ SUM(cpu_milli × replicas)
 // ส่วน ServiceCount นับเป็นจำนวน service ไม่ใช่จำนวน Pod เพราะเป็นหน่วยที่ผู้ใช้เห็นบนหน้าเว็บ
 //
-// UsedStorageMB คูณ replicas ด้วยเหมือนกัน ทั้งที่ database ตรึงที่ 1 Pod (ผลลัพธ์จึงเท่ากัน)
+// UsedStorageMB คูณ replicas ด้วยเหมือนกัน ทั้งที่ service ที่มีดิสก์ตรึงที่ 1 Pod (ผลลัพธ์จึงเท่ากัน)
 // เผื่อวันหนึ่งเปิดให้มีหลาย replica ซึ่งแต่ละตัวจะได้ PVC ของตัวเอง
 type NamespaceUsage struct {
 	UsedCPUMilli  int `json:"used_cpu_milli"`
@@ -269,7 +269,7 @@ func (q *QuotaService) ReserveScale(
 			return fmt.Errorf("%w: RAM เหลือ %d MB แต่ %d replica ต้องใช้ %d MB",
 				ErrQuotaExceeded, remaining(ns.RAMLimitMB, others.UsedRAMMB), req.Replicas, totalRAM)
 		}
-		// service ที่ scale ได้คือ service ธรรมดาซึ่ง StorageMB = 0 เสมอ (database ตรึงที่ 1 Pod
+		// service ที่ scale ได้คือ service ที่ไม่มีดิสก์ซึ่ง StorageMB = 0 เสมอ (มีดิสก์ตรึงที่ 1 Pod
 		// จึงไม่มีทางมาถึงตรงนี้) เช็คไว้ให้ครบแกนเผื่อกติกาเปลี่ยนในอนาคต
 		if totalStorage > 0 && others.UsedStorageMB+totalStorage > ns.StorageLimitMB {
 			return fmt.Errorf("%w: ดิสก์เหลือ %d MB แต่ต้องใช้ %d MB",

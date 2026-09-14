@@ -48,10 +48,11 @@ const (
 	MaxReplicas     = 10
 )
 
-// DatabaseReplicas = จำนวน Pod ของ database ตรึงที่ 1 เสมอ ไม่ใช่ข้อจำกัดชั่วคราว
-// สอง Pod ที่ mount PVC ก้อนเดียวกันแล้วต่างคนต่างเขียน คือข้อมูลพัง ไม่ใช่ HA
-// (HA ของ database ต้องทำด้วย replication ของ engine เอง ซึ่งคนละเรื่องกับ replicas)
-const DatabaseReplicas = 1
+// StorageReplicas = จำนวน Pod ของ service ที่มีดิสก์ถาวร (รวม database) ตรึงที่ 1 เสมอ ไม่ใช่ข้อจำกัดชั่วคราว
+// สอง Pod ที่ mount PVC ก้อนเดียวกันแล้วต่างคนต่างเขียน คือข้อมูลพัง ไม่ใช่ HA — จริงทั้งกับ database
+// และแอปที่เก็บไฟล์ผู้ใช้ (Nextcloud/WordPress) ซึ่งไม่ได้ออกแบบให้หลาย process เขียนโฟลเดอร์เดียวกัน
+// (HA ของ database ต้องทำด้วย replication ของ engine เอง ส่วนแอปหลาย replica ต้องใช้ดิสก์แบบ RWX = นอก scope)
+const StorageReplicas = 1
 
 // EnvVarMap คือ environment variables ของ service เดียว เก็บเป็น jsonb คอลัมน์เดียว
 // ตั้งใจใช้ map[string]string (ไม่ใช้ JSONB ที่มีอยู่แล้วซึ่งเป็น map[string]any) เพราะ env var
@@ -136,18 +137,19 @@ type Service struct {
 	// StatusCheckedAt = ครั้งล่าสุดที่ถามคลัสเตอร์สำเร็จ (nil = ยังไม่เคยถามได้เลย)
 	StatusCheckedAt *time.Time `gorm:"column:status_checked_at;type:timestamp" json:"status_checked_at"`
 
-	// IsDatabase = สวิตช์ที่ผู้ใช้กดตอนสร้าง คุม 4 อย่างพร้อมกันเพราะทั้งสี่ถูกหรือผิดพร้อมกันเสมอ:
-	// ClusterIP + NetworkPolicy (เข้าได้เฉพาะใน namespace), PVC ตาม StorageMB/DataPath,
-	// ตรึง 1 Pod ตาม DatabaseReplicas และใช้ StatefulSet แทน Deployment — RollingUpdate ของ
-	// Deployment ปั้น Pod ใหม่ก่อนฆ่าตัวเก่า สองตัวจะแย่ง PVC ก้อนเดียวกันจน deploy ค้างถาวร
+	// IsDatabase = สวิตช์ "เข้าได้เฉพาะใน namespace": Service ชนิด ClusterIP + NetworkPolicy แทน NodePort
+	// (node_port เป็น NULL ตลอดชีวิต) — คุมแค่เครือข่าย ส่วนดิสก์/StatefulSet/1 Pod คุมด้วย HasStorage
+	//
+	// database ทุกตัวมีดิสก์เสมอ (ServiceManager.Create บังคับ) แต่ service ที่มีดิสก์ไม่จำเป็นต้องเป็น database:
+	// แอปอย่าง Nextcloud/WordPress เก็บไฟล์ผู้ใช้ถาวร แต่ต้องเปิดให้คนนอกเข้าผ่าน NodePort
 	IsDatabase bool `gorm:"column:is_database;type:boolean;not null;default:false" json:"is_database"`
 
-	// DataPath = จุดที่ PVC ถูก mount ("" ถ้าไม่ใช่ database) — ผู้ใช้กรอกเอง ระบบไม่เดาให้
+	// DataPath = จุดที่ PVC ถูก mount ("" = ไม่มีดิสก์ถาวร) — ผู้ใช้กรอกเอง ระบบไม่เดาให้
 	// เดาผิดแล้ว deploy สำเร็จและดิสก์ถูกจอง แต่ image เขียนลงที่อื่น ข้อมูลหายตอน restart แบบเงียบๆ
 	// ห้ามแก้หลัง deploy: ย้ายจุด mount = ข้อมูลเดิมหายไปจากสายตาโปรแกรมทั้งที่ยังอยู่บนดิสก์
 	DataPath string `gorm:"column:data_path;type:varchar(200);not null;default:''" json:"data_path"`
 
-	// StorageMB = ขนาด PVC (0 = ไม่ใช่ database) — เป็น MB จำนวนเต็มเสมอ
+	// StorageMB = ขนาด PVC (0 = ไม่มีดิสก์ถาวร) — เป็น MB จำนวนเต็มเสมอ และเป็นตัวตัดสิน HasStorage
 	// หน่วยที่ผู้ใช้เลือกบนหน้าจอเป็นเรื่องการแสดงผล ไม่ส่งขึ้นมาให้ต้องตรวจซ้ำทุกชั้น
 	StorageMB int `gorm:"column:storage_mb;type:integer;not null;default:0;check:storage_mb >= 0" json:"storage_mb"`
 
@@ -156,3 +158,10 @@ type Service struct {
 
 // TableName บอก GORM ให้ map struct นี้กับตาราง "services"
 func (Service) TableName() string { return "services" }
+
+// HasStorage = service นี้มีดิสก์ถาวร (PVC) หรือไม่ — ตัดสินจาก StorageMB อย่างเดียว ไม่ต้องมีคอลัมน์แยก
+//
+// เป็นตัวแยกทาง workload ทั้งระบบ: มีดิสก์ = StatefulSet + PVC + ตรึง StorageReplicas, ไม่มี = Deployment
+// ใช้ StatefulSet เพราะ RollingUpdate ของ Deployment ปั้น Pod ใหม่ก่อนฆ่าตัวเก่า สองตัวจะแย่ง PVC
+// แบบ ReadWriteOnce ก้อนเดียวกันจน deploy ค้างถาวร (ส่วนเครือข่ายแยกไปคุมด้วย IsDatabase)
+func (s Service) HasStorage() bool { return s.StorageMB > 0 }

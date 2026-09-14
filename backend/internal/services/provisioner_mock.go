@@ -49,35 +49,36 @@ func (m *MockProvisioner) DeleteNamespace(ctx context.Context, nsName string) er
 
 // DeployService จำลองการ deploy: log สเปกแล้ว sleep ให้เหมือนมี latency จริง
 //
-// แยกทางเดินตาม svc.IsDatabase ให้ตรงกับของจริง โดยเฉพาะข้อที่ database ไม่ได้ NodePort
-// ทำให้ทดสอบได้ตั้งแต่รัน mock ว่าหน้าเว็บรับมือ node_port = null ถูกต้องไหม
+// แยกทางเดินตามสองแกนให้ตรงกับของจริง (ดูสัญญาใน Provisioner) — ข้อที่หน้าเว็บต้องรับมือคือ
+// database ไม่ได้ NodePort (null ตลอดชีวิต) ส่วน web ที่มีดิสก์ยังได้ NodePort ตามปกติ
+// ทำให้ทดสอบได้ตั้งแต่รัน mock ว่าหน้าเว็บแยกสองเคสนี้ถูกต้องไหม
 func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
 	// จดไว้ว่าเคย deploy แล้ว เพื่อให้ Status ตอบได้ว่าของยังอยู่ไหม
 	m.mu.Lock()
 	m.known[mockKey(nsName, svc.Name)] = true
 	m.mu.Unlock()
 
-	if svc.IsDatabase {
-		return m.deployDatabase(ctx, nsName, svc)
+	// ของจริง: มีดิสก์ = StatefulSet + PVC (1 pod), ไม่มี = Deployment
+	if svc.HasStorage() {
+		log.Printf("[MOCK] deploy service '%s' (image=%s) เป็น StatefulSet เข้า namespace '%s' — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s / port %d / %d env vars",
+			svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, svc.ContainerPort, len(svc.EnvVars))
+	} else {
+		log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %d replica × (%dm CPU / %d MB) / port %d / %d env vars",
+			svc.Name, svc.Image, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, svc.ContainerPort, len(svc.EnvVars))
 	}
-
-	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %d replica × (%dm CPU / %d MB) / port %d / %d env vars",
-		svc.Name, svc.Image, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, svc.ContainerPort, len(svc.EnvVars))
 	time.Sleep(300 * time.Millisecond) // จำลองว่าใช้เวลา
+
+	// database "ไม่" ได้ NodePort ตามสัญญาใน Provisioner — ของจริงเปิดแค่ ClusterIP + NetworkPolicy
+	if svc.IsDatabase {
+		log.Printf("[MOCK] database '%s' เข้าถึงได้เฉพาะใน namespace ที่ %s:%d (ClusterIP เท่านั้น)",
+			svc.Name, svc.Name, svc.ContainerPort)
+		return nil
+	}
 
 	port := 30000 + (svc.ID % 2768) // เลขปลอมแต่นิ่งต่อ service เดิม อยู่ในช่วง NodePort ของ k8s
 	svc.NodePort = &port
 	log.Printf("[MOCK] service '%s' เข้าถึงได้ที่ <node-ip>:%d → container port %d",
 		svc.Name, port, svc.ContainerPort)
-	return nil
-}
-
-// deployDatabase จำลองเส้นทางของ database — ของจริงคือ StatefulSet + PVC + ClusterIP + NetworkPolicy
-// (ดู KubernetesProvisioner.deployDatabase) ที่นี่แค่ log แล้ว "ไม่" เซ็ต svc.NodePort ตามสัญญาใน Provisioner
-func (m *MockProvisioner) deployDatabase(_ context.Context, nsName string, svc *entity.Service) error {
-	log.Printf("[MOCK] deploy database '%s' (image=%s) เข้า namespace '%s' — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s / port %d (ClusterIP เท่านั้น)",
-		svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, svc.ContainerPort)
-	time.Sleep(300 * time.Millisecond)
 	return nil
 }
 
@@ -116,18 +117,22 @@ func (m *MockProvisioner) Status(_ context.Context, nsName string, svc *entity.S
 	}
 }
 
-// DeleteService จำลองการลบ workload ตัวเดียว — database ต้องถอน NetworkPolicy กับ PVC เพิ่มด้วย
+// DeleteService จำลองการลบ workload ตัวเดียว — มีดิสก์ต้องถอน PVC เพิ่ม, database ถอน NetworkPolicy เพิ่ม
 func (m *MockProvisioner) DeleteService(ctx context.Context, nsName string, svc *entity.Service) error {
 	m.mu.Lock()
 	m.known[mockKey(nsName, svc.Name)] = false
 	m.mu.Unlock()
 
-	if svc.IsDatabase {
-		log.Printf("[MOCK] ลบ database '%s' ออกจาก namespace '%s' — StatefulSet + NetworkPolicy 'db-%s' + PVC '%s-data' (%d MB คืนโควตาดิสก์)",
-			svc.Name, nsName, svc.Name, svc.Name, svc.StorageMB)
-		return nil
+	switch {
+	case svc.IsDatabase:
+		log.Printf("[MOCK] ลบ database '%s' ออกจาก namespace '%s' — StatefulSet + NetworkPolicy '%s' + PVC '%s' (%d MB คืนโควตาดิสก์)",
+			svc.Name, nsName, networkPolicyName(svc.Name), pvcName(svc.Name), svc.StorageMB)
+	case svc.HasStorage():
+		log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s' — StatefulSet + PVC '%s' (%d MB คืนโควตาดิสก์)",
+			svc.Name, nsName, pvcName(svc.Name), svc.StorageMB)
+	default:
+		log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svc.Name, nsName)
 	}
-	log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svc.Name, nsName)
 	return nil
 }
 
