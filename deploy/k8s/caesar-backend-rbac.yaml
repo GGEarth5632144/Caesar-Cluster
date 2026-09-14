@@ -56,10 +56,29 @@ rules:
     resources: [services]
     verbs: [create, delete]
   # DeployService: Create (+ Delete ตอน rollback เมื่อสร้าง Service ไม่ผ่าน)
-  # ScaleService: merge patch spec.replicas · DeleteService: Delete
+  # ScaleService: merge patch spec.replicas · DeleteService: Delete · Status: Get
   - apiGroups: [apps]
     resources: [deployments]
-    verbs: [create, patch, delete]
+    verbs: [get, create, patch, delete]
+  # DeployService (database): Create StatefulSet · DeleteService / rollback: Delete · Status: Get
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, create, delete]
+  # DeployService (database): Create NetworkPolicy · DeleteService / rollback: Delete
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete]
+  # DeleteService (database): PVC จาก volumeClaimTemplates — StatefulSet controller สร้างให้ เราแค่ตามลบ
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [delete]
+  # Status (ServiceHealthMonitor) และ Logs: List pod ของ service แล้วอ่าน log
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

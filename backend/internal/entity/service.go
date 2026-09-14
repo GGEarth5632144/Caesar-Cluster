@@ -8,11 +8,30 @@ import (
 )
 
 // สถานะของ service ระหว่างวงจรชีวิต
+//
+// "สร้าง object บนคลัสเตอร์สำเร็จ" ไม่เท่ากับ "workload รันอยู่จริง" — k8s รับ object แล้วตอบสำเร็จ
+// ทันที ต่อให้ไม่มี node ว่างหรือ container จะตายทันทีที่ขึ้น สถานะจริงจึงมาจาก ServiceHealthMonitor
+// ที่ไปถามคลัสเตอร์ ไม่ใช่จากผลลัพธ์ของ DeployService
 const (
-	ServiceCreating = "creating" // บันทึกลง DB แล้ว กำลังรอ provisioner deploy จริง
-	ServiceRunning  = "running"  // deploy ขึ้น k8s สำเร็จ
-	ServiceFailed   = "failed"   // provisioner deploy ไม่สำเร็จ
+	ServiceCreating = "creating" // บันทึกลง DB แล้ว กำลังรอ provisioner สร้างของบนคลัสเตอร์
+
+	// ServicePending = object ถูกสร้างแล้วแต่ยังไม่มี Pod รันอยู่จริง
+	// สาเหตุที่เจอบ่อย: ไม่มี node ไหนเหลือทรัพยากรพอ (FailedScheduling) หรือกำลังดึง image อยู่
+	ServicePending = "pending"
+
+	ServiceRunning = "running" // มี Pod รันอยู่จริงและผ่าน readiness แล้ว
+
+	// ServiceCrashLoop = container ขึ้นมาแล้วตายซ้ำๆ — เกือบทุกครั้งคือ env ไม่ครบหรือตั้งค่าผิด
+	// แยกจาก failed เพราะผู้ใช้แก้เองได้ และของยังอยู่บนคลัสเตอร์ (ยังกินโควตาอยู่)
+	ServiceCrashLoop = "crashloop"
+
+	ServiceFailed = "failed" // provisioner สร้างของบนคลัสเตอร์ไม่สำเร็จตั้งแต่ต้น
 )
+
+// ServiceStatusSettled = สถานะที่ไม่เปลี่ยนเองอีกแล้ว — หน้าเว็บหยุดดึงซ้ำ monitor ลดความถี่ลง
+func ServiceStatusSettled(status string) bool {
+	return status == ServiceRunning || status == ServiceFailed
+}
 
 // ContainerPort = พอร์ตที่โปรเซสข้างใน container ฟังอยู่ (ตรงกับ EXPOSE ใน image) คนละชั้นกับ
 // NodePort ที่ k8s จ่ายให้ (30000-32767) เป็นทางเข้าจากนอก — Service เป็นตัวเชื่อมสองอันนี้
@@ -28,6 +47,11 @@ const (
 	MinReplicas     = 1
 	MaxReplicas     = 10
 )
+
+// DatabaseReplicas = จำนวน Pod ของ database ตรึงที่ 1 เสมอ ไม่ใช่ข้อจำกัดชั่วคราว
+// สอง Pod ที่ mount PVC ก้อนเดียวกันแล้วต่างคนต่างเขียน คือข้อมูลพัง ไม่ใช่ HA
+// (HA ของ database ต้องทำด้วย replication ของ engine เอง ซึ่งคนละเรื่องกับ replicas)
+const DatabaseReplicas = 1
 
 // EnvVarMap คือ environment variables ของ service เดียว เก็บเป็น jsonb คอลัมน์เดียว
 // ตั้งใจใช้ map[string]string (ไม่ใช้ JSONB ที่มีอยู่แล้วซึ่งเป็น map[string]any) เพราะ env var
@@ -95,7 +119,39 @@ type Service struct {
 	Replicas          int       `gorm:"column:replicas;type:integer;not null;default:1;check:replicas BETWEEN 1 AND 10" json:"replicas"`
 	Status            string    `gorm:"column:status;type:varchar(20);not null;default:creating" json:"status"`
 	EnvVars           EnvVarMap `gorm:"column:env_vars;type:jsonb;not null;default:'{}'" json:"env_vars"`
-	CreatedAt         time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
+
+	// ── สถานะจริงจากคลัสเตอร์ (ServiceHealthMonitor เป็นคนเขียน) ─────────────────────
+
+	// StatusReason = รหัสสั้นๆ จากคลัสเตอร์ (CrashLoopBackOff, ImagePullBackOff, FailedScheduling)
+	// หน้าเว็บใช้เลือกคำแนะนำที่ตรงกับสาเหตุ ไม่ใช่ขึ้นข้อความเดียวกันหมด
+	StatusReason string `gorm:"column:status_reason;type:varchar(60);not null;default:''" json:"status_reason"`
+
+	// StatusMessage = คำอธิบาย + log ท้ายๆ ก่อน container ตาย
+	// เก็บลง DB เพราะ Pod ที่ crash loop ถูกสร้างใหม่เรื่อยๆ log รอบที่บอกสาเหตุจริงหายก่อนผู้ใช้เปิดดู
+	StatusMessage string `gorm:"column:status_message;type:text;not null;default:''" json:"status_message"`
+
+	// RestartCount = จำนวนครั้งที่ container ถูกสร้างใหม่ — แยก "ช้า" ออกจาก "ตายแล้วเกิดใหม่วนไป"
+	RestartCount int `gorm:"column:restart_count;type:integer;not null;default:0" json:"restart_count"`
+
+	// StatusCheckedAt = ครั้งล่าสุดที่ถามคลัสเตอร์สำเร็จ (nil = ยังไม่เคยถามได้เลย)
+	StatusCheckedAt *time.Time `gorm:"column:status_checked_at;type:timestamp" json:"status_checked_at"`
+
+	// IsDatabase = สวิตช์ที่ผู้ใช้กดตอนสร้าง คุม 4 อย่างพร้อมกันเพราะทั้งสี่ถูกหรือผิดพร้อมกันเสมอ:
+	// ClusterIP + NetworkPolicy (เข้าได้เฉพาะใน namespace), PVC ตาม StorageMB/DataPath,
+	// ตรึง 1 Pod ตาม DatabaseReplicas และใช้ StatefulSet แทน Deployment — RollingUpdate ของ
+	// Deployment ปั้น Pod ใหม่ก่อนฆ่าตัวเก่า สองตัวจะแย่ง PVC ก้อนเดียวกันจน deploy ค้างถาวร
+	IsDatabase bool `gorm:"column:is_database;type:boolean;not null;default:false" json:"is_database"`
+
+	// DataPath = จุดที่ PVC ถูก mount ("" ถ้าไม่ใช่ database) — ผู้ใช้กรอกเอง ระบบไม่เดาให้
+	// เดาผิดแล้ว deploy สำเร็จและดิสก์ถูกจอง แต่ image เขียนลงที่อื่น ข้อมูลหายตอน restart แบบเงียบๆ
+	// ห้ามแก้หลัง deploy: ย้ายจุด mount = ข้อมูลเดิมหายไปจากสายตาโปรแกรมทั้งที่ยังอยู่บนดิสก์
+	DataPath string `gorm:"column:data_path;type:varchar(200);not null;default:''" json:"data_path"`
+
+	// StorageMB = ขนาด PVC (0 = ไม่ใช่ database) — เป็น MB จำนวนเต็มเสมอ
+	// หน่วยที่ผู้ใช้เลือกบนหน้าจอเป็นเรื่องการแสดงผล ไม่ส่งขึ้นมาให้ต้องตรวจซ้ำทุกชั้น
+	StorageMB int `gorm:"column:storage_mb;type:integer;not null;default:0;check:storage_mb >= 0" json:"storage_mb"`
+
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 }
 
 // TableName บอก GORM ให้ map struct นี้กับตาราง "services"

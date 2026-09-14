@@ -23,6 +23,18 @@ type CreateServiceRequest struct {
 	// EnvVars ไม่บังคับ — เช็ครูปแบบ/จำนวนแยกใน controller (isValidEnvVars) แทนการใช้ binding tag
 	// เพราะ go-playground/validator เช็ค map ได้จำกัด (ไม่มี built-in ตรวจ key pattern ของแต่ละ entry)
 	EnvVars map[string]string `json:"env_vars"`
+
+	// IsDatabase = สวิตช์ "service นี้เป็น database" — ใช้กับ image อะไรก็ได้ ระบบไม่แยกชนิด
+	// (ดู entity.Service.IsDatabase ว่าสวิตช์นี้เปลี่ยนอะไรบ้าง)
+	IsDatabase bool `json:"is_database"`
+
+	// DataPath = ตำแหน่งที่ image เก็บข้อมูล ใช้เป็นจุด mount ของ PVC
+	// บังคับส่งทุกครั้งที่ IsDatabase กติกาของค่าที่รับได้อยู่ใน services.ValidateDataPath
+	DataPath string `json:"data_path" binding:"omitempty,max=200"`
+
+	// StorageMB = ขนาดดิสก์ที่ขอ เป็น MB เสมอ — ไม่ส่งมาแล้วใช้ entity.DefaultStorageMBPerService
+	// ส่งมาตอน IsDatabase=false จะได้ 400 ส่วนเพดานต้องตรงกับ entity.MaxStorageMBPerService
+	StorageMB int `json:"storage_mb" binding:"omitempty,min=1024,max=20480"`
 }
 
 // ScaleServiceRequest = body ของ PATCH /api/services/:id/scale — ปรับจำนวน Pod ของ service ที่ deploy แล้ว

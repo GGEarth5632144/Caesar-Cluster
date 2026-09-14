@@ -105,10 +105,11 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, 
 	}
 
 	ns := &entity.Namespace{
-		Name:          name,
-		ContributorID: userID,
-		CPULimitMilli: cpuMilli,
-		RAMLimitMB:    ramMB,
+		Name:           name,
+		ContributorID:  userID,
+		CPULimitMilli:  cpuMilli,
+		RAMLimitMB:     ramMB,
+		StorageLimitMB: entity.DefaultStorageLimitMB,
 	}
 
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -315,10 +316,13 @@ func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, erro
 // data flow: รับ namespaceID + โควตาใหม่จาก AdminController → ตรวจว่าไม่เกินเพดานที่อนุญาต
 // → UPDATE namespaces → sync โควตาใหม่ขึ้น cluster ผ่าน prov.EnsureNamespace
 //
-// เพดาน: ทุก namespace ขยายได้ถึง 8 core / 8 GB เท่ากันหมด (หลังเลิกแยกชนิด solo/group)
+// เพดาน: ทุก namespace ขยายได้ถึง 8 core / 8 GB / 50 GB ดิสก์ เท่ากันหมด (หลังเลิกแยกชนิด solo/group)
 // ไม่เช็คว่าโควตาใหม่ต่ำกว่ายอดที่ใช้อยู่หรือไม่ — ปล่อยให้ลดได้ (service เดิมยังรันอยู่
 // แต่จะ deploy เพิ่มไม่ได้จนกว่าจะลบของเก่าออก) ซึ่งเป็นพฤติกรรมเดียวกับ ResourceQuota ของ k8s
-func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, ramMB int) (*NamespaceDetail, error) {
+//
+// ดิสก์ต่างจาก CPU/RAM ตรงที่ลดเพดานแล้วของเดิมไม่ได้คืนมาให้: PVC ที่จองไปแล้วยังกินที่เท่าเดิม
+// จนกว่าจะลบ database ทิ้ง (ดูหมายเหตุใน entity/namespace.go) — หน้าเว็บจึงต้องเตือนก่อนกดบันทึก
+func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, ramMB, storageMB int) (*NamespaceDetail, error) {
 	var ns entity.Namespace
 	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -330,14 +334,20 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 	if err := ValidateQuota(cpuMilli, ramMB); err != nil {
 		return nil, err
 	}
+	// ดิสก์เช็คแยกจาก ValidateQuota เพราะ 0 เป็นค่าที่ตั้งใจตั้งได้ (= กลุ่มนี้สร้าง database ไม่ได้)
+	if storageMB < 0 || storageMB > entity.MaxStorageLimitMB {
+		return nil, fmt.Errorf("%w: ดิสก์ตั้งได้ 0–%d MB", ErrQuotaOutOfRange, entity.MaxStorageLimitMB)
+	}
 
-	prevCPU, prevRAM := ns.CPULimitMilli, ns.RAMLimitMB
+	prevCPU, prevRAM, prevStorage := ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB
 	ns.CPULimitMilli = cpuMilli
 	ns.RAMLimitMB = ramMB
+	ns.StorageLimitMB = storageMB
 	if err := m.db.WithContext(ctx).Model(&entity.Namespace{}).Where("id = ?", ns.ID).
 		Updates(map[string]any{
-			"cpu_limit_milli": cpuMilli,
-			"ram_limit_mb":    ramMB,
+			"cpu_limit_milli":  cpuMilli,
+			"ram_limit_mb":     ramMB,
+			"storage_limit_mb": storageMB,
 		}).Error; err != nil {
 		return nil, err
 	}
@@ -350,13 +360,14 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		if rbErr := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Namespace{}).
 			Where("id = ?", ns.ID).
 			Updates(map[string]any{
-				"cpu_limit_milli": prevCPU,
-				"ram_limit_mb":    prevRAM,
+				"cpu_limit_milli":  prevCPU,
+				"ram_limit_mb":     prevRAM,
+				"storage_limit_mb": prevStorage,
 			}).Error; rbErr != nil {
 			log.Printf("!! ตั้งโควตา namespace '%s' (id=%d) บนคลัสเตอร์ไม่สำเร็จ (%v) "+
-				"และถอยค่าใน DB กลับเป็น %dm/%dMB ไม่สำเร็จด้วย: %v "+
-				"— DB บอกโควตา %dm/%dMB แต่คลัสเตอร์ยังบังคับค่าเดิม ต้องแก้มือ",
-				ns.Name, ns.ID, err, prevCPU, prevRAM, rbErr, cpuMilli, ramMB)
+				"และถอยค่าใน DB กลับเป็น %dm/%dMB/%dMB ไม่สำเร็จด้วย: %v "+
+				"— DB บอกโควตา %dm/%dMB/%dMB แต่คลัสเตอร์ยังบังคับค่าเดิม ต้องแก้มือ",
+				ns.Name, ns.ID, err, prevCPU, prevRAM, prevStorage, rbErr, cpuMilli, ramMB, storageMB)
 		}
 		return nil, fmt.Errorf("อัปเดตโควตาบน cluster ไม่สำเร็จ: %w", err)
 	}

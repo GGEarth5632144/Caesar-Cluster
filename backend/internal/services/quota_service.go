@@ -21,10 +21,30 @@ var (
 //
 // UsedCPUMilli/UsedRAMMB เป็นยอดรวมทุก Pod แล้ว คือ SUM(cpu_milli × replicas)
 // ส่วน ServiceCount นับเป็นจำนวน service ไม่ใช่จำนวน Pod เพราะเป็นหน่วยที่ผู้ใช้เห็นบนหน้าเว็บ
+//
+// UsedStorageMB คูณ replicas ด้วยเหมือนกัน ทั้งที่ database ตรึงที่ 1 Pod (ผลลัพธ์จึงเท่ากัน)
+// เผื่อวันหนึ่งเปิดให้มีหลาย replica ซึ่งแต่ละตัวจะได้ PVC ของตัวเอง
 type NamespaceUsage struct {
-	UsedCPUMilli int `json:"used_cpu_milli"`
-	UsedRAMMB    int `json:"used_ram_mb"`
-	ServiceCount int `json:"service_count"`
+	UsedCPUMilli  int `json:"used_cpu_milli"`
+	UsedRAMMB     int `json:"used_ram_mb"`
+	UsedStorageMB int `json:"used_storage_mb"`
+	ServiceCount  int `json:"service_count"`
+}
+
+// ResourceRequest = ทรัพยากรที่คำขอหนึ่งต้องการ
+//
+// รวมเป็น struct แทนการส่ง int เรียงกัน 4 ตัว เพราะ RAMMB กับ StorageMB หน่วยเดียวกันและอยู่ติดกัน
+// สลับตำแหน่งกันเมื่อไหร่ compiler ไม่จับ แต่โควตาเพี้ยนเงียบๆ
+type ResourceRequest struct {
+	CPUMilli  int
+	RAMMB     int
+	StorageMB int
+	Replicas  int
+}
+
+// totals คืนยอดที่หักจากโควตาจริง = สเปกต่อ Pod × จำนวน Pod
+func (r ResourceRequest) totals() (cpu, ram, storage int) {
+	return r.CPUMilli * r.Replicas, r.RAMMB * r.Replicas, r.StorageMB * r.Replicas
 }
 
 // QuotaService รับผิดชอบเรื่องเดียว: บังคับโควตาของ namespace
@@ -50,9 +70,10 @@ func (q *QuotaService) Usage(ctx context.Context, tx *gorm.DB, namespaceID int) 
 
 	var u NamespaceUsage
 	err := db.Table("services").
-		Select(`COALESCE(SUM(cpu_milli * replicas), 0) AS used_cpu_milli,
-		        COALESCE(SUM(ram_mb * replicas), 0)    AS used_ram_mb,
-		        COUNT(*)                               AS service_count`).
+		Select(`COALESCE(SUM(cpu_milli * replicas), 0)   AS used_cpu_milli,
+		        COALESCE(SUM(ram_mb * replicas), 0)      AS used_ram_mb,
+		        COALESCE(SUM(storage_mb * replicas), 0)  AS used_storage_mb,
+		        COUNT(*)                                 AS service_count`).
 		Where("namespace_id = ?", namespaceID).
 		Scan(&u).Error
 	return u, err
@@ -73,16 +94,18 @@ func (q *QuotaService) UsageByNamespace(ctx context.Context, namespaceIDs []int)
 	}
 
 	var rows []struct {
-		NamespaceID  int
-		UsedCPUMilli int
-		UsedRAMMB    int
-		ServiceCount int
+		NamespaceID   int
+		UsedCPUMilli  int
+		UsedRAMMB     int
+		UsedStorageMB int
+		ServiceCount  int
 	}
 	err := q.db.WithContext(ctx).Table("services").
 		Select(`namespace_id,
-		        COALESCE(SUM(cpu_milli * replicas), 0) AS used_cpu_milli,
-		        COALESCE(SUM(ram_mb * replicas), 0)    AS used_ram_mb,
-		        COUNT(*)                               AS service_count`).
+		        COALESCE(SUM(cpu_milli * replicas), 0)   AS used_cpu_milli,
+		        COALESCE(SUM(ram_mb * replicas), 0)      AS used_ram_mb,
+		        COALESCE(SUM(storage_mb * replicas), 0)  AS used_storage_mb,
+		        COUNT(*)                                 AS service_count`).
 		Where("namespace_id IN ?", namespaceIDs).
 		Group("namespace_id").
 		Scan(&rows).Error
@@ -92,9 +115,10 @@ func (q *QuotaService) UsageByNamespace(ctx context.Context, namespaceIDs []int)
 
 	for _, r := range rows {
 		out[r.NamespaceID] = NamespaceUsage{
-			UsedCPUMilli: r.UsedCPUMilli,
-			UsedRAMMB:    r.UsedRAMMB,
-			ServiceCount: r.ServiceCount,
+			UsedCPUMilli:  r.UsedCPUMilli,
+			UsedRAMMB:     r.UsedRAMMB,
+			UsedStorageMB: r.UsedStorageMB,
+			ServiceCount:  r.ServiceCount,
 		}
 	}
 	return out, nil
@@ -110,9 +134,10 @@ func (q *QuotaService) usageExcluding(ctx context.Context, tx *gorm.DB, namespac
 
 	var u NamespaceUsage
 	err := db.Table("services").
-		Select(`COALESCE(SUM(cpu_milli * replicas), 0) AS used_cpu_milli,
-		        COALESCE(SUM(ram_mb * replicas), 0)    AS used_ram_mb,
-		        COUNT(*)                               AS service_count`).
+		Select(`COALESCE(SUM(cpu_milli * replicas), 0)   AS used_cpu_milli,
+		        COALESCE(SUM(ram_mb * replicas), 0)      AS used_ram_mb,
+		        COALESCE(SUM(storage_mb * replicas), 0)  AS used_storage_mb,
+		        COUNT(*)                                 AS service_count`).
 		Where("namespace_id = ? AND id <> ?", namespaceID, excludeServiceID).
 		Scan(&u).Error
 	return u, err
@@ -136,21 +161,26 @@ func (q *QuotaService) usageExcluding(ctx context.Context, tx *gorm.DB, namespac
 // นี่เป็น pattern เดียวกับ AllocationService เดิมเป๊ะๆ แค่เปลี่ยนของที่ล็อกจาก node เป็น namespace
 func (q *QuotaService) ReserveAndInsert(
 	ctx context.Context,
-	namespaceID, cpuMilli, ramMB, replicas int,
+	namespaceID int,
+	req ResourceRequest,
 	insert func(tx *gorm.DB) error,
 ) error {
 
 	// เพดานของ service ตัวเดียว — เช็คก่อนเลย ไม่ต้องเปิด transaction ให้เปลือง
-	if cpuMilli > entity.MaxCPUMilliPerService || ramMB > entity.MaxRAMMBPerService {
+	if req.CPUMilli > entity.MaxCPUMilliPerService || req.RAMMB > entity.MaxRAMMBPerService {
 		return fmt.Errorf("%w: สูงสุด %dm CPU / %d MB ต่อ 1 service",
 			ErrServiceTooLarge, entity.MaxCPUMilliPerService, entity.MaxRAMMBPerService)
 	}
-	if replicas < entity.MinReplicas || replicas > entity.MaxReplicas {
+	if req.StorageMB > entity.MaxStorageMBPerService {
+		return fmt.Errorf("%w: ดิสก์สูงสุด %d MB ต่อ 1 database",
+			ErrServiceTooLarge, entity.MaxStorageMBPerService)
+	}
+	if req.Replicas < entity.MinReplicas || req.Replicas > entity.MaxReplicas {
 		return fmt.Errorf("%w: replica ต้องอยู่ระหว่าง %d-%d",
 			ErrServiceTooLarge, entity.MinReplicas, entity.MaxReplicas)
 	}
 
-	totalCPU, totalRAM := cpuMilli*replicas, ramMB*replicas
+	totalCPU, totalRAM, totalStorage := req.totals()
 
 	return q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// ล็อกแถว namespace ไว้จนจบ transaction — กัน request อื่นเช็คโควตาพร้อมกันแล้วใช้เกิน
@@ -170,16 +200,30 @@ func (q *QuotaService) ReserveAndInsert(
 
 		if used.UsedCPUMilli+totalCPU > ns.CPULimitMilli {
 			return fmt.Errorf("%w: CPU เหลือ %dm แต่ขอ %dm (%dm × %d replica)",
-				ErrQuotaExceeded, ns.CPULimitMilli-used.UsedCPUMilli, totalCPU, cpuMilli, replicas)
+				ErrQuotaExceeded, remaining(ns.CPULimitMilli, used.UsedCPUMilli), totalCPU, req.CPUMilli, req.Replicas)
 		}
 		if used.UsedRAMMB+totalRAM > ns.RAMLimitMB {
 			return fmt.Errorf("%w: RAM เหลือ %d MB แต่ขอ %d MB (%d MB × %d replica)",
-				ErrQuotaExceeded, ns.RAMLimitMB-used.UsedRAMMB, totalRAM, ramMB, replicas)
+				ErrQuotaExceeded, remaining(ns.RAMLimitMB, used.UsedRAMMB), totalRAM, req.RAMMB, req.Replicas)
+		}
+		// ดิสก์เป็นแกนที่สาม เช็คเฉพาะตอนที่ขอมาจริง (service ธรรมดาส่ง 0 มาเสมอ)
+		if totalStorage > 0 && used.UsedStorageMB+totalStorage > ns.StorageLimitMB {
+			return fmt.Errorf("%w: ดิสก์เหลือ %d MB แต่ขอ %d MB",
+				ErrQuotaExceeded, remaining(ns.StorageLimitMB, used.UsedStorageMB), totalStorage)
 		}
 
 		// โควตาพอ → ให้ผู้เรียก INSERT service ภายใน tx เดียวกับที่ล็อก namespace ไว้
 		return insert(tx)
 	})
+}
+
+// remaining = โควตาที่เหลือสำหรับเอาไปแสดงในข้อความ error — ต้องไม่ติดลบ
+// เพราะแอดมินลดเพดานต่ำกว่ายอดที่จองไปแล้วได้ แล้วผู้ใช้จะเห็น "เหลือ -2048 MB" ซึ่งอ่านไม่รู้เรื่อง
+func remaining(limit, used int) int {
+	if limit < used {
+		return 0
+	}
+	return limit - used
 }
 
 // ReserveScale = คู่แฝดของ ReserveAndInsert แต่สำหรับของที่ deploy ไปแล้ว: ล็อก namespace →
@@ -189,16 +233,17 @@ func (q *QuotaService) ReserveAndInsert(
 // จะอ่านยอดเดิมแล้วต่างคนต่างคิดว่าโควตาพอ
 func (q *QuotaService) ReserveScale(
 	ctx context.Context,
-	namespaceID, serviceID, cpuMilli, ramMB, replicas int,
+	namespaceID, serviceID int,
+	req ResourceRequest,
 	update func(tx *gorm.DB) error,
 ) error {
 
-	if replicas < entity.MinReplicas || replicas > entity.MaxReplicas {
+	if req.Replicas < entity.MinReplicas || req.Replicas > entity.MaxReplicas {
 		return fmt.Errorf("%w: replica ต้องอยู่ระหว่าง %d-%d",
 			ErrServiceTooLarge, entity.MinReplicas, entity.MaxReplicas)
 	}
 
-	totalCPU, totalRAM := cpuMilli*replicas, ramMB*replicas
+	totalCPU, totalRAM, totalStorage := req.totals()
 
 	return q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ns entity.Namespace
@@ -218,11 +263,17 @@ func (q *QuotaService) ReserveScale(
 
 		if others.UsedCPUMilli+totalCPU > ns.CPULimitMilli {
 			return fmt.Errorf("%w: CPU เหลือ %dm แต่ %d replica ต้องใช้ %dm",
-				ErrQuotaExceeded, ns.CPULimitMilli-others.UsedCPUMilli, replicas, totalCPU)
+				ErrQuotaExceeded, remaining(ns.CPULimitMilli, others.UsedCPUMilli), req.Replicas, totalCPU)
 		}
 		if others.UsedRAMMB+totalRAM > ns.RAMLimitMB {
 			return fmt.Errorf("%w: RAM เหลือ %d MB แต่ %d replica ต้องใช้ %d MB",
-				ErrQuotaExceeded, ns.RAMLimitMB-others.UsedRAMMB, replicas, totalRAM)
+				ErrQuotaExceeded, remaining(ns.RAMLimitMB, others.UsedRAMMB), req.Replicas, totalRAM)
+		}
+		// service ที่ scale ได้คือ service ธรรมดาซึ่ง StorageMB = 0 เสมอ (database ตรึงที่ 1 Pod
+		// จึงไม่มีทางมาถึงตรงนี้) เช็คไว้ให้ครบแกนเผื่อกติกาเปลี่ยนในอนาคต
+		if totalStorage > 0 && others.UsedStorageMB+totalStorage > ns.StorageLimitMB {
+			return fmt.Errorf("%w: ดิสก์เหลือ %d MB แต่ต้องใช้ %d MB",
+				ErrQuotaExceeded, remaining(ns.StorageLimitMB, others.UsedStorageMB), totalStorage)
 		}
 
 		return update(tx)

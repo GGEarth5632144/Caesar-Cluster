@@ -59,6 +59,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// ถามคลัสเตอร์เป็นระยะว่า workload รันอยู่จริงไหม แล้วแก้สถานะใน DB ให้ตรง (ดู service_health.go)
+	// ผูกกับ ctx เดียวกับ HTTP server — ปิดเซิร์ฟเวอร์แล้ว worker หยุดตาม
+	services.NewServiceHealthMonitor(db, prov).Start(ctx)
+
 	var wg sync.WaitGroup
 
 	r := router.Setup(cfg, db, nsMgr, svcMgr, inviteMgr, telemetrySvc, powerService)

@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"sync"
 	"time"
 
 	"backend/internal/entity"
@@ -12,16 +14,28 @@ import (
 
 // MockProvisioner = provisioner ปลอมสำหรับ dev/test — ไม่แตะ cluster จริง แค่ log แล้วคืน success
 // ใช้ตอน PROVISIONER=mock (ค่า default) เพื่อให้พัฒนา/เทสต์ API ได้โดยไม่ต้องมี k8s
-type MockProvisioner struct{}
+//
+// Status ตอบเฉพาะสิ่งที่ตัวเองเห็นมากับตา ไม่แกล้งทำเป็น crash loop หรือ pending ให้ เพราะ mock
+// ไม่มีทางรู้ว่า container จะขึ้นได้ไหม — ตัวที่ตรวจจริงคือ KubernetesProvisioner.Status
+type MockProvisioner struct {
+	mu sync.Mutex
+	// key = nsName + "/" + svcName; true = deploy อยู่, false = ถูกลบไปแล้ว
+	// "ไม่มี key" ต่างจาก false: แปลว่า mock ไม่เคยเห็น workload นี้เลย จึงตอบแทนคลัสเตอร์ไม่ได้
+	known map[string]bool
+}
 
 // NewMockProvisioner สร้าง mock — ถูกเลือกใช้ใน main เมื่อ PROVISIONER != "kubernetes"
-func NewMockProvisioner() *MockProvisioner { return &MockProvisioner{} }
+func NewMockProvisioner() *MockProvisioner {
+	return &MockProvisioner{known: make(map[string]bool)}
+}
+
+func mockKey(nsName, svcName string) string { return nsName + "/" + svcName }
 
 // EnsureNamespace จำลองการสร้าง namespace + ResourceQuota
 // data flow: รับ namespace ที่ NamespaceManager เพิ่งบันทึกลง DB → log โควตาที่จะไปตั้งบน cluster → คืน nil
 func (m *MockProvisioner) EnsureNamespace(ctx context.Context, ns *entity.Namespace) error {
-	log.Printf("[MOCK] สร้าง namespace '%s' quota: %dm CPU / %d MB",
-		ns.Name, ns.CPULimitMilli, ns.RAMLimitMB)
+	log.Printf("[MOCK] สร้าง namespace '%s' quota: %dm CPU / %d MB RAM / %d MB ดิสก์",
+		ns.Name, ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB)
 	return nil
 }
 
@@ -33,10 +47,20 @@ func (m *MockProvisioner) DeleteNamespace(ctx context.Context, nsName string) er
 	return nil
 }
 
-// DeployService จำลองการ deploy workload: log สเปกที่ ServiceManager ส่งมา แจก node port ปลอมๆ แล้ว sleep ให้เหมือนมี latency จริง
-// data flow: รับชื่อ namespace + service (สเปก snapshot แล้ว) จาก ServiceManager.Create → log
-// → เซ็ต svc.NodePort (จำลองพฤติกรรมของ k8s Service ชนิด NodePort) → คืน nil
+// DeployService จำลองการ deploy: log สเปกแล้ว sleep ให้เหมือนมี latency จริง
+//
+// แยกทางเดินตาม svc.IsDatabase ให้ตรงกับของจริง โดยเฉพาะข้อที่ database ไม่ได้ NodePort
+// ทำให้ทดสอบได้ตั้งแต่รัน mock ว่าหน้าเว็บรับมือ node_port = null ถูกต้องไหม
 func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc *entity.Service) error {
+	// จดไว้ว่าเคย deploy แล้ว เพื่อให้ Status ตอบได้ว่าของยังอยู่ไหม
+	m.mu.Lock()
+	m.known[mockKey(nsName, svc.Name)] = true
+	m.mu.Unlock()
+
+	if svc.IsDatabase {
+		return m.deployDatabase(ctx, nsName, svc)
+	}
+
 	log.Printf("[MOCK] deploy service '%s' (image=%s) เข้า namespace '%s' — %d replica × (%dm CPU / %d MB) / port %d / %d env vars",
 		svc.Name, svc.Image, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, svc.ContainerPort, len(svc.EnvVars))
 	time.Sleep(300 * time.Millisecond) // จำลองว่าใช้เวลา
@@ -48,16 +72,62 @@ func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc 
 	return nil
 }
 
+// deployDatabase จำลองเส้นทางของ database — ของจริงคือ StatefulSet + PVC + ClusterIP + NetworkPolicy
+// (ดู KubernetesProvisioner.deployDatabase) ที่นี่แค่ log แล้ว "ไม่" เซ็ต svc.NodePort ตามสัญญาใน Provisioner
+func (m *MockProvisioner) deployDatabase(_ context.Context, nsName string, svc *entity.Service) error {
+	log.Printf("[MOCK] deploy database '%s' (image=%s) เข้า namespace '%s' — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s / port %d (ClusterIP เท่านั้น)",
+		svc.Name, svc.Image, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, svc.ContainerPort)
+	time.Sleep(300 * time.Millisecond)
+	return nil
+}
+
 // ScaleService จำลองการปรับจำนวน Pod — ของจริงคือแก้ Deployment.spec.replicas เฉยๆ
 func (m *MockProvisioner) ScaleService(ctx context.Context, nsName, svcName string, replicas int) error {
 	log.Printf("[MOCK] scale service '%s' ใน namespace '%s' เป็น %d replica", svcName, nsName, replicas)
 	return nil
 }
 
-// DeleteService จำลองการลบ workload ตัวเดียว
-// data flow: รับ namespace + ชื่อ service จาก ServiceManager.Delete → log → คืน nil
-func (m *MockProvisioner) DeleteService(ctx context.Context, nsName, svcName string) error {
-	log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svcName, nsName)
+// ErrMockNoRecord = mock ถูกถามถึง workload ที่ตัวเองไม่เคยเห็น จึงตอบแทนคลัสเตอร์ไม่ได้
+//
+// ต้องเป็น error ไม่ใช่ PhaseGone: mock เก็บทุกอย่างไว้ในหน่วยความจำ พอรีสตาร์ท backend
+// มันจำ service ที่ deploy ไว้ก่อนหน้าไม่ได้เลย ถ้าตอบ PhaseGone (= ยืนยันแล้วว่าของหาย)
+// monitor จะไล่เขียน failed ทับ service ทั้งระบบในรอบเดียวทั้งที่ไม่มีอะไรพัง
+// และ failed เป็นสถานะนิ่ง จึงไม่มีวันกลับมาเอง
+var ErrMockNoRecord = errors.New("mock ไม่มีบันทึกของ workload นี้ (เพิ่งรีสตาร์ท?) จึงบอกสถานะแทนคลัสเตอร์ไม่ได้")
+
+// Status ตอบเท่าที่ mock รู้จริง: deploy เอง = running, ลบเอง = gone, ไม่เคยเห็น = ตอบไม่ได้
+// บน PROVISIONER=mock จึงไม่มีทางเห็นสถานะ crashloop/pending เลย ซึ่งถูกแล้ว เพราะไม่มีคลัสเตอร์จริง
+func (m *MockProvisioner) Status(_ context.Context, nsName string, svc *entity.Service) (WorkloadStatus, error) {
+	m.mu.Lock()
+	deployed, recorded := m.known[mockKey(nsName, svc.Name)]
+	m.mu.Unlock()
+
+	switch {
+	case !recorded:
+		return WorkloadStatus{}, ErrMockNoRecord
+	case !deployed:
+		return WorkloadStatus{
+			Phase:   PhaseGone,
+			Reason:  "NotFound",
+			Message: "workload นี้ถูกลบไปแล้ว",
+		}, nil
+	default:
+		return WorkloadStatus{Phase: PhaseRunning}, nil
+	}
+}
+
+// DeleteService จำลองการลบ workload ตัวเดียว — database ต้องถอน NetworkPolicy กับ PVC เพิ่มด้วย
+func (m *MockProvisioner) DeleteService(ctx context.Context, nsName string, svc *entity.Service) error {
+	m.mu.Lock()
+	m.known[mockKey(nsName, svc.Name)] = false
+	m.mu.Unlock()
+
+	if svc.IsDatabase {
+		log.Printf("[MOCK] ลบ database '%s' ออกจาก namespace '%s' — StatefulSet + NetworkPolicy 'db-%s' + PVC '%s-data' (%d MB คืนโควตาดิสก์)",
+			svc.Name, nsName, svc.Name, svc.Name, svc.StorageMB)
+		return nil
+	}
+	log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svc.Name, nsName)
 	return nil
 }
 

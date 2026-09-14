@@ -566,7 +566,7 @@ func (h *AdminController) ListNamespaces(c *gin.Context) {
 // data flow: อ่าน id จาก path + JSON body → bind SetQuotaRequest → NamespaceManager.SetQuota
 // (ตรวจเพดาน → UPDATE namespaces → sync ResourceQuota ขึ้น cluster) → ตอบ namespace ที่อัปเดตแล้ว
 //
-// เพดาน: ทุก namespace ไม่เกิน 8 core / 8 GB เท่ากันหมด
+// เพดาน: ทุก namespace ไม่เกิน 8 core / 8 GB RAM / 50 GB ดิสก์ เท่ากันหมด
 func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -580,7 +580,8 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 		return
 	}
 
-	detail, err := h.ns.SetQuota(c.Request.Context(), id, req.CPULimitMilli, req.RAMLimitMB)
+	detail, err := h.ns.SetQuota(c.Request.Context(), id,
+		req.CPULimitMilli, req.RAMLimitMB, *req.StorageLimitMB)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrNamespaceNotFound):

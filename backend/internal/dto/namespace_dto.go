@@ -20,6 +20,13 @@ type JoinNamespaceRequest struct {
 type SetQuotaRequest struct {
 	CPULimitMilli int `json:"cpu_limit_milli" binding:"required,min=100,max=8000"`
 	RAMLimitMB    int `json:"ram_limit_mb" binding:"required,min=128,max=8192"`
+
+	// StorageLimitMB = เพดานดิสก์รวมของทุก database ในกลุ่ม (เพดานตรงกับ entity.MaxStorageLimitMB)
+	//
+	// เป็น pointer เพราะ 0 เป็นค่าที่ตั้งใจตั้งได้ (= กลุ่มนี้สร้าง database ไม่ได้) ซึ่ง binding
+	// required บน int ธรรมดาจะมองว่าเป็นค่าว่างแล้วปฏิเสธทิ้ง — nil จึงแปลว่า "ไม่ได้ส่งมา"
+	// และตอบ 400 ดีกว่าเผลอเซ็ตดิสก์ทั้งกลุ่มเป็น 0 เงียบๆ
+	StorageLimitMB *int `json:"storage_limit_mb" binding:"required,min=0,max=51200"`
 }
 
 // CreateInviteRequest = body ของ POST /api/namespaces/invites — เชิญ student_id คนหนึ่งเข้ากลุ่ม
