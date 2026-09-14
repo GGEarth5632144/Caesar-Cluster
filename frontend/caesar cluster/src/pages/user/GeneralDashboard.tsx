@@ -6,7 +6,8 @@ import { DashboardStatsSkeleton } from "@/components/ui/PageSkeletons";
 import { namespaceApi, namespaceUsagePercent, type NamespaceDetail } from "@/api/namespace";
 import { serviceApi, type AppService } from "@/api/services";
 import { PATHS } from "@/config/routes";
-import { getApiErrorMessage } from "@/api/authApi";
+import { authApi, getApiErrorCode, getApiErrorMessage } from "@/api/authApi";
+import { useAuthStore } from "@/store/authStore";
 
 interface ServiceAlert {
   id: number;
@@ -83,6 +84,7 @@ function statusColor(percent: number) {
 
 export default function GeneralDashboard({ user }: { user: any }) {
   const navigate = useNavigate();
+  const refreshUser = useAuthStore((state) => state.refreshUser);
   const [data, setData] = useState<NamespaceDetail | null>(null);
   const [alerts, setAlerts] = useState<ServiceAlert[]>([]);
   const [loading, setLoading] = useState(false);
@@ -98,11 +100,17 @@ export default function GeneralDashboard({ user }: { user: any }) {
         setAlerts(alertsFrom(services));
       })
       .catch((err) => {
+        // space ถูกลบ/ออกจากกลุ่มไประหว่างที่ session ยังถือ namespace_id เก่าไว้
+        // ซิงก์ store จาก /me แล้ว UserDashboard จะสลับไปหน้ายื่นคำขอใหม่ให้เอง แทนที่จะค้างอยู่ที่กล่อง error
+        if (getApiErrorCode(err) === "NO_NAMESPACE") {
+          authApi.me().then(refreshUser).catch(console.error);
+          return;
+        }
         console.error(err);
         setError(getApiErrorMessage(err, "ไม่สามารถโหลดข้อมูลสถิติทรัพยากรได้"));
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [refreshUser]);
 
   if (loading) {
     return <DashboardStatsSkeleton />;
