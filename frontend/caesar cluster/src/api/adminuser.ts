@@ -6,7 +6,6 @@ export interface User {
   student_id: string;
   role_id: number;
   real_name: string;
-  nick_name: string;
   namespace_id: number | null;
   gmail: string;
   year: number; // ปีที่เข้าศึกษา (พ.ศ. เช่น 2566) — ค่าดิบ ไม่ใช่ชั้นปีปัจจุบัน อย่าเอาไปโชว์ตรงๆ ใช้ year_level แทน
@@ -26,7 +25,6 @@ export interface UpdateUserDTO {
   student_id?: string;
   real_name?: string;
   gmail?: string;
-  nick_name?: string;
   year?: number;
   role_id?: number;
 }

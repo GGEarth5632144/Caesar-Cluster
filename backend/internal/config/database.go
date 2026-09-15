@@ -105,6 +105,7 @@ func ConnectDB(dbURL string) *gorm.DB {
 	}
 	dropRetiredOTPTables(db)
 	dropRetiredAlertTables(db)
+	dropRetiredNickNameColumn(db)
 	syncEligibleRoles(db)
 
 	// ไม่ประกาศ relation ให้ GORM จัดการ FK เอง เพราะเคยเจอว่ามันสร้าง sequence ผิดให้ column ที่เป็น FK
@@ -308,6 +309,17 @@ func backfillGmailVerified(db *gorm.DB) {
 		log.Printf("ทำเครื่องหมาย 'ยืนยันอีเมลแล้ว' ให้บัญชีเดิม %d รายการ (บัญชีที่มีอยู่ก่อนฟีเจอร์ยืนยันอีเมล) ✓",
 			result.RowsAffected)
 	}
+}
+
+// dropRetiredNickNameColumn ลบคอลัมน์ users.nick_name ที่เลิกใช้แล้ว (AutoMigrate ไม่ลบคอลัมน์ให้เอง)
+func dropRetiredNickNameColumn(db *gorm.DB) {
+	if !columnExists(db, "users", "nick_name") {
+		return
+	}
+	if err := db.Exec(`ALTER TABLE users DROP COLUMN IF EXISTS nick_name`).Error; err != nil {
+		log.Fatalf("drop column users.nick_name failed: %v", err)
+	}
+	log.Println("ลบคอลัมน์ users.nick_name ที่เลิกใช้แล้ว ✓")
 }
 
 // dropRetiredAlertTables ลบตาราง user_alerts/system_alerts ที่เลิกใช้แล้วทิ้ง

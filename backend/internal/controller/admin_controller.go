@@ -1048,9 +1048,6 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 	if req.Gmail != nil {
 		updates["gmail"] = *req.Gmail
 	}
-	if req.NickName != nil {
-		updates["nick_name"] = *req.NickName
-	}
 	if req.Year != nil {
 		updates["year"] = *req.Year
 	}

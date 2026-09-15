@@ -103,6 +103,8 @@ func Setup(
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db))
 		{
 			protected.GET("/me", authCtl.Me)
+			protected.PATCH("/me", authCtl.UpdateMe)
+			protected.POST("/me/password", middlewares.RateLimit(5, 15*time.Minute), authCtl.ChangePassword)
 			protected.GET("/request-templates", tmplCtl.List)
 
 			protected.GET("/requests", reqCtl.ListMine)

@@ -141,7 +141,7 @@ export default function GeneralDashboard({ user }: { user: any }) {
   const ramPercent = Math.round(usage.ram);
   const storagePercent = Math.round(usage.storage);
 
-  const userName = user?.real_name || user?.nick_name || "User Name";
+  const userName = user?.real_name || "User Name";
 
   return (
     <div className="flex flex-col gap-10 text-left font-mono animate-in fade-in duration-200">

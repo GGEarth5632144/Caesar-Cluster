@@ -39,7 +39,6 @@ export const usersScope: SearchScope = {
   placeholder: "ค้นหาผู้ใช้ — ชื่อ, รหัสนักศึกษา, อีเมล หรือ role:admin",
   fields: [
     { id: "name", label: "ชื่อ-นามสกุล", aliases: ["ชื่อ", "realname"], get: (u: User) => u.real_name },
-    { id: "nick", label: "ชื่อเล่น", aliases: ["ชื่อเล่น", "nickname"], get: (u: User) => u.nick_name },
     { id: "sid", label: "รหัสนักศึกษา", aliases: ["รหัส", "student", "student_id"], get: (u: User) => u.student_id },
     { id: "email", label: "อีเมล", aliases: ["อีเมล", "gmail", "mail"], get: (u: User) => u.gmail },
     {

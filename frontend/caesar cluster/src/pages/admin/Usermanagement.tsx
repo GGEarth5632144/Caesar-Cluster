@@ -239,12 +239,7 @@ export default function UserManagement() {
                           </div>
                           <div className="min-w-0">
                             <div className="truncate font-semibold text-[#211a14]" title={user.real_name}>
-                              <Highlight text={user.real_name} terms={highlightTerms} />{" "}
-                              {user.nick_name && (
-                                <span className="text-[#211a14]/50">
-                                  (<Highlight text={user.nick_name} terms={highlightTerms} />)
-                                </span>
-                              )}
+                              <Highlight text={user.real_name} terms={highlightTerms} />
                             </div>
                             <div className="text-sm text-[#211a14]/60 mt-0.5">
                               <Highlight text={user.student_id} terms={highlightTerms} />
@@ -369,7 +364,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
   const [formData, setFormData] = useState({
     student_id: user.student_id,
     real_name: user.real_name,
-    nick_name: user.nick_name || "",
     gmail: user.gmail || "",
     role_id: user.role_id.toString(),
   });
@@ -389,7 +383,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
       const payload: UpdateUserDTO = {
         student_id: formData.student_id,
         real_name: formData.real_name,
-        nick_name: formData.nick_name,
         gmail: formData.gmail,
         role_id: parseInt(formData.role_id, 10),
       };
@@ -453,11 +446,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
           <input name="real_name" value={formData.real_name} onChange={handleChange} required className={inputClass} />
         </div>
 
-        {/* ชื่อเล่น */}
-        <div>
-          <label className={labelClass}>Nickname</label>
-          <input name="nick_name" value={formData.nick_name} onChange={handleChange} className={inputClass} />
-        </div>
 
         {/* ชั้นปี — คำนวณสดจาก student_id เสมอ แก้ไขตรงนี้ไม่ได้ (เปลี่ยน Student ID แล้วบันทึก ค่านี้จะขยับตาม) */}
         <div>
