@@ -13,7 +13,7 @@ import "time"
 // table นี้เลยมีไว้เป็นที่เดียวที่ยังหาข้อมูลตั้งต้นของ request กลับมาได้ — ไม่ใช่ system of record ของสถานะ
 // pipeline (นั่นยังคง poll ตรงไปที่ Cluster-AI เหมือนเดิมทุกอย่าง ไม่มีอะไรเปลี่ยน) แค่จำ "ขอ deploy อะไรมา" เฉยๆ
 //
-// data flow เข้า: RequestQuotar.tsx (handleDeployWithAI) ยิง POST มาที่นี่ "คู่ขนาน" กับตอนที่ยิง POST /api/review
+// data flow เข้า: MyService.tsx (handleDeployWithAI) ยิง POST มาที่นี่ "คู่ขนาน" กับตอนที่ยิง POST /api/review
 // ไปที่ Cluster-AI โดยตรง (คนละ call กัน ไม่ block กัน — Caesar-Cluster ไม่ได้ proxy การเรียก Cluster-AI)
 // data flow ออก: AIReviewPage.tsx ถ้า location.state หาย → GET /api/ai-review-requests/:request_id แทน
 //

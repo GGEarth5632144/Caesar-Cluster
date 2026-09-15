@@ -178,7 +178,7 @@ function statusAdvice(svc: AppService): string | null {
   return null;
 }
 
-export default function RequestQuotar() {
+export default function MyService() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const [services, setServices] = useState<AppService[]>([]);

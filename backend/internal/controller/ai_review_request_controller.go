@@ -32,7 +32,7 @@ func NewAIReviewRequestController(db *gorm.DB) *AIReviewRequestController {
 }
 
 // Create บันทึก "ใบเสร็จ" ของ request ที่กำลังจะยิงไป Cluster-AI
-// data flow: RequestQuotar.tsx (handleDeployWithAI) ยิงมาที่นี่คู่ขนานกับตอนยิง POST /api/review
+// data flow: MyService.tsx (handleDeployWithAI) ยิงมาที่นี่คู่ขนานกับตอนยิง POST /api/review
 // ไปที่ Cluster-AI โดยตรง (คนละ call กัน ไม่ block กัน — Caesar-Cluster ไม่ได้ proxy การเรียก Cluster-AI)
 func (h *AIReviewRequestController) Create(c *gin.Context) {
 	nsID, ok := currentNamespaceID(c, h.db)

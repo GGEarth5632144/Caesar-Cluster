@@ -12,7 +12,6 @@ export const PATHS = {
   services: "services",
 
   requestResources: "request-resources",
-  myService: "my-service",
   createService: "create-service",
 
   // ปิด route ไว้ชั่วคราว — หน้า AIReviewPage ยังอยู่ในโปรเจกต์แต่ถอดออกจาก App.tsx แล้ว

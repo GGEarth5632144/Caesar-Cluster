@@ -84,7 +84,7 @@ export function DashboardStatsSkeleton() {
   );
 }
 
-// ---------- กริดการ์ด service (RequestQuotar / Service) ----------
+// ---------- กริดการ์ด service (MyService / Service) ----------
 export function ServiceCardsSkeleton({ count = 6 }: { count?: number }) {
   return (
     <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
