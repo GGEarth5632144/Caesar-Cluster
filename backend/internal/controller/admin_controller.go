@@ -708,6 +708,8 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
 		case errors.Is(err, services.ErrQuotaOutOfRange):
 			utils.Error(c, http.StatusBadRequest, "QUOTA_OUT_OF_RANGE", err.Error())
+		case errors.Is(err, services.ErrQuotaBelowUsage):
+			utils.Error(c, http.StatusConflict, "QUOTA_BELOW_USAGE", err.Error())
 		default:
 			log.Printf("set quota error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ปรับโควตาไม่สำเร็จ")

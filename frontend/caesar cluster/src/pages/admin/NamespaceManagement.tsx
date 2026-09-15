@@ -621,30 +621,15 @@ function ManageNamespaceModal({
     ramMB !== namespace.ram_limit_mb ||
     storageMB !== namespace.storage_limit_mb;
 
-  // ลดโควตาให้ต่ำกว่ายอดที่ใช้อยู่ได้ (backend ยอม เป็นพฤติกรรมเดียวกับ ResourceQuota ของ k8s)
-  // แต่ service เดิมจะยังรันต่อและ deploy เพิ่มไม่ได้ — ต้องบอกก่อนกดบันทึก
-  // ไม่ใช่ปล่อยให้เจ้าของ space ไปเจอเอาตอน deploy แล้วงงว่าทำไมโดนปฏิเสธ
+  // ห้ามต่ำกว่ายอดที่ service จองไว้ — backend ปฏิเสธด้วย QUOTA_BELOW_USAGE
   const cpuBelowUsage = cpuMilli < namespace.usage.used_cpu_milli;
   const ramBelowUsage = ramMB < namespace.usage.used_ram_mb;
-
-  // เตือนคนละแบบกับ CPU/RAM: ลด CPU/RAM แค่ทำให้ขอเพิ่มไม่ได้ แต่ดิสก์ที่จองไปแล้วเป็นก้อนจริง
-  // บนเครื่อง ลดเพดานไม่ทำให้มันคืนที่ ต้องลบ database ทิ้งเท่านั้น
-  const storageWarning = (() => {
-    if (storageMB < namespace.usage.used_storage_mb) {
-      return (
-        `ต่ำกว่าที่จองไว้แล้ว ${gigabytes(namespace.usage.used_storage_mb)} GB — ` +
-        "ดิสก์ก้อนเดิมไม่คืนที่ให้เองจนกว่าจะลบ database ทิ้ง และกลุ่มนี้จะสร้าง database ใหม่ไม่ได้"
-      );
-    }
-    if (storageMB === 0) {
-      return "ตั้งเป็น 0 = กลุ่มนี้จะสร้าง database ใหม่ไม่ได้เลย (service ธรรมดายังสร้างได้ตามปกติ)";
-    }
-    return null;
-  })();
+  const storageBelowUsage = storageMB < namespace.usage.used_storage_mb;
+  const belowUsage = cpuBelowUsage || ramBelowUsage || storageBelowUsage;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isDirty) return;
+    if (!isDirty || belowUsage) return;
 
     setIsSubmitting(true);
     try {
@@ -664,8 +649,7 @@ function ManageNamespaceModal({
   };
 
   const labelClass = "mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]";
-  const belowUsageWarning =
-    "ต่ำกว่ายอดที่ใช้อยู่ — บริการเดิมยังรันต่อ แต่จะ deploy เพิ่มไม่ได้จนกว่าจะลบของเก่าออก";
+  const belowUsageError = "ต่ำกว่ายอดที่ใช้อยู่ — ต้องลบหรือลดขนาด service ก่อนถึงจะลดโควตาได้";
 
   return (
     <AdminModal
@@ -698,7 +682,7 @@ function ManageNamespaceModal({
           </button>
           <button
             type="submit"
-            disabled={isSubmitting || !isDirty}
+            disabled={isSubmitting || !isDirty || belowUsage}
             className="inline-flex min-w-[140px] items-center justify-center rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
           >
             {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "บันทึกโควตา"}
@@ -719,7 +703,7 @@ function ManageNamespaceModal({
           usedDisplay={`ใช้อยู่ ${cores(namespace.usage.used_cpu_milli)} Core`}
           maxDisplay={`สูงสุด ${cores(QUOTA_BOUNDS.cpu.max)} Core`}
           presets={CPU_PRESETS.map((v) => ({ value: v, label: `${cores(v)} Core` }))}
-          warning={cpuBelowUsage ? belowUsageWarning : null}
+          error={cpuBelowUsage ? belowUsageError : null}
           disabled={isSubmitting}
         />
 
@@ -736,7 +720,7 @@ function ManageNamespaceModal({
           usedDisplay={`ใช้อยู่ ${gigabytes(namespace.usage.used_ram_mb)} GB`}
           maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.ram.max)} GB`}
           presets={RAM_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
-          warning={ramBelowUsage ? belowUsageWarning : null}
+          error={ramBelowUsage ? belowUsageError : null}
           disabled={isSubmitting}
         />
 
@@ -753,7 +737,8 @@ function ManageNamespaceModal({
           usedDisplay={`จองแล้ว ${gigabytes(namespace.usage.used_storage_mb)} GB`}
           maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.storage.max)} GB`}
           presets={STORAGE_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
-          warning={storageWarning}
+          error={storageBelowUsage ? belowUsageError : null}
+          warning={storageMB === 0 ? "ตั้งเป็น 0 = กลุ่มนี้จะสร้าง database ใหม่ไม่ได้" : null}
           disabled={isSubmitting}
         />
       </div>
@@ -803,7 +788,8 @@ interface QuotaSliderProps {
   usedDisplay: string;
   maxDisplay: string;
   presets: { value: number; label: string }[];
-  warning: string | null;
+  error?: string | null;
+  warning?: string | null;
   disabled: boolean;
 }
 
@@ -818,6 +804,7 @@ function QuotaSlider({
   usedDisplay,
   maxDisplay,
   presets,
+  error,
   warning,
   disabled,
 }: QuotaSliderProps) {
@@ -883,8 +870,12 @@ function QuotaSlider({
         />
       </div>
 
-      {warning && (
-        <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm text-orange-700">{warning}</p>
+      {error ? (
+        <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      ) : (
+        warning && (
+          <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm text-orange-700">{warning}</p>
+        )
       )}
     </div>
   );
