@@ -2,13 +2,16 @@
 import axiosClient from './axiosClient';
 
 export interface NodeTelemetry {
-    ID: number;
-    NodeName: string;
-    Temperature: number;
-    RamUsedMB: number;
-    IsUp: number;
-    Procs: number;
-    UpdatedAt: string; 
+  ID: number;
+  NodeName: string;
+  Temperature: number;
+  RamUsedMB: number;
+  RamTotalMB: number; 
+  UseableStorage: number;
+  CpuUsage: number;   
+  IsUp: number;
+  Procs: number;
+  UpdatedAt: string; 
 }
 
 export interface PowerNode {
@@ -27,6 +30,9 @@ export interface ClusterHistoryData {
   time: string;
   avgTemp: number;
   totalRam: number;
+  maxRam: number;
+  useablestorage: number;     
+  avgCpu: number;    
   onlineNodes: number;
 }
 
@@ -39,7 +45,6 @@ export interface PowerHistoryData {
 
 export const nodetelemetry = {
   getAll: async () => {
-    // เปลี่ยนจาก ApiResponse<NodeTelemetry[]> เป็น NodeTelemetry[] ตรงๆ
     const response = await axiosClient.get<NodeTelemetry[]>('/telemetry');
     return response.data; 
   },
@@ -56,6 +61,3 @@ export const nodetelemetry = {
     return response.data;
   },
 };
-
-
-

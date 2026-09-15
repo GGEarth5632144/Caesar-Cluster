@@ -28,18 +28,17 @@ func NewTelemetryService(db *gorm.DB) *TelemetryService {
 // StartTelemetryWorker ฟังก์ชันนี้ควรถูกเรียกใช้งาน 1 ครั้งตอน Start Server (เช่น ใน main.go)
 func (s *TelemetryService) StartTelemetryWorker() {
 	ticker := time.NewTicker(5 * time.Second)
-	
+
 	// สั่งรัน Goroutine แยกเป็น Background Task
 	go func() {
 		for range ticker.C {
 			s.fetchAndSaveMetrics()
 		}
 	}()
-	
+
 	fmt.Println("Telemetry Background Worker started (5s interval)...")
 }
 
-// queryPrometheus เป็น Helper สำหรับยิง HTTP GET ไปที่ Prometheus API
 // queryPrometheus เป็น Helper สำหรับยิง HTTP GET ไปที่ Prometheus API (แบบกันค้าง)
 func (s *TelemetryService) queryPrometheus(promQuery string) (*dto.PrometheusResponse, error) {
 
@@ -52,19 +51,17 @@ func (s *TelemetryService) queryPrometheus(promQuery string) (*dto.PrometheusRes
 	apiURL := fmt.Sprintf(promQueryURL, url.QueryEscape(promQuery))
 
 	// 1. สร้าง Client แบบตั้งเวลา Timeout แค่ 4 วินาที
-	// ถ้านานกว่านี้ถือว่า Prometheus หมุนนานไป ช่างมัน ปล่อยผ่าน
 	client := &http.Client{
 		Timeout: 4 * time.Second,
 	}
 
 	resp, err := client.Get(apiURL)
 	if err != nil {
-		// ถ้าดึงไม่ได้ (เช่น Timeout) คืนค่า error กลับไปเลย โค้ดที่เรียกใช้จะได้ข้ามไป
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	// 2. ถ้าไม่ได้ Status 200 OK ให้ข้ามไปเลย ไม่ต้องพยายามอ่าน JSON
+	// 2. ถ้าไม่ได้ Status 200 OK ให้ข้ามไปเลย
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Prometheus returned HTTP %d", resp.StatusCode)
 	}
@@ -98,7 +95,6 @@ func (s *TelemetryService) fetchAndSaveMetrics() {
 			if nodeName == "" {
 				continue
 			}
-			// ถ้ายังไม่มีชื่อโหนดนี้ใน Map ให้สร้างใหม่
 			if _, exists := nodesMap[nodeName]; !exists {
 				nodesMap[nodeName] = &entity.NodeTelemetry{NodeName: nodeName}
 			}
@@ -115,6 +111,38 @@ func (s *TelemetryService) fetchAndSaveMetrics() {
 			}
 		}
 	}
+	if totalRamRes, err := s.queryPrometheus(`node_memory_MemTotal_bytes`); err == nil && totalRamRes.Status == "success" {
+		for _, item := range totalRamRes.Data.Result {
+			nodeName := item.Metric["node"]
+			if node, exists := nodesMap[nodeName]; exists {
+				node.RamTotalMB = parseFloat(item.Value[1]) / (1024 * 1024)
+			}
+		}
+	}
+
+	var totalClusterFreeStorage float64 = 0
+	if storageRes, err := s.queryPrometheus(`sum(node_filesystem_free_bytes{mountpoint="/", fstype!=""})`); err == nil && storageRes.Status == "success" {
+		if len(storageRes.Data.Result) > 0 {
+			valStr, _ := storageRes.Data.Result[0].Value[1].(string)
+			bytesVal, _ := strconv.ParseFloat(valStr, 64)
+			totalClusterFreeStorage = bytesVal / (1024 * 1024 * 1024) // แปลง Bytes เป็น GB
+		}
+	}
+	for _, node := range nodesMap {
+		node.UseableStorage = totalClusterFreeStorage
+	}
+
+	cpuQuery := `100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)`
+	if cpuRes, err := s.queryPrometheus(cpuQuery); err == nil && cpuRes.Status == "success" {
+		for _, item := range cpuRes.Data.Result {
+			nodeName := item.Metric["node"]
+			if node, exists := nodesMap[nodeName]; exists {
+				node.CpuUsage = parseFloat(item.Value[1])
+			}
+		}
+	}
+
+	
 
 	// 4. ดึงสถานะ IsUp
 	if upRes, err := s.queryPrometheus(`up`); err == nil && upRes.Status == "success" {
@@ -136,6 +164,8 @@ func (s *TelemetryService) fetchAndSaveMetrics() {
 		}
 	}
 
+	
+
 	// 6. แปลง Map เป็น Array (Slice) เพื่อเตรียมบันทึกลง Database
 	var telemetryRecords []entity.NodeTelemetry
 	for _, v := range nodesMap {
@@ -144,11 +174,19 @@ func (s *TelemetryService) fetchAndSaveMetrics() {
 
 	// 7. บันทึกลง Database ด้วยเทคนิค Upsert (Bulk)
 	if len(telemetryRecords) > 0 {
-		// OnConflict จะทำการเช็กว่าถ้า NodeName ซ้ำกัน ให้ทำการ Update ฟิลด์ต่างๆ
-		// ถ้าไม่ซ้ำ (เพิ่งรันครั้งแรก) ระบบจะทำการ Insert แถวใหม่ให้
 		err := s.DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "node_name"}},
-			DoUpdates: clause.AssignmentColumns([]string{"temperature", "ram_used_mb", "is_up", "procs", "updated_at"}),
+			// 🚨 [อัปเดต] เพิ่ม "ram_total_mb" และ "cpu_usage" ลงไปให้อัปเดตด้วย
+			DoUpdates: clause.AssignmentColumns([]string{
+				"temperature", 
+				"ram_used_mb", 
+				"ram_total_mb", 
+				"cpu_usage", 
+				"useable_storage",
+				"is_up", 
+				"procs", 
+				"updated_at",
+			}),
 		}).Create(&telemetryRecords).Error
 
 		if err != nil {
@@ -159,7 +197,6 @@ func (s *TelemetryService) fetchAndSaveMetrics() {
 
 func (s *TelemetryService) GetAllTelemetry() ([]entity.NodeTelemetry, error) {
 	var records []entity.NodeTelemetry
-	// ใช้คำสั่ง Find เพื่อดึงข้อมูลทั้งหมดออกมา
 	err := s.DB.Find(&records).Error
 	return records, err
 }
@@ -170,7 +207,10 @@ func (s *TelemetryService) GetAllTelemetry() ([]entity.NodeTelemetry, error) {
 type ClusterHistoryData struct {
 	Time        string  `json:"time"`        // เวลาแกน X (เช่น "10:30")
 	AvgTemp     float64 `json:"avgTemp"`     // อุณหภูมิเฉลี่ยคลัสเตอร์
-	TotalRam    float64 `json:"totalRam"`    // แรมรวมที่ใช้งาน (MB)
+	TotalRam    float64 `json:"totalRam"`    // แรมรวมที่ "ใช้งานอยู่" (MB)
+	MaxRam      float64 `json:"maxRam"`      // 🚨 แรมรวม "ทั้งหมดที่มี" (MB) - เพิ่มมาใหม่สำหรับทำกราฟ Used/Total
+	AvgCpu      float64 `json:"avgCpu"`      // 🚨 CPU เฉลี่ยทั้งคลัสเตอร์ (%) - เพิ่มมาใหม่สำหรับกราฟ
+	UseableStorage     float64 `json:"useablestorage"`     
 	OnlineNodes int     `json:"onlineNodes"` // จำนวนโหนดที่ออนไลน์
 }
 
@@ -183,7 +223,6 @@ func (s *TelemetryService) queryPrometheusRange(promQuery string, start, end int
 
 	apiURL := fmt.Sprintf(promRangeURL, url.QueryEscape(promQuery), start, end, step)
 
-	// 1. การดึงประวัติกราฟ (History) อาจจะต้องให้เวลามันคิดนานกว่าหน่อย
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -194,7 +233,6 @@ func (s *TelemetryService) queryPrometheusRange(promQuery string, start, end int
 	}
 	defer resp.Body.Close()
 
-	// 2. ถ้าไม่ได้ Status 200 OK ให้ข้าม
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Prometheus returned HTTP %d", resp.StatusCode)
 	}
@@ -213,11 +251,10 @@ func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]Cluster
 	var start int64
 	var step string
 
-	// กำหนดช่วงเวลา (Time Window) และความถี่ (Step) ตามที่ UI ส่งมา
 	switch timeRange {
 	case "1h":
 		start = now.Add(-1 * time.Hour).Unix()
-		step = "1m" // จุดกราฟทุกๆ 1 นาที
+		step = "1m"
 	case "6h":
 		start = now.Add(-6 * time.Hour).Unix()
 		step = "5m"
@@ -230,12 +267,11 @@ func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]Cluster
 	case "30d":
 		start = now.Add(-30 * 24 * time.Hour).Unix()
 		step = "6h"
-	default: // Default 1 ชั่วโมง
+	default:
 		start = now.Add(-1 * time.Hour).Unix()
 		step = "1m"
 	}
 
-	// ใช้ Map เพื่อจับคู่ค่า Temp, RAM, OnlineNode ที่มี Timestamp (แกน X) ตรงกัน
 	historyMap := make(map[int64]*ClusterHistoryData)
 
 	parseFloat := func(val interface{}) float64 {
@@ -247,36 +283,74 @@ func (s *TelemetryService) GetHistoryFromPrometheus(timeRange string) ([]Cluster
 		return f
 	}
 
-	// 1. ดึง Avg Temp (ใช้ PromQL คำนวณค่าเฉลี่ยของทั้งคลัสเตอร์มาให้เลย)
+	// Helper สำหรับตรวจสอบและสร้าง Entry ใน Map
+	ensureHistoryData := func(ts int64) {
+		if _, exists := historyMap[ts]; !exists {
+			// ใช้ RFC3339 ตามที่แก้บัคกราฟหน้า UI
+			historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)} 
+		}
+	}
+
+	// 1. ดึง Avg Temp
 	tempRes, _ := s.queryPrometheusRange(`avg(node_hwmon_temp_celsius)`, start, end, step)
 	if tempRes != nil && tempRes.Status == "success" && len(tempRes.Data.Result) > 0 {
 		for _, val := range tempRes.Data.Result[0].Values {
-			ts := int64(val[0].(float64)) // Prometheus คืน Timestamp เป็น float64
-			historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)} // แปลงเป็น HH:mm
+			ts := int64(val[0].(float64))
+			ensureHistoryData(ts)
 			historyMap[ts].AvgTemp = parseFloat(val[1])
 		}
 	}
 
-	// 2. ดึง Total RAM Used (MB) ของทั้งคลัสเตอร์
+	// 2. ดึง Total RAM Used
 	ramRes, _ := s.queryPrometheusRange(`sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)`, start, end, step)
 	if ramRes != nil && ramRes.Status == "success" && len(ramRes.Data.Result) > 0 {
 		for _, val := range ramRes.Data.Result[0].Values {
 			ts := int64(val[0].(float64))
-			if _, exists := historyMap[ts]; !exists {
-				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)}
-			}
+			ensureHistoryData(ts)
 			historyMap[ts].TotalRam = parseFloat(val[1]) / (1024 * 1024)
 		}
 	}
+
+	// =========================================================================
+	// 🚨 [เพิ่มใหม่] 2.1 ดึง Max RAM ของทั้งคลัสเตอร์ (สำหรับเอาไปโชว์ Used/Total ในกราฟ)
+	// =========================================================================
+	maxRamRes, _ := s.queryPrometheusRange(`sum(node_memory_MemTotal_bytes)`, start, end, step)
+	if maxRamRes != nil && maxRamRes.Status == "success" && len(maxRamRes.Data.Result) > 0 {
+		for _, val := range maxRamRes.Data.Result[0].Values {
+			ts := int64(val[0].(float64))
+			ensureHistoryData(ts)
+			historyMap[ts].MaxRam = parseFloat(val[1]) / (1024 * 1024)
+		}
+	}
+
+	// =========================================================================
+	// 🚨 [เพิ่มใหม่] 2.2 ดึง Avg CPU ทั้งคลัสเตอร์ แบบย้อนหลัง
+	// =========================================================================
+	cpuQuery := `avg(100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100))`
+	cpuRes, _ := s.queryPrometheusRange(cpuQuery, start, end, step)
+	if cpuRes != nil && cpuRes.Status == "success" && len(cpuRes.Data.Result) > 0 {
+		for _, val := range cpuRes.Data.Result[0].Values {
+			ts := int64(val[0].(float64))
+			ensureHistoryData(ts)
+			historyMap[ts].AvgCpu = parseFloat(val[1])
+		}
+	}
+
+	storageHistoryRes, _ := s.queryPrometheusRange(`sum(node_filesystem_free_bytes{mountpoint="/", fstype!=""})`, start, end, step)
+    if storageHistoryRes != nil && storageHistoryRes.Status == "success" && len(storageHistoryRes.Data.Result) > 0 {
+        for _, val := range storageHistoryRes.Data.Result[0].Values {
+            ts := int64(val[0].(float64))
+            ensureHistoryData(ts)
+            historyMap[ts].UseableStorage = parseFloat(val[1]) / (1024 * 1024 * 1024) // แปลงเป็น GB
+        }
+    }
 
 	// 3. ดึง Online Nodes รวม
 	upRes, _ := s.queryPrometheusRange(`sum(up)`, start, end, step)
 	if upRes != nil && upRes.Status == "success" && len(upRes.Data.Result) > 0 {
 		for _, val := range upRes.Data.Result[0].Values {
 			ts := int64(val[0].(float64))
-			if _, exists := historyMap[ts]; !exists {
-				historyMap[ts] = &ClusterHistoryData{Time: time.Unix(ts, 0).Format(time.RFC3339)}
-			}
+			ensureHistoryData(ts)
 			historyMap[ts].OnlineNodes = int(parseFloat(val[1]))
 		}
 	}
