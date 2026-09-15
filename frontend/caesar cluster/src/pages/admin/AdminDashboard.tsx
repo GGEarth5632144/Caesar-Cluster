@@ -10,6 +10,8 @@ import {
   Clock3,
   Zap,
   PlugZap,
+  Server,
+  Thermometer,
 } from "lucide-react";
 import {
   AreaChart,
@@ -28,27 +30,115 @@ import {
 } from "recharts";
 
 // ─── API Imports ───
-import { 
-  nodetelemetry, 
-  type NodeTelemetry, 
-  type ClusterHistoryData, 
-  type PowerNode, 
-  type PowerHistoryData 
+import {
+  nodetelemetry,
+  type NodeTelemetry,
+  type ClusterHistoryData,
+  type PowerNode,
+  type PowerHistoryData,
 } from "@/api/mornitorequest";
 import { adminDashboardApi, type AdminDashboardSummary } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
 
-// ─── Main Component ───
-// Recharts ประกาศ label ของ Tooltip เป็น ReactNode ซึ่งกว้างจนรวม undefined เข้าไปด้วย
-// ส่ง ReactNode เข้า new Date() ตรงๆ ไม่ผ่าน type check — ค่าจริงที่ Recharts ส่งเข้ามาคือฟิลด์
-// time ของข้อมูลกราฟ (สตริงเวลา) เลยแปลงเป็น string ก่อน แล้วกันกรณีแปลงเป็นวันที่ไม่ได้ไว้ด้วย
-// เกณฑ์เดียวกับที่ tickFormatter ของแกน X ใช้อยู่แล้ว จะได้ไม่โชว์ "Invalid Date" คาหน้าจอ
+// ─── Sub-Components ───
+const NodeGridItem = ({ node }: { node: NodeTelemetry }) => {
+  const isOffline = node.IsUp === 0;
+  const isHot = node.Temperature >= 75;
+  const isHighCpu = node.CpuUsage >= 85;
+  const statusColor = isOffline ? "bg-red-500" : "bg-emerald-500";
+  const rowBg = isOffline
+    ? "bg-red-50 border-red-200"
+    : "bg-white border-black/5";
+
+  return (
+    <div
+      className={`flex flex-col p-5 border rounded-3xl shadow-sm ${rowBg} hover:shadow-md transition-all duration-200 gap-3`}
+    >
+      <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
+        <div className="relative flex h-2.5 w-2.5 shrink-0">
+          {!isOffline && (
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+          )}
+          <span
+            className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor}`}
+          />
+        </div>
+        <span
+          className={`text-sm font-extrabold truncate ${isOffline ? "text-red-700" : "text-gray-800"}`}
+        >
+          {node.NodeName}
+        </span>
+      </div>
+
+      {isOffline ? (
+        <div className="flex items-center justify-center py-5">
+          <span className="text-xs text-red-500 font-bold uppercase tracking-widest">
+            Offline
+          </span>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 font-mono">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              CPU
+            </span>
+            <span
+              className={`text-sm font-bold ${isHighCpu ? "text-red-500" : "text-gray-700"}`}
+            >
+              {(node.CpuUsage || 0).toFixed(1)} %
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              RAM
+            </span>
+            <span className="text-sm font-bold text-gray-700">
+              {(node.RamUsedMB / 1024).toFixed(1)} /{" "}
+              {node.RamTotalMB ? (node.RamTotalMB / 1024).toFixed(1) : "0.0"} GB
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-semibold text-gray-400">
+              Temp
+            </span>
+            <span
+              className={`text-sm font-bold ${isHot ? "text-red-500 animate-pulse" : "text-orange-500"}`}
+            >
+              {node.Temperature.toFixed(1)} °C
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Formatters ───
 function formatTooltipTime(label: ReactNode) {
   const raw = String(label);
   const date = new Date(raw);
-  return isNaN(date.getTime()) ? raw : date.toLocaleTimeString("th-TH");
+  if (isNaN(date.getTime())) return raw;
+  return date.toLocaleString("th-TH", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
+function formatXAxisTime(val: any, timeRange: string) {
+  const date = new Date(val);
+  if (isNaN(date.getTime())) return val;
+  if (timeRange === "7d" || timeRange === "30d") {
+    return date.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+  }
+  return date.toLocaleTimeString("th-TH", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// ─── Main Component ───
 export default function AdminDashboard() {
   const [nodes, setNodes] = useState<NodeTelemetry[]>([]);
   const [historyData, setHistoryData] = useState<ClusterHistoryData[]>([]);
@@ -64,14 +154,14 @@ export default function AdminDashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      // โหลดทุกสรรพสิ่งมาพร้อมกันในทีเดียว!
-      const [nodesData, historyRes, powerData, powerHistData, summaryData] = await Promise.all([
-        nodetelemetry.getAll(),
-        nodetelemetry.getHistory(timeRange),
-        nodetelemetry.getAllPower(),
-        nodetelemetry.getPowerHistory(timeRange),
-        adminDashboardApi.summary(),
-      ]);
+      const [nodesData, historyRes, powerData, powerHistData, summaryData] =
+        await Promise.all([
+          nodetelemetry.getAll(),
+          nodetelemetry.getHistory(timeRange),
+          nodetelemetry.getAllPower(),
+          nodetelemetry.getPowerHistory(timeRange),
+          adminDashboardApi.summary(),
+        ]);
 
       setNodes(nodesData.sort((a, b) => a.NodeName.localeCompare(b.NodeName)));
       setHistoryData(historyRes);
@@ -95,38 +185,60 @@ export default function AdminDashboard() {
   }, [timeRange]);
 
   // ─── Data Processing ───
-  // Nodes & Telemetry
   const totalNodes = nodes.length;
   const onlineNodes = nodes.filter((n) => n.IsUp === 1);
-  const avgTemp = onlineNodes.length > 0 ? onlineNodes.reduce((s, n) => s + n.Temperature, 0) / onlineNodes.length : 0;
-  
-  // Power
-  const totalWatt = powers.reduce((sum, p) => sum + p.Watt, 0);
-  const activePowerNodes = powers.filter(p => p.Watt > 0).length;
+  const avgTemp =
+    onlineNodes.length > 0
+      ? onlineNodes.reduce((s, n) => s + n.Temperature, 0) / onlineNodes.length
+      : 0;
 
-  // VM Requests — backend นับมาให้แล้ว หน้านี้แค่อ่านค่ามาวาง
+  const totalWatt = powers.reduce((sum, p) => sum + p.Watt, 0);
+  const activePowerNodes = powers.filter((p) => p.Watt > 0).length;
+
   const counts = summary?.request_counts;
   const totalUsers = summary?.user_count ?? 0;
   const pendingRequests = summary?.pending_requests ?? [];
 
   const requestStatusData = [
-    { name: 'Pending', value: counts?.pending ?? 0, color: '#f59e0b' },
-    { name: 'Approved', value: counts?.approved ?? 0, color: '#10b981' },
-    { name: 'Denied', value: counts?.denied ?? 0, color: '#ef4444' },
+    { name: "Pending", value: counts?.pending ?? 0, color: "#f59e0b" },
+    { name: "Approved", value: counts?.approved ?? 0, color: "#10b981" },
+    { name: "Denied", value: counts?.denied ?? 0, color: "#ef4444" },
   ];
 
-  // เหลือแค่แปลง YYYY-MM-DD ที่ backend ส่งมาเป็นป้ายภาษาไทยสั้นๆ บนแกน X
-  // (ตัวนับเองย้ายไปอยู่ที่ SQL พร้อมเติมวันที่ไม่มีคำขอเป็น 0 ให้ครบ 7 วันแล้ว)
   const requestTimelineData = useMemo(
     () =>
       (summary?.request_timeline ?? []).map((point) => ({
-        date: new Date(`${point.date}T00:00:00`).toLocaleDateString('th-TH', {
-          day: 'numeric',
-          month: 'short',
+        date: new Date(`${point.date}T00:00:00`).toLocaleDateString("th-TH", {
+          day: "numeric",
+          month: "short",
         }),
         requests: point.count,
       })),
     [summary],
+  );
+
+  // Derived History Metrics
+  const latestCpu =
+    historyData.length > 0 ? historyData[historyData.length - 1].avgCpu : 0;
+  const latestRamUsed =
+    historyData.length > 0 ? historyData[historyData.length - 1].totalRam : 0;
+  const latestMaxRam =
+    historyData.length > 0 ? historyData[historyData.length - 1].maxRam : 0;
+
+  // ลดความหนาแน่นของข้อมูลกราฟ
+  const filteredHistoryData = historyData.filter((_, idx) =>
+    timeRange === "7d"
+      ? idx % 2 === 0
+      : timeRange === "30d"
+        ? idx % 4 === 0
+        : true,
+  );
+  const filteredPowerHistory = powerHistory.filter((_, idx) =>
+    timeRange === "7d"
+      ? idx % 2 === 0
+      : timeRange === "30d"
+        ? idx % 4 === 0
+        : true,
   );
 
   if (loading && nodes.length === 0) {
@@ -134,7 +246,9 @@ export default function AdminDashboard() {
       <div className="max-w-[1400px] mx-auto font-mono flex h-screen items-center justify-center bg-[#FFFDF6]">
         <div className="flex flex-col items-center gap-3 text-[#BB6653]/60">
           <RefreshCw className="h-10 w-10 animate-spin" />
-          <p className="text-xs font-bold uppercase tracking-widest">Gathering System Intel...</p>
+          <p className="text-xs font-bold uppercase tracking-widest">
+            Gathering System Intel...
+          </p>
         </div>
       </div>
     );
@@ -142,7 +256,6 @@ export default function AdminDashboard() {
 
   return (
     <div className="max-w-[1400px] mx-auto font-sans flex flex-col gap-6 p-6 bg-[#FFFDF6] min-h-screen">
-      
       {/* ── Header ── */}
       <div className="rounded-3xl bg-white shadow-sm p-6 border border-black/5 flex flex-col md:flex-row items-center justify-between gap-4">
         <div>
@@ -151,11 +264,13 @@ export default function AdminDashboard() {
             Caesar Admin Command Center
           </h1>
           <p className="text-xs font-bold text-gray-400 mt-1">
-            {lastUpdate ? `Last updated: ${lastUpdate.toLocaleTimeString("th-TH")}` : "Loading..."}
+            {lastUpdate
+              ? `Last updated: ${lastUpdate.toLocaleTimeString("th-TH")}`
+              : "Loading..."}
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <select 
+          <select
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value)}
             className="bg-gray-50 border border-gray-200 text-[#BB6653] font-bold rounded-xl py-2 px-4 outline-none text-sm cursor-pointer"
@@ -164,6 +279,7 @@ export default function AdminDashboard() {
             <option value="6h">Last 6 Hours</option>
             <option value="24h">Last 24 Hours</option>
             <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
           </select>
           <button
             onClick={fetchDashboardData}
@@ -184,30 +300,39 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ── Row 1: KPI Stat Cards (6 Columns on Large Screens) ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-5">
-        
-        {/* Card 1: VM Requests */}
-        <div className={`rounded-3xl bg-white shadow-sm p-5 border-l-4 ${pendingRequests.length > 0 ? 'border-orange-500' : 'border-gray-200'}`}>
+      {/* ── Row 1: KPI Stat Cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-5">
+        <div
+          className={`rounded-3xl bg-white shadow-sm p-5 border-l-4 ${pendingRequests.length > 0 ? "border-orange-500" : "border-gray-200"}`}
+        >
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Pending Resorce</p>
-              <h2 className={`text-2xl font-black mt-2 ${pendingRequests.length > 0 ? 'text-orange-500 animate-pulse' : 'text-gray-800'}`}>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Pending Resource
+              </p>
+              <h2
+                className={`text-2xl font-black mt-2 ${pendingRequests.length > 0 ? "text-orange-500 animate-pulse" : "text-gray-800"}`}
+              >
                 {pendingRequests.length}
               </h2>
             </div>
-            <div className={`p-2.5 rounded-xl ${pendingRequests.length > 0 ? 'bg-orange-50 text-orange-500' : 'bg-gray-50 text-gray-400'}`}>
+            <div
+              className={`p-2.5 rounded-xl ${pendingRequests.length > 0 ? "bg-orange-50 text-orange-500" : "bg-gray-50 text-gray-400"}`}
+            >
               <ClipboardList className="h-5 w-5" />
             </div>
           </div>
         </div>
 
-        {/* Card 2: Users */}
         <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-blue-400">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Total Users</p>
-              <h2 className="text-2xl font-black mt-2 text-gray-800">{totalUsers}</h2>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Total Users
+              </p>
+              <h2 className="text-2xl font-black mt-2 text-gray-800">
+                {totalUsers}
+              </h2>
             </div>
             <div className="p-2.5 rounded-xl bg-blue-50 text-blue-500">
               <Users className="h-5 w-5" />
@@ -215,41 +340,93 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Card 3: Nodes */}
         <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-emerald-400">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Nodes Online</p>
-              <h2 className="text-2xl font-black mt-2 text-gray-800">{onlineNodes.length} <span className="text-sm text-gray-400 font-medium">/ {totalNodes}</span></h2>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Nodes Online
+              </p>
+              <h2 className="text-2xl font-black mt-2 text-gray-800">
+                {onlineNodes.length}{" "}
+                <span className="text-sm text-gray-400 font-medium">
+                  / {totalNodes}
+                </span>
+              </h2>
             </div>
             <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-500">
+              <Server className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-[#BB6653]">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Avg Temp
+              </p>
+              <h2
+                className={`text-2xl font-black mt-2 ${avgTemp >= 75 ? "text-red-500" : "text-gray-800"}`}
+              >
+                {avgTemp.toFixed(1)}{" "}
+                <span className="text-sm text-gray-400 font-medium">°C</span>
+              </h2>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#BB6653]/10 text-[#BB6653]">
+              <Thermometer className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* New Card: Cluster RAM */}
+        <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-indigo-400">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Cluster RAM
+              </p>
+              <h2 className="text-2xl font-black mt-2 text-gray-800">
+                {(latestRamUsed / 1024).toFixed(1)}{" "}
+                <span className="text-sm text-gray-400 font-medium">
+                  / {(latestMaxRam / 1024).toFixed(1)} GB
+                </span>
+              </h2>
+            </div>
+            <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-500">
+              <HardDrive className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* New Card: Avg CPU */}
+        <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-rose-400">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Avg CPU Usage
+              </p>
+              <h2
+                className={`text-2xl font-black mt-2 ${(latestCpu || 0) >= 80 ? "text-red-500" : "text-gray-800"}`}
+              >
+                {(latestCpu || 0).toFixed(1)}{" "}
+                <span className="text-sm text-gray-400 font-medium">%</span>
+              </h2>
+            </div>
+            <div className="p-2.5 rounded-xl bg-rose-50 text-rose-500">
               <Cpu className="h-5 w-5" />
             </div>
           </div>
         </div>
 
-        {/* Card 4: Temp */}
-        <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-[#BB6653]">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Avg Temp</p>
-              <h2 className={`text-2xl font-black mt-2 ${avgTemp >= 75 ? 'text-red-500' : 'text-gray-800'}`}>
-                {avgTemp.toFixed(1)} <span className="text-sm text-gray-400 font-medium">°C</span>
-              </h2>
-            </div>
-            <div className="p-2.5 rounded-xl bg-[#BB6653]/10 text-[#BB6653]">
-              <Activity className="h-5 w-5" />
-            </div>
-          </div>
-        </div>
-
-        {/* Card 5: Power */}
         <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-amber-400">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Total Power</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Total Power
+              </p>
               <h2 className="text-2xl font-black mt-2 text-gray-800">
-                {totalWatt.toFixed(0)} <span className="text-sm text-gray-400 font-medium">W</span>
+                {totalWatt.toFixed(0)}{" "}
+                <span className="text-sm text-gray-400 font-medium">W</span>
               </h2>
             </div>
             <div className="p-2.5 rounded-xl bg-amber-50 text-amber-500">
@@ -258,38 +435,56 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Card 6: Active Load */}
-        <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-indigo-400">
+        <div className="rounded-3xl bg-white shadow-sm p-5 border-l-4 border-teal-400">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Active Relays</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Active Relays
+              </p>
               <h2 className="text-2xl font-black mt-2 text-gray-800">
-                {activePowerNodes} <span className="text-sm text-gray-400 font-medium">/ {powers.length}</span>
+                {activePowerNodes}{" "}
+                <span className="text-sm text-gray-400 font-medium">
+                  / {powers.length}
+                </span>
               </h2>
             </div>
-            <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-500">
+            <div className="p-2.5 rounded-xl bg-teal-50 text-teal-500">
               <PlugZap className="h-5 w-5" />
             </div>
           </div>
         </div>
-
       </div>
 
-      {/* ── Row 2: Analytics Charts (2x2 Grid) ── */}
+      {/* ── Row 2: Analytics Charts ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
         {/* Chart 1: VM Donut */}
         <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
-          <h2 className="text-sm font-extrabold text-gray-800 mb-4">Resorce Requests Status</h2>
+          <h2 className="text-sm font-extrabold text-gray-800 mb-4">
+            Resource Requests Status
+          </h2>
           <div className="flex-1 w-full min-h-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={requestStatusData} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={5} dataKey="value">
+                <Pie
+                  data={requestStatusData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={65}
+                  outerRadius={95}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
                   {requestStatusData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: "12px",
+                    border: "none",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  }}
+                />
                 <Legend verticalAlign="bottom" height={36} iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
@@ -298,126 +493,290 @@ export default function AdminDashboard() {
 
         {/* Chart 2: VM Trend Bar */}
         <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
-          <h2 className="text-sm font-extrabold text-gray-800 mb-4">Resorce Requests Trend (Last 7 Days)</h2>
+          <h2 className="text-sm font-extrabold text-gray-800 mb-4">
+            Resource Requests Trend (Last 7 Days)
+          </h2>
           <div className="flex-1 w-full min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={requestTimelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip cursor={{ fill: '#f3f4f6' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                <Bar dataKey="requests" name="New Requests" fill="#BB6653" radius={[6, 6, 0, 0]} barSize={32} />
+              <BarChart
+                data={requestTimelineData}
+                margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#f3f4f6"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  axisLine={false}
+                  tickLine={false}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  cursor={{ fill: "#f3f4f6" }}
+                  contentStyle={{
+                    borderRadius: "12px",
+                    border: "none",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  }}
+                />
+                <Bar
+                  dataKey="requests"
+                  name="New Requests"
+                  fill="#BB6653"
+                  radius={[6, 6, 0, 0]}
+                  barSize={32}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Chart 3: Cluster RAM Area */}
+        {/* Chart 3: CPU Area */}
         <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-extrabold text-gray-800">Cluster Memory Trend</h2>
+            <h2 className="text-sm font-extrabold text-gray-800">
+              Cluster CPU Trend
+            </h2>
+            <Cpu className="h-4 w-4 text-rose-500" />
+          </div>
+          <div className="flex-1 w-full min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={filteredHistoryData}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#f3f4f6"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  tickMargin={10}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={40}
+                  tickFormatter={(val) => formatXAxisTime(val, timeRange)}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  tickFormatter={(val) => `${val}%`}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  labelFormatter={formatTooltipTime}
+                  formatter={(value: any) => [
+                    Number(value).toFixed(1) + " %",
+                    "Avg CPU",
+                  ]}
+                  contentStyle={{
+                    borderRadius: "12px",
+                    border: "none",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  }}
+                />
+                <defs>
+                  <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="monotone"
+                  dataKey="avgCpu"
+                  stroke="#f43f5e"
+                  strokeWidth={2.5}
+                  fillOpacity={1}
+                  fill="url(#colorCpu)"
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Chart 4: Cluster RAM Area */}
+        <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-extrabold text-gray-800">
+              Cluster Memory Trend
+            </h2>
             <HardDrive className="h-4 w-4 text-blue-500" />
           </div>
           <div className="flex-1 w-full min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis 
-                  dataKey="time" 
-                  tick={{ fontSize: 11, fill: '#9ca3af' }} 
-                  tickMargin={10} 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tickFormatter={(val) => {
-                    const date = new Date(val);
-                    return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-                  }}
+              <AreaChart
+                data={filteredHistoryData}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#f3f4f6"
+                  vertical={false}
                 />
-                <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={(val) => `${(val/1024).toFixed(0)}G`} axisLine={false} tickLine={false} />
-                <Tooltip 
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  tickMargin={10}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={40}
+                  tickFormatter={(val) => formatXAxisTime(val, timeRange)}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  tickFormatter={(val) => `${(val / 1024).toFixed(0)}G`}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
                   labelFormatter={formatTooltipTime}
-                  formatter={(value: any) => [(Number(value)/1024).toFixed(1) + " GB", "RAM Used"]}
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                  formatter={(value: any, name: any, props: any) => {
+                    const used = (Number(value) / 1024).toFixed(2);
+                    const total = props.payload.maxRam
+                      ? (Number(props.payload.maxRam) / 1024).toFixed(2)
+                      : "0.00";
+                    return [`${used} GB / ${total} GB`, "RAM Used"];
+                  }}
+                  contentStyle={{
+                    borderRadius: "12px",
+                    border: "none",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  }}
                 />
                 <defs>
                   <linearGradient id="colorRam" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="totalRam" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRam)" />
+                <Area
+                  type="monotone"
+                  dataKey="totalRam"
+                  stroke="#3b82f6"
+                  strokeWidth={2.5}
+                  fillOpacity={1}
+                  fill="url(#colorRam)"
+                  isAnimationActive={false}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Chart 4: Power Consumption Area */}
-        <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
+        {/* Chart 5: Power Consumption Area (Full Width) */}
+        <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px] lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-extrabold text-gray-800">Total Power Consumption Trend</h2>
+            <h2 className="text-sm font-extrabold text-gray-800">
+              Total Power Consumption Trend
+            </h2>
             <Zap className="h-4 w-4 text-amber-500" />
           </div>
           <div className="flex-1 w-full min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={powerHistory} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis 
-                  dataKey="time" 
-                  tick={{ fontSize: 11, fill: '#9ca3af' }} 
-                  tickMargin={10} 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tickFormatter={(val) => {
-                    const date = new Date(val);
-                    return isNaN(date.getTime()) ? val : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-                  }}
+              <AreaChart
+                data={filteredPowerHistory}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#f3f4f6"
+                  vertical={false}
                 />
-                <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={(val) => `${val}W`} axisLine={false} tickLine={false} />
-                <Tooltip 
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  tickMargin={10}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={40}
+                  tickFormatter={(val) => formatXAxisTime(val, timeRange)}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "#9ca3af" }}
+                  tickFormatter={(val) => `${val}W`}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
                   labelFormatter={formatTooltipTime}
-                  formatter={(value: any) => [Number(value).toFixed(2) + " W", "Total Power"]}
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                  formatter={(value: any) => [
+                    Number(value).toFixed(2) + " W",
+                    "Total Power",
+                  ]}
+                  contentStyle={{
+                    borderRadius: "12px",
+                    border: "none",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  }}
                 />
                 <defs>
                   <linearGradient id="colorPower" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="totalWatt" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#colorPower)" />
+                <Area
+                  type="monotone"
+                  dataKey="totalWatt"
+                  stroke="#f59e0b"
+                  strokeWidth={2.5}
+                  fillOpacity={1}
+                  fill="url(#colorPower)"
+                  isAnimationActive={false}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
-
       </div>
 
-      {/* ── Row 3: Action Required (Full Width Table/List) ── */}
+      {/* ── Row 3: Action Required ── */}
       <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-base font-extrabold text-gray-800 flex items-center gap-2">
             <Clock3 className="h-5 w-5 text-orange-500" />
-            Action Required: Pending Resorce Requests
+            Action Required: Pending Resource Requests
           </h2>
           <span className="text-xs font-bold bg-orange-100 text-orange-600 px-3 py-1 rounded-full">
             {pendingRequests.length} Pending
           </span>
         </div>
-        
+
         <div className="max-h-[300px] overflow-y-auto pr-2 custom-scrollbar flex flex-col gap-3">
           {pendingRequests.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-gray-400">
               <ClipboardList className="h-12 w-12 mb-2 opacity-20" />
-              <p className="text-sm font-bold">No pending requests! All clear.</p>
+              <p className="text-sm font-bold">
+                No pending requests! All clear.
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {pendingRequests.map(req => (
-                <div key={req.id} className="p-4 rounded-2xl bg-orange-50/40 border border-orange-100 hover:shadow-md transition-all flex flex-col justify-between gap-3">
+              {pendingRequests.map((req) => (
+                <div
+                  key={req.id}
+                  className="p-4 rounded-2xl bg-orange-50/40 border border-orange-100 hover:shadow-md transition-all flex flex-col justify-between gap-3"
+                >
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-sm font-bold text-gray-800">{req.requester_name}</p>
-                      <p className="text-xs font-mono text-gray-500">{req.requester_student_id}</p>
+                      <p className="text-sm font-bold text-gray-800">
+                        {req.requester_name}
+                      </p>
+                      <p className="text-xs font-mono text-gray-500">
+                        {req.requester_student_id}
+                      </p>
                     </div>
                     <span className="text-[11px] font-bold bg-white text-orange-500 px-2.5 py-1 rounded-xl border border-orange-200">
                       {req.namespace_name.toUpperCase()}
@@ -434,6 +793,31 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {/* ── Row 4: Cluster Nodes Status ── */}
+      <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col mt-2">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Server className="h-5 w-5 text-gray-500" />
+            <h2 className="text-base font-extrabold text-gray-800">
+              Cluster Nodes Intel
+            </h2>
+          </div>
+          <span className="text-xs font-bold bg-gray-100 text-gray-600 px-3 py-1 rounded-full">
+            {onlineNodes.length} / {totalNodes} Online
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+          {nodes.map((node) => (
+            <NodeGridItem key={`n-${node.ID}`} node={node} />
+          ))}
+          {nodes.length === 0 && !loading && (
+            <p className="col-span-full py-10 text-center text-sm text-gray-400">
+              ไม่มีข้อมูลโหนดในระบบ
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

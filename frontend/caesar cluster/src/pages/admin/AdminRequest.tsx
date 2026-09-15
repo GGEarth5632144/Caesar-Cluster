@@ -1,10 +1,14 @@
 import { useState, useEffect } from "react";
-import { Plus, Edit2, Trash2, CheckSquare, Square, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Edit2, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { usePageSearch } from "@/hooks/usePageSearch";
 import { requestTemplatesScope } from "@/config/searchScopes";
 import { SearchStatus } from "@/components/ui/search-status";
 import { Highlight } from "@/components/ui/highlight";
 import { requestTemplateApi, type RequestTemplate, type CreateRequestTemplateDTO } from "../../api/adminrequest";
+import {
+  nodetelemetry,
+  type NodeTelemetry,
+} from "@/api/mornitorequest";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { notify, confirmAction } from "@/lib/modal";
@@ -16,7 +20,7 @@ export default function AdminRequest() {
   const [templates, setTemplates] = useState<RequestTemplate[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [editingTemplate, setEditingTemplate] = useState<RequestTemplate | null>(null);
-
+  
   const fetchTemplates = async () => {
     try {
       setIsLoading(true);
@@ -159,7 +163,7 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
           <tr className="border-b border-black/10 text-[#BB6653]">
             <th className="pb-4 font-semibold">Option Name</th>
             <th className="pb-4 font-semibold">Relate Subject</th>
-            <th className="pb-4 font-semibold">Required Resources</th>
+            <th className="pb-4 font-semibold">Resources (CPU/RAM/STORAGE)</th>
             <th className="pb-4 font-semibold text-center">Status</th>
             <th className="pb-4 font-semibold text-center">Action</th>
           </tr>
@@ -174,22 +178,33 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
           ) : (
             paginatedData.map((item) => (
               <tr key={item.id} className="border-b border-black/5 transition-colors last:border-0 hover:bg-black/[0.02]">
-                <td className="py-4 font-medium">
+                <td className="py-4 text-[#211a14]/70 break-all max-w-[200px]">
                   <Highlight text={item.option_name} terms={highlightTerms} />
                 </td>
-                <td className="py-4">
+                <td className="py-4 text-[#211a14]/70 break-all max-w-[200px]">
                   <Highlight text={item.relate_subject} terms={highlightTerms} />
                 </td>
-                <td className="py-4 text-[#211a14]/70">
-                  {item.cpu_limit_milli / 1000} Core / {Math.floor(item.ram_limit_mb / 1000)} GB
+                <td className="py-4 text-[#211a14]/70 break-all max-w-[200px]">
+                  {item.cpu_limit_milli / 1000} Core / {(item.ram_limit_mb / 1024).toFixed(1)} GB / {item.storage_gb} GB
                 </td>
-                <td className="py-4 text-center text-[#BB6653]">
+                <td className="py-4 text-center">
                   <div className="flex justify-center">
-                    <button 
+                    <button
                       onClick={() => onToggleStatus(item.id, item.is_active)}
-                      className="transition-colors hover:text-[#F08B51] focus:outline-none"
+                      className={`relative inline-flex h-6 w-12 items-center rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none ${
+                        item.is_active 
+                          ? 'border-emerald-500/50 bg-emerald-50' 
+                          : 'border-red-400/40 bg-white'
+                      }`}
+                      title={item.is_active ? "ปิดใช้งาน" : "เปิดใช้งาน"}
                     >
-                      {item.is_active ? <CheckSquare size={22} /> : <Square size={22} />}
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full shadow-sm transition-all duration-200 ease-in-out ${
+                          item.is_active 
+                            ? 'translate-x-6 bg-emerald-500' 
+                            : 'translate-x-1 bg-red-400/70'
+                        }`}
+                      />
                     </button>
                   </div>
                 </td>
@@ -245,10 +260,26 @@ interface FormViewProps {
 function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputClass = "w-full rounded-xl bg-[#F08B51]/90 px-4 py-3 text-white placeholder:text-white/70 outline-none focus:ring-2 focus:ring-[#BB6653]";
-  const cpuOptions = [1000, 2000, 3000];
-  const ramOptions = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000];
+  // --- 🚨 ส่วนที่ต้องแทรกเพิ่ม (คำนวณขีดจำกัดทรัพยากร) ---
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [nodesInfo, setNodesInfo] = useState<NodeTelemetry[]>([]);
 
-  // ผูก State เข้ากับฟิลด์ต่างๆ ตาม DTO
+  useEffect(() => {
+    nodetelemetry.getAll().then(setNodesInfo).catch(console.error);
+  }, []);
+
+  const workers = nodesInfo.filter(n => n.NodeName !== "intelnuc");
+
+  const clusterCpuCores = workers.length > 0 ? workers.length * 4 : 8; 
+
+  const clusterRamGb = workers.length > 0 ? Math.floor(workers.reduce((sum, n) => sum + (n.RamTotalMB || 0), 0) / 1024) : 8;
+
+  const intelnucNode = nodesInfo.find(n => n.NodeName === "intelnuc");
+  const clusterStorageGb = intelnucNode ? Math.floor(intelnucNode.UseableStorage) : 2000;
+
+  const MAX_CPU = isUnlocked ? clusterCpuCores : 8;
+  const MAX_RAM = isUnlocked ? clusterRamGb : 8;
+  const MAX_STORAGE = isUnlocked ? clusterStorageGb : 15;
   const [formData, setFormData] = useState({
     option_name: "",
     category: "",
@@ -260,19 +291,27 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
   });
 
   useEffect(() => {
-    // ถ้อยู่ในโหมด Edit ให้ดึงค่าเก่ามาแสดงในฟอร์ม
-    if (mode === "edit" && initialData) {
-      setFormData({
-        option_name: initialData.option_name,
-        category: initialData.category,
-        description: initialData.description,
-        relate_subject: initialData.relate_subject,
-        cpu_limit_milli: initialData.cpu_limit_milli.toString(),
-        ram_limit_mb: initialData.ram_limit_mb.toString(),
-        storage_gb: initialData.storage_gb.toString(),
-      });
-    }
-  }, [mode, initialData]);
+      if (mode === "edit" && initialData) {
+        setFormData({
+          option_name: initialData.option_name,
+          category: initialData.category,
+          description: initialData.description,
+          relate_subject: initialData.relate_subject,
+          cpu_limit_milli: initialData.cpu_limit_milli.toString(),
+          ram_limit_mb: initialData.ram_limit_mb.toString(),
+          storage_gb: initialData.storage_gb.toString(),
+        });
+
+        // ตรวจสอบว่ามีค่าไหนเกิน Limit มาตรฐาน (CPU > 8000 milli, RAM > 8192 MB, Storage > 15 GB) หรือไม่
+        const isCpuExceeded = initialData.cpu_limit_milli > 8000;
+        const isRamExceeded = initialData.ram_limit_mb > 8192;
+        const isStorageExceeded = initialData.storage_gb > 15;
+
+        if (isCpuExceeded || isRamExceeded || isStorageExceeded) {
+          setIsUnlocked(true); // เปิดปลดล็อกให้ทันที
+        }
+      }
+    }, [mode, initialData]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -356,28 +395,110 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
           <input name="relate_subject" value={formData.relate_subject} onChange={handleChange} placeholder="Relate subject" className={inputClass} />
         </div>
 
-        <div className="grid grid-cols-3 gap-5">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-base font-semibold text-[#BB6653] ml-1">CPU Limit (Milli)</label>
-            <select name="cpu_limit_milli" value={formData.cpu_limit_milli} onChange={handleChange} className={inputClass}>
-              <option value="" disabled>เลือก CPU</option>
-              {cpuOptions.map((val) => (
-                <option key={val} value={val} className="text-[#211a14] bg-white">{val}</option>
-              ))}
-            </select>
+        {/* 🚨 วางทับโค้ด Grid ของเดิมทั้งหมด 🚨 */}
+        <div className="flex flex-col gap-4 mt-2">
+          {/* สวิตช์ปลดล็อกขีดจำกัด */}
+          <div className="flex items-center justify-between rounded-xl bg-white/40 border border-black/10 px-4 py-3">
+            <span className="text-sm font-semibold text-[#211a14]/60">
+              ปลดล็อกขีดจำกัดทรัพยากร <span className="font-normal text-[11px]">(ดึง Max Limit จาก Cluster จริง)</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const nextUnlocked = !isUnlocked;
+                setIsUnlocked(nextUnlocked);
+                
+                // 🚨 เพิ่มตรงนี้: ถ้า "ปิด" ปลดล็อก ให้ดึงค่าที่เกินกลับมาที่ลิมิตมาตรฐาน
+                if (!nextUnlocked) {
+                  setFormData(prev => ({
+                    ...prev,
+                    // 8 Cores = 8000 milli
+                    cpu_limit_milli: Number(prev.cpu_limit_milli) > 8000 ? "8000" : prev.cpu_limit_milli,
+                    // 8 GB = 8192 MB
+                    ram_limit_mb: Number(prev.ram_limit_mb) > 8192 ? "8192" : prev.ram_limit_mb,
+                    // 15 GB
+                    storage_gb: Number(prev.storage_gb) > 15 ? "15" : prev.storage_gb
+                  }));
+                }
+              }}
+              className={`relative inline-flex h-6 w-12 items-center rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none ${
+                isUnlocked ? 'border-emerald-500/50 bg-emerald-50' : 'border-black/20 bg-white'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full shadow-sm transition-all duration-200 ease-in-out ${
+                  isUnlocked ? 'translate-x-6 bg-emerald-500' : 'translate-x-1 bg-gray-400'
+                }`}
+              />
+            </button>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-base font-semibold text-[#BB6653] ml-1">Memory Limit (MB)</label>
-            <select name="ram_limit_mb" value={formData.ram_limit_mb} onChange={handleChange} className={inputClass}>
-              <option value="" disabled>เลือก RAM</option>
-              {ramOptions.map((val) => (
-                <option key={val} value={val} className="text-[#211a14] bg-white">{val}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-base font-semibold text-[#BB6653] ml-1">Storage (GB)</label>
-            <input name="storage_gb" value={formData.storage_gb} onChange={handleChange} placeholder="Storage (GB)" type="number" className={inputClass} />
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 rounded-2xl bg-[#F08B51]/10 p-5 border border-[#BB6653]/20">
+            {/* CPU Slider */}
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                <label className="text-sm font-bold text-[#BB6653]">CPU (Cores)</label>
+                <input 
+                  type="number" min={0.1} max={MAX_CPU} step={0.1}
+                  value={formData.cpu_limit_milli ? Number(formData.cpu_limit_milli) / 1000 : ""}
+                  onChange={(e) => {
+                    const val = Math.min(Math.max(Number(e.target.value), 0.1), MAX_CPU);
+                    setFormData(p => ({ ...p, cpu_limit_milli: String(val * 1000) }));
+                  }}
+                  className="w-20 rounded-lg border border-black/10 bg-white px-2 py-1 text-right text-sm font-bold text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]"
+                />
+              </div>
+              <input 
+                type="range" min={0.1} max={MAX_CPU} step={0.1}
+                value={formData.cpu_limit_milli ? Number(formData.cpu_limit_milli) / 1000 : 0.1}
+                onChange={(e) => setFormData(p => ({ ...p, cpu_limit_milli: String(Number(e.target.value) * 1000) }))}
+                className="w-full accent-[#BB6653]"
+              />
+            </div>
+
+            {/* RAM Slider */}
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                <label className="text-sm font-bold text-[#BB6653]">Memory (GB)</label>
+                <input 
+                  type="number" min={0.1} max={MAX_RAM} step={0.1}
+                  value={formData.ram_limit_mb ? parseFloat((Number(formData.ram_limit_mb) / 1024).toFixed(1)) : ""}
+                  onChange={(e) => {
+                    const val = Math.min(Math.max(Number(e.target.value), 0.1), MAX_RAM);
+                    setFormData(p => ({ ...p, ram_limit_mb: String(Math.round(val * 1024)) }));
+                  }}
+                  className="w-20 rounded-lg border border-black/10 bg-white px-2 py-1 text-right text-sm font-bold text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]"
+                />
+              </div>
+              <input 
+                type="range" min={0.1} max={MAX_RAM} step={0.1}
+                value={formData.ram_limit_mb ? parseFloat((Number(formData.ram_limit_mb) / 1024).toFixed(1)) : 0.1}
+                onChange={(e) => setFormData(p => ({ ...p, ram_limit_mb: String(Math.round(Number(e.target.value) * 1024)) }))}
+                className="w-full accent-[#BB6653]"
+              />
+            </div>
+
+            {/* Storage Slider */}
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                <label className="text-sm font-bold text-[#BB6653]">Storage (GB)</label>
+                <input 
+                  type="number" min={1} max={MAX_STORAGE} step={1}
+                  value={formData.storage_gb}
+                  onChange={(e) => {
+                    const val = Math.min(Math.max(Number(e.target.value), 1), MAX_STORAGE);
+                    setFormData(p => ({ ...p, storage_gb: String(val) }));
+                  }}
+                  className="w-20 rounded-lg border border-black/10 bg-white px-2 py-1 text-right text-sm font-bold text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]"
+                />
+              </div>
+              <input 
+                type="range" min={1} max={MAX_STORAGE} step={1}
+                value={formData.storage_gb || 1}
+                onChange={(e) => setFormData(p => ({ ...p, storage_gb: e.target.value }))}
+                className="w-full accent-[#BB6653]"
+              />
+            </div>
           </div>
         </div>
 

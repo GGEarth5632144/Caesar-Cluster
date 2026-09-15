@@ -15,6 +15,7 @@ import {
   Database,
   HardDrive,
   Lock,
+  Eye,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -239,7 +240,7 @@ export default function RequestQuotar() {
   const brokenCount = services.filter(
     (s) => s.status === "crashloop" || s.status === "failed",
   ).length;
-
+  const [selectedServiceDetail, setSelectedServiceDetail] = useState<any>(null);
   // ช่องค้นหาบน Topbar กรองการ์ดด้านล่าง — ตัวเลขสรุปบรรทัดบนยังนับจาก services ทั้งหมด
   // เพราะเป็นภาพรวมของเนมสเปซ ไม่ใช่ผลของคำค้น
   const {
@@ -357,7 +358,15 @@ export default function RequestQuotar() {
                     {badge.label}
                   </span>
                 </div>
-
+                <button
+                  type="button"
+                  onClick={() => setSelectedServiceDetail(svc)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#211a14]/50 hover:text-[#BB6653] hover:bg-[#FBDFDA] rounded-xl transition-colors mt-2"
+                  title="ดูข้อมูลฉบับเต็ม"
+                >
+                  <Eye size={16} />
+                  ตรวจสอบข้อมูล
+                </button>
                 {/* ── ทำไมถึงไม่ขึ้น ────────────────────────────────────────────────
                     ไม่ซ่อนไว้หลังปุ่ม Logs เพราะ log ตัวจริงหายไปกับ pod ที่ถูกสร้างใหม่
                     backend จึงเก็บ snapshot ไว้ให้ตั้งแต่ตอนตรวจเจอ */}
@@ -552,6 +561,85 @@ export default function RequestQuotar() {
               <Plus size={28} />
               <span className="text-base font-semibold">Deploy a new service</span>
             </button>
+          )}
+          {selectedServiceDetail && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+              <div className="bg-[#FFFDF6] w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl px-7 py-5 shadow-2xl border border-black/5 flex flex-col gap-4 animate-in fade-in zoom-in duration-200 custom-scrollbar">
+                
+                {/* Header Modal */}
+                <div className="flex justify-between items-start border-b border-black/5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-[#FBDFDA] text-lg font-bold text-[#BB6653]">
+                      {selectedServiceDetail.is_database ? <Database size={24} /> : initialsOf(selectedServiceDetail.name)}
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-extrabold text-[#211a14]">Service Info</h3>
+                      <span className="text-xs font-semibold text-[#BB6653] uppercase tracking-wider">Detailed View</span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedServiceDetail(null)} 
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Content Modal */}
+                <div className="flex flex-col gap-5 text-sm text-[#211a14]/80">
+                  <div className="bg-white p-4 rounded-2xl border border-black/5">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Service Name</p>
+                    <p className="font-semibold text-base break-words">{selectedServiceDetail.name}</p>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl border border-black/5">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Docker Image</p>
+                    <p className="font-mono text-sm break-all text-[#BB6653]">{selectedServiceDetail.image}</p>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
+                      <Cpu size={18} className="text-[#BB6653]" />
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">CPU</p>
+                      <p className="font-bold">{(selectedServiceDetail.cpu_milli / 1000).toFixed(1)} <span className="text-xs font-normal">cores</span></p>
+                    </div>
+                    <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
+                      <Layers size={18} className="text-[#BB6653]" />
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">RAM</p>
+                      <p className="font-bold">
+                        {selectedServiceDetail.ram_mb >= 1024 ? `${(selectedServiceDetail.ram_mb / 1024).toFixed(1)} GB` : `${selectedServiceDetail.ram_mb} MB`}
+                      </p>
+                    </div>
+                    <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
+                      <Box size={18} className="text-[#BB6653]" />
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Port</p>
+                      <p className="font-bold">{selectedServiceDetail.container_port}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-2">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Network & Routing</p>
+                    <div className="flex items-center gap-2">
+                      <Network size={16} className="text-[#BB6653] shrink-0" />
+                      {selectedServiceDetail.is_database ? (
+                        <span className="break-words text-[#211a14]/60">Internal Only: {selectedServiceDetail.name}:{selectedServiceDetail.container_port}</span>
+                      ) : (
+                        <span className="break-words font-mono text-[#211a14]/60">
+                          {selectedServiceDetail.node_port ? `<node-ip>:${selectedServiceDetail.node_port} → :${selectedServiceDetail.container_port}` : 'Waiting for cluster port...'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setSelectedServiceDetail(null)} 
+                  className="mt-2 w-full py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#211a14] font-bold transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
