@@ -31,12 +31,16 @@ var ActiveEnrollmentStatuses = map[int]bool{
 // ลบแถวของคนที่สมัครไปแล้วจะทำให้ FK พัง (หรือถ้า cascade จะลบ user ทิ้งไปด้วย ซึ่งไม่ใช่สิ่งที่ต้องการ)
 // การ import ไฟล์ใหม่ทุกเทอมจึงเป็นแค่ upsert — EnrollmentStatus จะถูกอัปเดตให้ตรงกับไฟล์ล่าสุดแทน
 type EligibleStudent struct {
-	StudentID        string    `gorm:"column:student_id;type:varchar(20);primaryKey" json:"student_id"`
-	RealName         string    `gorm:"column:real_name;type:varchar(150)" json:"real_name"`
-	Major            string    `gorm:"column:major;type:varchar(100);not null" json:"major"`
-	EnrollmentStatus int       `gorm:"column:enrollment_status;type:integer;not null;default:10" json:"enrollment_status"`
-	ImportedAt       time.Time `gorm:"column:imported_at;type:timestamp;not null;default:now()" json:"imported_at"`
-	CreatedAt        time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
+	StudentID        string `gorm:"column:student_id;type:varchar(20);primaryKey" json:"student_id"`
+	RealName         string `gorm:"column:real_name;type:varchar(150)" json:"real_name"`
+	Major            string `gorm:"column:major;type:varchar(100);not null" json:"major"`
+	EnrollmentStatus int    `gorm:"column:enrollment_status;type:integer;not null;default:10" json:"enrollment_status"`
+	// Role = role ที่บัญชีจะได้ตอนเจ้าตัวสมัคร (RoleUser / RoleAdmin) — ตั้งได้จากหน้า "เพิ่มผู้มีสิทธิ์" เท่านั้น
+	// import ไฟล์ทะเบียนไม่แตะคอลัมน์นี้ (แถวใหม่ได้ default user, แถวเดิมคงค่าเดิม) ไม่งั้นแอดมินที่อยู่ในไฟล์
+	// จะถูกลดกลับเป็น user ทุกครั้งที่ import เทอมใหม่ — คนที่สมัครแล้วถูกซิงก์ให้ตรงกับบัญชีจริงเสมอ
+	Role       string    `gorm:"column:role;type:varchar(20);not null;default:'user'" json:"role"`
+	ImportedAt time.Time `gorm:"column:imported_at;type:timestamp;not null;default:now()" json:"imported_at"`
+	CreatedAt  time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 }
 
 // TableName บอก GORM ให้ map struct นี้กับตาราง "eligible_students"

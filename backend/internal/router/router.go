@@ -136,6 +136,7 @@ func Setup(
 		{
 			admin.GET("/eligible-students", adminCtl.ListEligibleStudents)
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
+			admin.POST("/eligible-students/single", adminCtl.AddEligibleStudent)
 			admin.POST("/eligible-students/preview", adminCtl.PreviewEligibleStudents)
 
 			admin.POST("/request-templates", adminCtl.CreateRequestTemplate)

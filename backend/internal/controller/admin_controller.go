@@ -64,6 +64,9 @@ func NewAdminController(db *gorm.DB, cfg *config.Config, ns *services.NamespaceM
 // ว่า import เข้ามาแล้วใครเป็นยังไงบ้าง — เรียงตาม imported_at ล่าสุดก่อน (เห็นรายชื่อที่เพิ่ง
 // import/อัปเดตล่าสุดอยู่บนสุด) ไม่มี pagination/filter ฝั่ง server เพราะจำนวนแถวเป็นระดับ นศ.
 // ทั้งคณะ ไม่ใหญ่พอที่ต้องแบ่งหน้า ฝั่ง frontend กรอง/ค้นหาเอาเองพอ
+//
+// แนบชั้นปีที่คำนวณสดจาก student_id มาด้วย (สูตรเดียวกับ ListUsers) — ไม่ให้หน้าเว็บคำนวณเอง
+// เพราะเกณฑ์เปลี่ยนปีการศึกษาอยู่ที่ entity.CurrentAcademicYearBE ที่เดียว
 func (h *AdminController) ListEligibleStudents(c *gin.Context) {
 	var students []entity.EligibleStudent
 	if err := h.db.WithContext(c.Request.Context()).
@@ -72,7 +75,101 @@ func (h *AdminController) ListEligibleStudents(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงรายชื่อผู้มีสิทธิ์ไม่สำเร็จ")
 		return
 	}
-	utils.OK(c, http.StatusOK, students)
+
+	now := time.Now()
+	out := make([]dto.EligibleStudentWithYearLevel, 0, len(students))
+	for _, s := range students {
+		yearLevel, err := entity.YearLevel(s.StudentID, now)
+		if err != nil {
+			yearLevel = 0 // รหัสที่แกะปีไม่ได้ — โชว์ขีดแทนพัง (เหมือน ListUsers)
+		}
+		out = append(out, dto.EligibleStudentWithYearLevel{EligibleStudent: s, YearLevel: yearLevel})
+	}
+	utils.OK(c, http.StatusOK, out)
+}
+
+// AddEligibleStudent เพิ่ม/อัปเดตผู้มีสิทธิ์ทีละคนจากหน้า User Management พร้อมกำหนด role
+//
+// data flow: JSON body → bind AddSingleEligibleStudentRequest → ตรวจรูปแบบรหัส → ใน transaction เดียว:
+// UPSERT eligible_students (ไม่แตะ real_name ที่ import มาจากไฟล์) → ถ้ารหัสนี้สมัครเป็นผู้ใช้แล้ว
+// UPDATE users.role_id ให้ตรงกับ role ที่เลือก → ตอบแถวล่าสุด + บอกว่าเปลี่ยน role ของบัญชีที่มีอยู่หรือไม่
+//
+// ต้องอัปเดตบัญชีด้วย ไม่งั้นการเลือก role ให้คนที่สมัครไปแล้วจะไม่มีผลอะไร (Register อ่าน role จาก
+// ตารางนี้ครั้งเดียวตอนสมัคร) ส่วนคนที่ยังไม่สมัครจะได้ role นี้ตอนสมัคร
+func (h *AdminController) AddEligibleStudent(c *gin.Context) {
+	var req dto.AddSingleEligibleStudentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+	studentID := strings.TrimSpace(req.StudentID)
+	if !studentIDPattern.MatchString(studentID) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID",
+			fmt.Sprintf("รหัสนักศึกษา %q ไม่ถูกรูปแบบ (ตัวอักษร 1 ตัว + ตัวเลขอย่างน้อย 6 หลัก เช่น B6600907)", studentID))
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// กันแอดมินลดสิทธิ์ตัวเองจากฟอร์มนี้ — กดพลาดครั้งเดียวคือหลุดจากหน้าแอดมินทันทีและแก้คืนเองไม่ได้
+	if req.Role != entity.RoleAdmin {
+		var me entity.User
+		if err := h.db.WithContext(ctx).First(&me, c.GetInt("userID")).Error; err == nil && me.StudentID == studentID {
+			utils.Error(c, http.StatusBadRequest, "CANNOT_DEMOTE_SELF", "ไม่สามารถลดสิทธิ์ผู้ดูแลระบบของตัวเองได้")
+			return
+		}
+	}
+
+	var role entity.Role
+	if err := h.db.WithContext(ctx).Where("name = ?", req.Role).First(&role).Error; err != nil {
+		log.Printf("add eligible student: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", req.Role, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ระบบยังตั้งค่าไม่ครบ")
+		return
+	}
+
+	row := entity.EligibleStudent{
+		StudentID:        studentID,
+		Major:            strings.TrimSpace(req.Major),
+		EnrollmentStatus: req.EnrollmentStatus,
+		Role:             req.Role,
+		ImportedAt:       time.Now(),
+	}
+	var userRoleUpdated bool
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "student_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"major", "enrollment_status", "role", "imported_at"}),
+		}).Create(&row).Error; err != nil {
+			return err
+		}
+		res := tx.Model(&entity.User{}).
+			Where("student_id = ? AND role_id <> ?", studentID, role.ID).
+			Update("role_id", role.ID)
+		if res.Error != nil {
+			return res.Error
+		}
+		userRoleUpdated = res.RowsAffected > 0
+		return nil
+	})
+	if err != nil {
+		log.Printf("add eligible student %q error: %v", studentID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เพิ่มผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	// อ่านกลับเพื่อให้ได้ชื่อเดิม/created_at จริงของแถวที่มีอยู่แล้ว — อ่านไม่ได้ก็ตอบค่าที่เพิ่งเขียนแทน
+	saved := row
+	if err := h.db.WithContext(ctx).Where("student_id = ?", studentID).First(&saved).Error; err != nil {
+		log.Printf("add eligible student: re-read %q error: %v", studentID, err)
+	}
+	yearLevel, err := entity.YearLevel(saved.StudentID, time.Now())
+	if err != nil {
+		yearLevel = 0
+	}
+	utils.OK(c, http.StatusCreated, gin.H{
+		"student":           dto.EligibleStudentWithYearLevel{EligibleStudent: saved, YearLevel: yearLevel},
+		"user_role_updated": userRoleUpdated,
+	})
 }
 
 // AddEligibleStudents = ขั้น "confirm" ของการ import รายชื่อ นศ. ที่มีสิทธิ์สมัครใช้งาน
@@ -92,6 +189,16 @@ func (h *AdminController) AddEligibleStudents(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
+	}
+
+	// ตรวจรูปแบบรหัสซ้ำอีกชั้น — เส้นนี้ยิงตรงได้โดยไม่ผ่าน preview ถ้ารหัสผิดรูปหลุดเข้าไป
+	// จะแกะชั้นปีไม่ได้ และเจ้าตัวก็สมัครด้วยรหัสที่ถูกต้องไม่ได้อยู่ดี
+	for _, s := range req.Students {
+		if !studentIDPattern.MatchString(s.StudentID) {
+			utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID",
+				fmt.Sprintf("รหัสนักศึกษา %q ไม่ถูกรูปแบบ (ตัวอักษร 1 ตัว + ตัวเลขอย่างน้อย 6 หลัก เช่น B6600907)", s.StudentID))
+			return
+		}
 	}
 
 	now := time.Now()
@@ -960,6 +1067,16 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 	// อ่านกลับไม่ได้ไม่ถือว่าคำสั่งล้มเหลว แต่ต้องมีร่องรอยว่าค่าที่ตอบกลับอาจไม่ใช่ค่าล่าสุด
 	if err := h.db.WithContext(ctx).First(&user, id).Error; err != nil {
 		log.Printf("update user: re-read id=%d error: %v", id, err)
+	}
+
+	// role ของบัญชีเปลี่ยน → ซิงก์ role ในรายชื่อผู้มีสิทธิ์ตาม ให้หน้า "รายชื่อผู้มีสิทธิ์" ตรงกับบัญชีจริง
+	// ซิงก์ไม่ได้ไม่ถือว่าล้มเหลว — บัญชีเปลี่ยนแล้วจริง และจะถูกซิงก์ซ้ำตอน server start (config.syncEligibleRoles)
+	if req.RoleID != nil {
+		if err := h.db.WithContext(ctx).Exec(
+			`UPDATE eligible_students SET role = r.name FROM roles r WHERE r.id = ? AND eligible_students.student_id = ?`,
+			user.RoleID, user.StudentID).Error; err != nil {
+			log.Printf("update user: sync eligible role for %q error: %v", user.StudentID, err)
+		}
 	}
 
 	// ตอบพร้อม year_level + โควตาของ namespace เหมือน ListUsers — ไม่งั้นแถวนี้ในตารางฝั่ง frontend

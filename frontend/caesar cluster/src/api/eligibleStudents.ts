@@ -36,12 +36,26 @@ export interface ConfirmEligibleStudentsResponse {
   upserted: number;
 }
 
+// role ที่บัญชีจะได้ตอนเจ้าตัวสมัคร — ตรงกับ entity.RoleUser / RoleAdmin ฝั่ง backend
+export type EligibleRole = 'user' | 'admin';
+
+// body ของ POST /admin/eligible-students/single — ตรงกับ dto.AddSingleEligibleStudentRequest
+export interface AddEligibleStudentPayload {
+  student_id: string;
+  major: string;
+  enrollment_status: number;
+  role: EligibleRole;
+}
+
 // EligibleStudent = 1 แถวจากตาราง eligible_students จริง (ตรงกับ entity.EligibleStudent ฝั่ง backend)
 export interface EligibleStudent {
   student_id: string;
   real_name: string;
   major: string;
   enrollment_status: number;
+  // คนที่สมัครแล้วถูกซิงก์ให้ตรงกับบัญชีจริงเสมอ ส่วนคนที่ยังไม่สมัครคือ role ที่จะได้ตอนสมัคร
+  role: EligibleRole;
+  year_level: number;
   imported_at: string;
   created_at: string;
 }
@@ -86,6 +100,15 @@ export const eligibleStudentsApi = {
       formData,
       { headers: { 'Content-Type': undefined } },
     );
+    return response.data.data;
+  },
+
+  // เพิ่ม/อัปเดตผู้มีสิทธิ์ทีละคนพร้อม role — ถ้ารหัสนี้สมัครแล้ว backend เปลี่ยน role ของบัญชีให้ด้วย
+  // (user_role_updated = true) ชื่อเดิมที่ import มาจากไฟล์ไม่ถูกแตะ
+  addOne: async (payload: AddEligibleStudentPayload) => {
+    const response = await axiosClient.post<
+      ApiResponse<{ student: EligibleStudent; user_role_updated: boolean }>
+    >('/admin/eligible-students/single', payload);
     return response.data.data;
   },
 

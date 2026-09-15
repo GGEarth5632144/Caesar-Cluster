@@ -94,15 +94,19 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
+	// คนที่แอดมินกำหนดเป็น admin ไว้ในรายชื่อข้ามด่าน 2–3 — สองด่านนี้มีไว้คัดนักศึกษา CPE ที่ยังเรียนอยู่
+	// ส่วนผู้ดูแลระบบอาจเป็นอาจารย์/ผู้ช่วยสอนที่ไม่เข้าเกณฑ์นั้น และแอดมินเลือกให้เองแล้วจากหน้า User Management
+	assignedAdmin := eligible.Role == entity.RoleAdmin
+
 	// ด่านที่ 2: สมัครได้เฉพาะสาขา CPE เท่านั้น
-	if eligible.Major != entity.MajorCPE {
+	if !assignedAdmin && eligible.Major != entity.MajorCPE {
 		utils.Error(c, http.StatusForbidden, "NOT_CPE",
 			"ระบบนี้เปิดให้เฉพาะนักศึกษาสาขาวิศวกรรมคอมพิวเตอร์ (CPE) เท่านั้น")
 		return
 	}
 
 	// ด่านที่ 3: สถานภาพต้องยังเป็นนักศึกษาอยู่ (ไม่ใช่จบ/ลาพัก/พ้นสภาพ)
-	if !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
+	if !assignedAdmin && !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
 		utils.Error(c, http.StatusForbidden, "NOT_ACTIVE_STUDENT",
 			"สถานภาพนักศึกษาของรหัสนี้ไม่สามารถสมัครใช้งานได้")
 		return
@@ -122,9 +126,14 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
+	// role มาจากที่แอดมินกำหนดไว้ในรายชื่อผู้มีสิทธิ์ (default user) — ค่าอื่นที่ไม่รู้จักถือเป็น user
+	roleName := entity.RoleUser
+	if assignedAdmin {
+		roleName = entity.RoleAdmin
+	}
 	var userRole entity.Role
-	if err := db.Where("name = ?", entity.RoleUser).First(&userRole).Error; err != nil {
-		log.Printf("register: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", entity.RoleUser, err)
+	if err := db.Where("name = ?", roleName).First(&userRole).Error; err != nil {
+		log.Printf("register: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", roleName, err)
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ระบบยังตั้งค่าไม่ครบ")
 		return
 	}
