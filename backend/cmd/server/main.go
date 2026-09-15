@@ -62,6 +62,7 @@ func main() {
 	// ถามคลัสเตอร์เป็นระยะว่า workload รันอยู่จริงไหม แล้วแก้สถานะใน DB ให้ตรง (ดู service_health.go)
 	// ผูกกับ ctx เดียวกับ HTTP server — ปิดเซิร์ฟเวอร์แล้ว worker หยุดตาม
 	services.NewServiceHealthMonitor(db, prov).Start(ctx)
+	svcMgr.StartScheduledDeletion(ctx)
 
 	var wg sync.WaitGroup
 

@@ -105,6 +105,8 @@ func ConnectDB(dbURL string) *gorm.DB {
 	}
 	dropRetiredOTPTables(db)
 	dropRetiredAlertTables(db)
+	dropRetiredNickNameColumn(db)
+	syncEligibleRoles(db)
 
 	// ไม่ประกาศ relation ให้ GORM จัดการ FK เอง เพราะเคยเจอว่ามันสร้าง sequence ผิดให้ column ที่เป็น FK
 	// (เข้าใจผิดว่าเป็น auto-increment) เลยมาเพิ่ม FK เองด้วย raw SQL — idempotent รันซ้ำได้ทุกครั้งที่ start
@@ -114,6 +116,25 @@ func ConnectDB(dbURL string) *gorm.DB {
 	log.Println("foreign keys ensured ✓")
 
 	return db
+}
+
+// syncEligibleRoles ทำให้ eligible_students.role ตรงกับ role จริงของคนที่สมัครแล้ว — idempotent รันทุกครั้งที่ start
+//
+// คอลัมน์ role มาทีหลัง แถวเดิมทั้งหมดได้ default 'user' รวมถึงแอดมินที่มีอยู่แล้ว ถ้าไม่ซิงก์ หน้า
+// "รายชื่อผู้มีสิทธิ์" จะโชว์แอดมินเป็น User และถ้า UpdateUser ซิงก์ไม่สำเร็จสักครั้ง รอบ start ถัดไปจะแก้ให้เอง
+// คนที่ยังไม่สมัครไม่ถูกแตะ — role ของเขาคือค่าที่แอดมินตั้งไว้รอตอนสมัคร
+// พังไม่ถือว่า fatal: ค่านี้ใช้แสดงผลกับตอนสมัครเท่านั้น สิทธิ์จริงอ่านจาก users.role_id เสมอ
+func syncEligibleRoles(db *gorm.DB) {
+	res := db.Exec(`UPDATE eligible_students e SET role = r.name
+		FROM users u JOIN roles r ON r.id = u.role_id
+		WHERE u.student_id = e.student_id AND e.role IS DISTINCT FROM r.name`)
+	if res.Error != nil {
+		log.Printf("sync eligible_students.role ไม่สำเร็จ: %v", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("sync eligible_students.role ตามบัญชีจริงแล้ว %d แถว ✓", res.RowsAffected)
+	}
 }
 
 // ConnectDBReadOnly เปิด connection เฉยๆ ไม่ AutoMigrate ไม่แตะ FK — สำหรับเครื่องมือที่อ่าน
@@ -288,6 +309,17 @@ func backfillGmailVerified(db *gorm.DB) {
 		log.Printf("ทำเครื่องหมาย 'ยืนยันอีเมลแล้ว' ให้บัญชีเดิม %d รายการ (บัญชีที่มีอยู่ก่อนฟีเจอร์ยืนยันอีเมล) ✓",
 			result.RowsAffected)
 	}
+}
+
+// dropRetiredNickNameColumn ลบคอลัมน์ users.nick_name ที่เลิกใช้แล้ว (AutoMigrate ไม่ลบคอลัมน์ให้เอง)
+func dropRetiredNickNameColumn(db *gorm.DB) {
+	if !columnExists(db, "users", "nick_name") {
+		return
+	}
+	if err := db.Exec(`ALTER TABLE users DROP COLUMN IF EXISTS nick_name`).Error; err != nil {
+		log.Fatalf("drop column users.nick_name failed: %v", err)
+	}
+	log.Println("ลบคอลัมน์ users.nick_name ที่เลิกใช้แล้ว ✓")
 }
 
 // dropRetiredAlertTables ลบตาราง user_alerts/system_alerts ที่เลิกใช้แล้วทิ้ง

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"backend/internal/entity"
 )
@@ -18,6 +19,7 @@ var (
 	ErrNamespaceNotFound   = errors.New("ไม่พบ namespace นี้")
 	ErrNameTaken           = errors.New("ชื่อ namespace นี้ถูกใช้แล้ว")
 	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
+	ErrQuotaBelowUsage     = errors.New("โควตาใหม่ต่ำกว่ายอดที่ service ในเนมสเปซนี้ใช้อยู่")
 	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
 	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
 
@@ -311,44 +313,45 @@ func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, erro
 	return out, nil
 }
 
-// SetQuota ให้ admin ปรับโควตาของ namespace (เช่น อัปจาก 3 core เป็น 8 core)
-//
-// data flow: รับ namespaceID + โควตาใหม่จาก AdminController → ตรวจว่าไม่เกินเพดานที่อนุญาต
-// → UPDATE namespaces → sync โควตาใหม่ขึ้น cluster ผ่าน prov.EnsureNamespace
-//
-// เพดาน: ทุก namespace ขยายได้ถึง 8 core / 8 GB / 50 GB ดิสก์ เท่ากันหมด (หลังเลิกแยกชนิด solo/group)
-// ไม่เช็คว่าโควตาใหม่ต่ำกว่ายอดที่ใช้อยู่หรือไม่ — ปล่อยให้ลดได้ (service เดิมยังรันอยู่
-// แต่จะ deploy เพิ่มไม่ได้จนกว่าจะลบของเก่าออก) ซึ่งเป็นพฤติกรรมเดียวกับ ResourceQuota ของ k8s
-//
-// ดิสก์ต่างจาก CPU/RAM ตรงที่ลดเพดานแล้วของเดิมไม่ได้คืนมาให้: PVC ที่จองไปแล้วยังกินที่เท่าเดิม
-// จนกว่าจะลบ database ทิ้ง (ดูหมายเหตุใน entity/namespace.go) — หน้าเว็บจึงต้องเตือนก่อนกดบันทึก
+// SetQuota ให้ admin ปรับโควตาของ namespace — ห้ามต่ำกว่ายอดที่ service จองไว้แล้ว
+// ล็อกแถว namespace ระหว่างเช็คยอดกับ UPDATE กัน deploy ที่เข้ามาพร้อมกันแทรกกลาง
 func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, ramMB, storageMB int) (*NamespaceDetail, error) {
-	var ns entity.Namespace
-	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNamespaceNotFound
-		}
-		return nil, err
-	}
-
 	if err := ValidateQuota(cpuMilli, ramMB); err != nil {
 		return nil, err
 	}
-	// ดิสก์เช็คแยกจาก ValidateQuota เพราะ 0 เป็นค่าที่ตั้งใจตั้งได้ (= กลุ่มนี้สร้าง database ไม่ได้)
+	// ดิสก์ตั้งเป็น 0 ได้ (= กลุ่มนี้สร้าง database ไม่ได้)
 	if storageMB < 0 || storageMB > entity.MaxStorageLimitMB {
 		return nil, fmt.Errorf("%w: ดิสก์ตั้งได้ 0–%d MB", ErrQuotaOutOfRange, entity.MaxStorageLimitMB)
 	}
 
-	prevCPU, prevRAM, prevStorage := ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB
-	ns.CPULimitMilli = cpuMilli
-	ns.RAMLimitMB = ramMB
-	ns.StorageLimitMB = storageMB
-	if err := m.db.WithContext(ctx).Model(&entity.Namespace{}).Where("id = ?", ns.ID).
-		Updates(map[string]any{
+	var ns entity.Namespace
+	var prevCPU, prevRAM, prevStorage int
+	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&ns, namespaceID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNamespaceNotFound
+			}
+			return err
+		}
+
+		used, err := m.quota.Usage(ctx, tx, namespaceID)
+		if err != nil {
+			return err
+		}
+		if cpuMilli < used.UsedCPUMilli || ramMB < used.UsedRAMMB || storageMB < used.UsedStorageMB {
+			return fmt.Errorf("%w (ใช้อยู่ %dm CPU / %d MB RAM / %d MB ดิสก์)",
+				ErrQuotaBelowUsage, used.UsedCPUMilli, used.UsedRAMMB, used.UsedStorageMB)
+		}
+
+		prevCPU, prevRAM, prevStorage = ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB
+		ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB = cpuMilli, ramMB, storageMB
+		return tx.Model(&entity.Namespace{}).Where("id = ?", ns.ID).Updates(map[string]any{
 			"cpu_limit_milli":  cpuMilli,
 			"ram_limit_mb":     ramMB,
 			"storage_limit_mb": storageMB,
-		}).Error; err != nil {
+		}).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 

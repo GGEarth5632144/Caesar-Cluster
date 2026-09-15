@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -22,8 +23,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"backend/internal/config"
 	"backend/internal/dto"
 	"backend/internal/entity"
+	"backend/internal/mailer"
 	"backend/internal/services"
 	"backend/internal/utils"
 )
@@ -36,21 +39,34 @@ var errRequestNotPending = errors.New("request ถูกดำเนินกา
 // ทุก route ที่ผูกกับ controller นี้ผ่าน middleware AdminOnly มาแล้ว
 // svc ใช้เฉพาะตอน DeleteUser — ต้องถอน service ที่ user ทิ้งไว้ใน space ของคนอื่นออกจากคลัสเตอร์
 // ก่อนที่ FK จะลบแถวมันหายไปเงียบๆ (ดูเหตุผลเต็มใน DeleteUser)
+// mailer ใช้แจ้งสมาชิกตอนแอดมินลบ namespace (ดู DeleteNamespace)
 type AdminController struct {
-	db  *gorm.DB
-	ns  *services.NamespaceManager
-	svc *services.ServiceManager
+	db     *gorm.DB
+	cfg    *config.Config
+	ns     *services.NamespaceManager
+	svc    *services.ServiceManager
+	mailer *mailer.Mailer
 }
 
 // NewAdminController ประกอบ controller — ถูกเรียกจาก router.Setup
-func NewAdminController(db *gorm.DB, ns *services.NamespaceManager, svc *services.ServiceManager) *AdminController {
-	return &AdminController{db: db, ns: ns, svc: svc}
+// mailer ประกอบแบบเดียวกับ NewAuthController ทุกฉบับจึงถูกบันทึกลง email_deliveries เหมือนกัน
+func NewAdminController(db *gorm.DB, cfg *config.Config, ns *services.NamespaceManager, svc *services.ServiceManager) *AdminController {
+	return &AdminController{
+		db:     db,
+		cfg:    cfg,
+		ns:     ns,
+		svc:    svc,
+		mailer: mailer.New(mailerConfigFrom(cfg), services.NewMailJournal(db)),
+	}
 }
 
 // ListEligibleStudents คืนรายชื่อ นศ. ที่มีสิทธิ์ทั้งหมด (ตาราง "match") ให้ admin ตรวจสอบ
 // ว่า import เข้ามาแล้วใครเป็นยังไงบ้าง — เรียงตาม imported_at ล่าสุดก่อน (เห็นรายชื่อที่เพิ่ง
 // import/อัปเดตล่าสุดอยู่บนสุด) ไม่มี pagination/filter ฝั่ง server เพราะจำนวนแถวเป็นระดับ นศ.
 // ทั้งคณะ ไม่ใหญ่พอที่ต้องแบ่งหน้า ฝั่ง frontend กรอง/ค้นหาเอาเองพอ
+//
+// แนบชั้นปีที่คำนวณสดจาก student_id มาด้วย (สูตรเดียวกับ ListUsers) — ไม่ให้หน้าเว็บคำนวณเอง
+// เพราะเกณฑ์เปลี่ยนปีการศึกษาอยู่ที่ entity.CurrentAcademicYearBE ที่เดียว
 func (h *AdminController) ListEligibleStudents(c *gin.Context) {
 	var students []entity.EligibleStudent
 	if err := h.db.WithContext(c.Request.Context()).
@@ -59,7 +75,101 @@ func (h *AdminController) ListEligibleStudents(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงรายชื่อผู้มีสิทธิ์ไม่สำเร็จ")
 		return
 	}
-	utils.OK(c, http.StatusOK, students)
+
+	now := time.Now()
+	out := make([]dto.EligibleStudentWithYearLevel, 0, len(students))
+	for _, s := range students {
+		yearLevel, err := entity.YearLevel(s.StudentID, now)
+		if err != nil {
+			yearLevel = 0 // รหัสที่แกะปีไม่ได้ — โชว์ขีดแทนพัง (เหมือน ListUsers)
+		}
+		out = append(out, dto.EligibleStudentWithYearLevel{EligibleStudent: s, YearLevel: yearLevel})
+	}
+	utils.OK(c, http.StatusOK, out)
+}
+
+// AddEligibleStudent เพิ่ม/อัปเดตผู้มีสิทธิ์ทีละคนจากหน้า User Management พร้อมกำหนด role
+//
+// data flow: JSON body → bind AddSingleEligibleStudentRequest → ตรวจรูปแบบรหัส → ใน transaction เดียว:
+// UPSERT eligible_students (ไม่แตะ real_name ที่ import มาจากไฟล์) → ถ้ารหัสนี้สมัครเป็นผู้ใช้แล้ว
+// UPDATE users.role_id ให้ตรงกับ role ที่เลือก → ตอบแถวล่าสุด + บอกว่าเปลี่ยน role ของบัญชีที่มีอยู่หรือไม่
+//
+// ต้องอัปเดตบัญชีด้วย ไม่งั้นการเลือก role ให้คนที่สมัครไปแล้วจะไม่มีผลอะไร (Register อ่าน role จาก
+// ตารางนี้ครั้งเดียวตอนสมัคร) ส่วนคนที่ยังไม่สมัครจะได้ role นี้ตอนสมัคร
+func (h *AdminController) AddEligibleStudent(c *gin.Context) {
+	var req dto.AddSingleEligibleStudentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+	studentID := strings.TrimSpace(req.StudentID)
+	if !studentIDPattern.MatchString(studentID) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID",
+			fmt.Sprintf("รหัสนักศึกษา %q ไม่ถูกรูปแบบ (ตัวอักษร 1 ตัว + ตัวเลขอย่างน้อย 6 หลัก เช่น B6600907)", studentID))
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// กันแอดมินลดสิทธิ์ตัวเองจากฟอร์มนี้ — กดพลาดครั้งเดียวคือหลุดจากหน้าแอดมินทันทีและแก้คืนเองไม่ได้
+	if req.Role != entity.RoleAdmin {
+		var me entity.User
+		if err := h.db.WithContext(ctx).First(&me, c.GetInt("userID")).Error; err == nil && me.StudentID == studentID {
+			utils.Error(c, http.StatusBadRequest, "CANNOT_DEMOTE_SELF", "ไม่สามารถลดสิทธิ์ผู้ดูแลระบบของตัวเองได้")
+			return
+		}
+	}
+
+	var role entity.Role
+	if err := h.db.WithContext(ctx).Where("name = ?", req.Role).First(&role).Error; err != nil {
+		log.Printf("add eligible student: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", req.Role, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ระบบยังตั้งค่าไม่ครบ")
+		return
+	}
+
+	row := entity.EligibleStudent{
+		StudentID:        studentID,
+		Major:            strings.TrimSpace(req.Major),
+		EnrollmentStatus: req.EnrollmentStatus,
+		Role:             req.Role,
+		ImportedAt:       time.Now(),
+	}
+	var userRoleUpdated bool
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "student_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"major", "enrollment_status", "role", "imported_at"}),
+		}).Create(&row).Error; err != nil {
+			return err
+		}
+		res := tx.Model(&entity.User{}).
+			Where("student_id = ? AND role_id <> ?", studentID, role.ID).
+			Update("role_id", role.ID)
+		if res.Error != nil {
+			return res.Error
+		}
+		userRoleUpdated = res.RowsAffected > 0
+		return nil
+	})
+	if err != nil {
+		log.Printf("add eligible student %q error: %v", studentID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เพิ่มผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	// อ่านกลับเพื่อให้ได้ชื่อเดิม/created_at จริงของแถวที่มีอยู่แล้ว — อ่านไม่ได้ก็ตอบค่าที่เพิ่งเขียนแทน
+	saved := row
+	if err := h.db.WithContext(ctx).Where("student_id = ?", studentID).First(&saved).Error; err != nil {
+		log.Printf("add eligible student: re-read %q error: %v", studentID, err)
+	}
+	yearLevel, err := entity.YearLevel(saved.StudentID, time.Now())
+	if err != nil {
+		yearLevel = 0
+	}
+	utils.OK(c, http.StatusCreated, gin.H{
+		"student":           dto.EligibleStudentWithYearLevel{EligibleStudent: saved, YearLevel: yearLevel},
+		"user_role_updated": userRoleUpdated,
+	})
 }
 
 // AddEligibleStudents = ขั้น "confirm" ของการ import รายชื่อ นศ. ที่มีสิทธิ์สมัครใช้งาน
@@ -79,6 +189,16 @@ func (h *AdminController) AddEligibleStudents(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
+	}
+
+	// ตรวจรูปแบบรหัสซ้ำอีกชั้น — เส้นนี้ยิงตรงได้โดยไม่ผ่าน preview ถ้ารหัสผิดรูปหลุดเข้าไป
+	// จะแกะชั้นปีไม่ได้ และเจ้าตัวก็สมัครด้วยรหัสที่ถูกต้องไม่ได้อยู่ดี
+	for _, s := range req.Students {
+		if !studentIDPattern.MatchString(s.StudentID) {
+			utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID",
+				fmt.Sprintf("รหัสนักศึกษา %q ไม่ถูกรูปแบบ (ตัวอักษร 1 ตัว + ตัวเลขอย่างน้อย 6 หลัก เช่น B6600907)", s.StudentID))
+			return
+		}
 	}
 
 	now := time.Now()
@@ -588,6 +708,8 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
 		case errors.Is(err, services.ErrQuotaOutOfRange):
 			utils.Error(c, http.StatusBadRequest, "QUOTA_OUT_OF_RANGE", err.Error())
+		case errors.Is(err, services.ErrQuotaBelowUsage):
+			utils.Error(c, http.StatusConflict, "QUOTA_BELOW_USAGE", err.Error())
 		default:
 			log.Printf("set quota error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ปรับโควตาไม่สำเร็จ")
@@ -597,11 +719,104 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 	utils.OK(c, http.StatusOK, detail)
 }
 
+func (h *AdminController) ListServices(c *gin.Context) {
+	list, err := h.svc.ListAll(c.Request.Context())
+	if err != nil {
+		log.Printf("admin list services error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงรายการ service ไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, list)
+}
+
+func (h *AdminController) DeleteService(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	if err := h.svc.DeleteByID(c.Request.Context(), id); err != nil {
+		respondServiceError(c, "admin delete service", err)
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
+}
+
+// ตั้งเวลาลบ service ใน 24 ชม.
+func (h *AdminController) ScheduleServiceDelete(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	deleteAt, err := h.svc.ScheduleDelete(c.Request.Context(), id)
+	if err != nil {
+		respondServiceError(c, "schedule service delete", err)
+		return
+	}
+	go h.notifyServiceDeleteScheduled(context.WithoutCancel(c.Request.Context()), id, deleteAt)
+	utils.OK(c, http.StatusOK, gin.H{"id": id, "delete_at": deleteAt})
+}
+
+// แจ้งสมาชิกทุกคนใน namespace ว่า service ถูกตั้งเวลาลบ
+func (h *AdminController) notifyServiceDeleteScheduled(ctx context.Context, serviceID int, deleteAt time.Time) {
+	if !h.mailer.Configured() {
+		log.Printf("schedule service delete id=%d: ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก", serviceID)
+		return
+	}
+
+	var svc entity.Service
+	if err := h.db.WithContext(ctx).First(&svc, serviceID).Error; err != nil {
+		log.Printf("notify service delete id=%d: อ่าน service ไม่สำเร็จ: %v", serviceID, err)
+		return
+	}
+	var ns entity.Namespace
+	if err := h.db.WithContext(ctx).First(&ns, svc.NamespaceID).Error; err != nil {
+		log.Printf("notify service delete id=%d: อ่าน namespace ไม่สำเร็จ: %v", serviceID, err)
+		return
+	}
+	var members []entity.User
+	if err := h.db.WithContext(ctx).Where("namespace_id = ?", svc.NamespaceID).Find(&members).Error; err != nil {
+		log.Printf("notify service delete id=%d: อ่านสมาชิกไม่สำเร็จ: %v", serviceID, err)
+		return
+	}
+
+	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/"
+	for _, u := range members {
+		_ = h.mailer.SendServiceDeleteScheduledEmail(ctx, u.ID, u.Gmail, u.RealName, svc.Name, ns.Name, deleteAt, appLink)
+	}
+}
+
+func (h *AdminController) CancelServiceDelete(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	if err := h.svc.CancelScheduledDelete(c.Request.Context(), id); err != nil {
+		respondServiceError(c, "cancel service delete", err)
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"id": id, "delete_at": nil})
+}
+
+func respondServiceError(c *gin.Context, action string, err error) {
+	if errors.Is(err, services.ErrServiceNotFound) {
+		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบ service นี้")
+		return
+	}
+	log.Printf("%s error: %v", action, err)
+	utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดำเนินการกับ service ไม่สำเร็จ")
+}
+
 // DeleteNamespace ลบ namespace ทิ้งทั้งก้อนตามดุลยพินิจแอดมิน — ลบได้แม้ยังมีสมาชิกอยู่
 // (ต่างจาก NamespaceController.Leave ที่ผู้ใช้ทั่วไปลบเองไม่ได้ถ้ายังมีสมาชิกคนอื่นอยู่)
 //
-// data flow: อ่าน id จาก path → NamespaceManager.Delete (ถอนของบนคลัสเตอร์ก่อน แล้วลบแถว
-// → cascade ลบ services/ai_review_requests/user_containers ตาม, สมาชิกที่เหลือแค่หลุดออกจาก space)
+// data flow: อ่าน id จาก path + JSON body (reason บังคับ) → จดชื่อ namespace และรายชื่อสมาชิกไว้ก่อน
+// → NamespaceManager.Delete (ถอนของบนคลัสเตอร์ก่อน แล้วลบแถว → cascade ลบ services/ai_review_requests/
+// user_containers ตาม, สมาชิกที่เหลือแค่หลุดออกจาก space) → ส่งอีเมลแจ้งสมาชิกทุกคนพร้อมเหตุผลเบื้องหลัง
+//
+// ต้องจดรายชื่อก่อนลบ เพราะหลังลบ FK ตั้ง users.namespace_id เป็น NULL แล้วจะไม่รู้อีกว่าใครเคยอยู่ในนั้น
 func (h *AdminController) DeleteNamespace(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -609,7 +824,37 @@ func (h *AdminController) DeleteNamespace(c *gin.Context) {
 		return
 	}
 
-	if err := h.ns.Delete(c.Request.Context(), id); err != nil {
+	var body dto.DeleteNamespaceRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณาระบุเหตุผลในการลบ namespace")
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณาระบุเหตุผลในการลบ namespace")
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var ns entity.Namespace
+	if err := h.db.WithContext(ctx).First(&ns, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", services.ErrNamespaceNotFound.Error())
+			return
+		}
+		log.Printf("delete namespace: find namespace error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบ namespace ไม่สำเร็จ")
+		return
+	}
+	var members []entity.User
+	if err := h.db.WithContext(ctx).Where("namespace_id = ?", id).Order("id").Find(&members).Error; err != nil {
+		log.Printf("delete namespace: load members error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบ namespace ไม่สำเร็จ")
+		return
+	}
+
+	if err := h.ns.Delete(ctx, id); err != nil {
 		switch {
 		case errors.Is(err, services.ErrNamespaceNotFound):
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -619,7 +864,28 @@ func (h *AdminController) DeleteNamespace(c *gin.Context) {
 		}
 		return
 	}
-	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
+
+	// ส่งเบื้องหลังไม่ให้แอดมินรอ SMTP ทีละฉบับ (ฉบับละได้ถึง 15 วิ) — namespace ถูกลบไปแล้วจริง
+	// ส่งไม่ออกก็ไม่ย้อนการลบ ผลทุกฉบับถูก MailJournal บันทึกลง email_deliveries ให้ตามดูได้
+	go h.notifyNamespaceDeleted(context.WithoutCancel(ctx), ns.Name, members, reason)
+
+	utils.OK(c, http.StatusOK, gin.H{"deleted": id, "notified": len(members)})
+}
+
+// notifyNamespaceDeleted ส่งอีเมลแจ้งสมาชิกทีละคน — คนหนึ่งส่งไม่ผ่านไม่กระทบคนถัดไป
+// ผลการส่ง (รวมกรณีล้มเหลว) ถูก MailJournal บันทึกและ log ให้แล้ว จึงไม่ต้องจัดการ error ซ้ำที่นี่
+func (h *AdminController) notifyNamespaceDeleted(ctx context.Context, nsName string, members []entity.User, reason string) {
+	if len(members) == 0 {
+		return
+	}
+	if !h.mailer.Configured() {
+		log.Printf("delete namespace '%s': ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก %d คน", nsName, len(members))
+		return
+	}
+	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/"
+	for _, u := range members {
+		_ = h.mailer.SendNamespaceDeletedEmail(ctx, u.ID, u.Gmail, u.RealName, nsName, reason, appLink)
+	}
 }
 
 // ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
@@ -874,9 +1140,6 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 	if req.Gmail != nil {
 		updates["gmail"] = *req.Gmail
 	}
-	if req.NickName != nil {
-		updates["nick_name"] = *req.NickName
-	}
 	if req.Year != nil {
 		updates["year"] = *req.Year
 	}
@@ -893,6 +1156,16 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 	// อ่านกลับไม่ได้ไม่ถือว่าคำสั่งล้มเหลว แต่ต้องมีร่องรอยว่าค่าที่ตอบกลับอาจไม่ใช่ค่าล่าสุด
 	if err := h.db.WithContext(ctx).First(&user, id).Error; err != nil {
 		log.Printf("update user: re-read id=%d error: %v", id, err)
+	}
+
+	// role ของบัญชีเปลี่ยน → ซิงก์ role ในรายชื่อผู้มีสิทธิ์ตาม ให้หน้า "รายชื่อผู้มีสิทธิ์" ตรงกับบัญชีจริง
+	// ซิงก์ไม่ได้ไม่ถือว่าล้มเหลว — บัญชีเปลี่ยนแล้วจริง และจะถูกซิงก์ซ้ำตอน server start (config.syncEligibleRoles)
+	if req.RoleID != nil {
+		if err := h.db.WithContext(ctx).Exec(
+			`UPDATE eligible_students SET role = r.name FROM roles r WHERE r.id = ? AND eligible_students.student_id = ?`,
+			user.RoleID, user.StudentID).Error; err != nil {
+			log.Printf("update user: sync eligible role for %q error: %v", user.StudentID, err)
+		}
 	}
 
 	// ตอบพร้อม year_level + โควตาของ namespace เหมือน ListUsers — ไม่งั้นแถวนี้ในตารางฝั่ง frontend

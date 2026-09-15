@@ -1,5 +1,15 @@
 package dto
 
+import "backend/internal/entity"
+
+// EligibleStudentWithYearLevel = entity.EligibleStudent + ชั้นปีที่คำนวณสดจาก student_id (entity.YearLevel)
+// ใช้ตอบ GET /api/admin/eligible-students — หน้า "รายชื่อผู้มีสิทธิ์" โชว์ชั้นปีแทนชื่อ-สกุล
+// รหัสที่แกะปีไม่ได้จะได้ 0 (หน้าเว็บโชว์เป็นขีด) เหมือน UserWithYearLevel
+type EligibleStudentWithYearLevel struct {
+	entity.EligibleStudent
+	YearLevel int `json:"year_level"`
+}
+
 // AddEligibleStudentRequest = body ของ POST /api/admin/eligible-students
 // admin ใช้ยืนยัน (confirm) การ import รายชื่อ นศ. ที่มีสิทธิ์สมัคร (ตาราง "match" ใน ERD)
 // รับเป็น array เพื่อ import ทีละหลายคนได้ในครั้งเดียว — ปกติคือ "valid" list ที่ได้จาก
@@ -8,6 +18,16 @@ package dto
 // (ซ้ำ student_id เดิม → อัปเดต major/real_name/enrollment_status ให้ตรงไฟล์ล่าสุด)
 type AddEligibleStudentRequest struct {
 	Students []EligibleStudentItem `json:"students" binding:"required,min=1,dive"`
+}
+
+// AddSingleEligibleStudentRequest = body ของ POST /api/admin/eligible-students/single — แอดมินเพิ่มทีละคนเอง
+// ต่างจาก import ตรงที่กำหนด role ได้ และไม่มีชื่อ (ไม่เขียนทับชื่อเดิมที่ import มาจากไฟล์)
+// data flow: JSON จาก client → AdminController.AddEligibleStudent → UPSERT eligible_students (+ users.role_id)
+type AddSingleEligibleStudentRequest struct {
+	StudentID        string `json:"student_id" binding:"required,min=3,max=20"`
+	Major            string `json:"major" binding:"required,min=2,max=100"`
+	EnrollmentStatus int    `json:"enrollment_status" binding:"required"`
+	Role             string `json:"role" binding:"required,oneof=user admin"`
 }
 
 // EligibleStudentItem = 1 รายชื่อในลิสต์ที่ import เข้ามา (แถวหนึ่งจากไฟล์ Excel ของทะเบียน)

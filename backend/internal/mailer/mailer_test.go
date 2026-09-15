@@ -199,3 +199,22 @@ func TestActionEmailEscapesNameInHTMLOnly(t *testing.T) {
 		t.Error("ลิงก์ปลายทางหายไปจากเนื้อเมล")
 	}
 }
+
+// TestActionEmailQuote — quote คือข้อความที่แอดมินพิมพ์เอง ฝั่ง HTML ต้อง escape ส่วนฝั่ง text ต้องเห็นตามที่พิมพ์
+// และเมลที่ไม่มี quote ต้องไม่มีกล่องเหตุผลโผล่มา (template ใช้ร่วมกับเมลยืนยัน/รีเซ็ตรหัสผ่าน)
+func TestActionEmailQuote(t *testing.T) {
+	const reason = "<b>ไม่มีการใช้งาน</b> & หมดเทอม"
+	content := actionEmail{intro: "i", link: "https://example.com/", quote: reason}
+
+	if got := content.html("n"); strings.Contains(got, "<b>") || !strings.Contains(got, "&lt;b&gt;") {
+		t.Error("เหตุผลฝั่ง HTML ไม่ถูก escape")
+	}
+	if got := content.text("n"); !strings.Contains(got, reason) {
+		t.Error("เหตุผลฝั่ง text ต้องไม่ถูก escape")
+	}
+
+	content.quote = ""
+	if got := content.html("n"); strings.Contains(got, "__QUOTE__") || strings.Contains(got, "เหตุผลจากผู้ดูแลระบบ") {
+		t.Error("เมลที่ไม่มี quote ต้องไม่มีกล่องเหตุผลหรือ placeholder ค้าง")
+	}
+}

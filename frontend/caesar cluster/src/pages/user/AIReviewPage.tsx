@@ -391,7 +391,7 @@ export default function AIReviewPage() {
 
   // Fallback when router state is missing (page refreshed / opened directly): recover the same
   // details from the ai-review-requests receipt Caesar-Cluster saved at submit time (see
-  // RequestQuotar.tsx handleDeployWithAI). Cluster-AI's own status endpoint doesn't carry these
+  // MyService.tsx handleDeployWithAI). Cluster-AI's own status endpoint doesn't carry these
   // fields at all, so this is the only place left to ask.
   const [recoveredInfo, setRecoveredInfo] = useState<ReviewPageState | null>(null);
   const [recovering, setRecovering] = useState(false);
