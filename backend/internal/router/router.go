@@ -150,6 +150,11 @@ func Setup(
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
 			admin.DELETE("/namespaces/:id", adminCtl.DeleteNamespace)
 
+			admin.GET("/services", adminCtl.ListServices)
+			admin.DELETE("/services/:id", adminCtl.DeleteService)
+			admin.POST("/services/:id/schedule-delete", adminCtl.ScheduleServiceDelete)
+			admin.DELETE("/services/:id/schedule-delete", adminCtl.CancelServiceDelete)
+
 			// ก้อนสรุปของหน้า AdminDashboard — นับทุกอย่างที่ Postgres แล้วส่งกลับแค่ตัวเลข
 			// แทนที่จะยกตาราง users + requests ขึ้นมานับเองในเบราว์เซอร์ทุก 30 วินาที
 			admin.GET("/dashboard/summary", adminCtl.DashboardSummary)

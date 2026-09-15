@@ -151,6 +151,9 @@ type Service struct {
 	// หน่วยที่ผู้ใช้เลือกบนหน้าจอเป็นเรื่องการแสดงผล ไม่ส่งขึ้นมาให้ต้องตรวจซ้ำทุกชั้น
 	StorageMB int `gorm:"column:storage_mb;type:integer;not null;default:0;check:storage_mb >= 0" json:"storage_mb"`
 
+	// DeleteAt = เวลาที่แอดมินตั้งให้ลบ (nil = ไม่ได้ตั้ง) — ServiceManager.StartScheduledDeletion เป็นคนลบ
+	DeleteAt *time.Time `gorm:"column:delete_at;type:timestamp;index:idx_services_delete_at" json:"delete_at"`
+
 	CreatedAt time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 }
 

@@ -719,6 +719,96 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 	utils.OK(c, http.StatusOK, detail)
 }
 
+func (h *AdminController) ListServices(c *gin.Context) {
+	list, err := h.svc.ListAll(c.Request.Context())
+	if err != nil {
+		log.Printf("admin list services error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึงรายการ service ไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, list)
+}
+
+func (h *AdminController) DeleteService(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	if err := h.svc.DeleteByID(c.Request.Context(), id); err != nil {
+		respondServiceError(c, "admin delete service", err)
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
+}
+
+// ตั้งเวลาลบ service ใน 24 ชม.
+func (h *AdminController) ScheduleServiceDelete(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	deleteAt, err := h.svc.ScheduleDelete(c.Request.Context(), id)
+	if err != nil {
+		respondServiceError(c, "schedule service delete", err)
+		return
+	}
+	go h.notifyServiceDeleteScheduled(context.WithoutCancel(c.Request.Context()), id, deleteAt)
+	utils.OK(c, http.StatusOK, gin.H{"id": id, "delete_at": deleteAt})
+}
+
+// แจ้งสมาชิกทุกคนใน namespace ว่า service ถูกตั้งเวลาลบ
+func (h *AdminController) notifyServiceDeleteScheduled(ctx context.Context, serviceID int, deleteAt time.Time) {
+	if !h.mailer.Configured() {
+		log.Printf("schedule service delete id=%d: ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก", serviceID)
+		return
+	}
+
+	var svc entity.Service
+	if err := h.db.WithContext(ctx).First(&svc, serviceID).Error; err != nil {
+		log.Printf("notify service delete id=%d: อ่าน service ไม่สำเร็จ: %v", serviceID, err)
+		return
+	}
+	var ns entity.Namespace
+	if err := h.db.WithContext(ctx).First(&ns, svc.NamespaceID).Error; err != nil {
+		log.Printf("notify service delete id=%d: อ่าน namespace ไม่สำเร็จ: %v", serviceID, err)
+		return
+	}
+	var members []entity.User
+	if err := h.db.WithContext(ctx).Where("namespace_id = ?", svc.NamespaceID).Find(&members).Error; err != nil {
+		log.Printf("notify service delete id=%d: อ่านสมาชิกไม่สำเร็จ: %v", serviceID, err)
+		return
+	}
+
+	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/"
+	for _, u := range members {
+		_ = h.mailer.SendServiceDeleteScheduledEmail(ctx, u.ID, u.Gmail, u.RealName, svc.Name, ns.Name, deleteAt, appLink)
+	}
+}
+
+func (h *AdminController) CancelServiceDelete(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+	if err := h.svc.CancelScheduledDelete(c.Request.Context(), id); err != nil {
+		respondServiceError(c, "cancel service delete", err)
+		return
+	}
+	utils.OK(c, http.StatusOK, gin.H{"id": id, "delete_at": nil})
+}
+
+func respondServiceError(c *gin.Context, action string, err error) {
+	if errors.Is(err, services.ErrServiceNotFound) {
+		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบ service นี้")
+		return
+	}
+	log.Printf("%s error: %v", action, err)
+	utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดำเนินการกับ service ไม่สำเร็จ")
+}
+
 // DeleteNamespace ลบ namespace ทิ้งทั้งก้อนตามดุลยพินิจแอดมิน — ลบได้แม้ยังมีสมาชิกอยู่
 // (ต่างจาก NamespaceController.Leave ที่ผู้ใช้ทั่วไปลบเองไม่ได้ถ้ายังมีสมาชิกคนอื่นอยู่)
 //

@@ -1,7 +1,7 @@
 import type { User } from "@/api/adminuser";
 import type { RequestTemplate } from "@/api/adminrequest";
 import type { AdminVmRequest, VmRequest } from "@/api/requests";
-import type { AppService } from "@/api/services";
+import type { AdminService, AppService } from "@/api/services";
 import type { LogLine } from "@/api/logs";
 import type { NodeTelemetry } from "@/api/mornitorequest";
 import type { EligibleStudentItem } from "@/api/eligibleStudents";
@@ -363,6 +363,38 @@ export const servicesScope: SearchScope = {
   ],
   quickFilters: [{ fieldId: "status", label: "สถานะ", options: serviceStatusOptions, multi: true }],
   examples: ["status:failed", "image:nginx", "replicas:>1", "cpu:>=1000"],
+};
+
+export const adminServicesScope: SearchScope = {
+  id: "admin-services",
+  noun: "บริการ",
+  placeholder: "ค้นหาบริการ — ชื่อ, image, เนมสเปซ, ผู้สร้าง หรือ status:failed",
+  fields: [
+    { id: "name", label: "ชื่อบริการ", aliases: ["ชื่อ"], get: (s: AdminService) => s.name },
+    { id: "image", label: "Image", aliases: ["อิมเมจ", "repo"], get: (s: AdminService) => s.image },
+    { id: "ns", label: "เนมสเปซ", aliases: ["namespace", "space"], get: (s: AdminService) => s.namespace_name },
+    {
+      id: "owner",
+      label: "ผู้สร้าง",
+      aliases: ["เจ้าของ", "student", "รหัส"],
+      get: (s: AdminService) => `${s.creator_name} ${s.creator_student_id}`,
+    },
+    {
+      id: "status",
+      label: "สถานะ",
+      type: "enum",
+      aliases: ["สถานะ"],
+      exactOnly: true,
+      options: serviceStatusOptions,
+      get: (s: AdminService) => s.status,
+    },
+    { id: "cpu", label: "CPU รวม", type: "number", unit: "millicore", aliases: ["ซีพียู"], exactOnly: true, get: (s: AdminService) => s.cpu_milli * s.replicas },
+    { id: "ram", label: "RAM รวม", type: "number", unit: "MB", aliases: ["แรม"], exactOnly: true, get: (s: AdminService) => s.ram_mb * s.replicas },
+    { id: "storage", label: "ดิสก์", type: "number", unit: "MB", aliases: ["ดิสก์", "disk"], exactOnly: true, get: (s: AdminService) => s.storage_mb * s.replicas },
+    { id: "created", label: "วันที่สร้าง", type: "date", aliases: ["วันที่"], exactOnly: true, get: (s: AdminService) => s.created_at },
+  ],
+  quickFilters: [{ fieldId: "status", label: "สถานะ", options: serviceStatusOptions, multi: true }],
+  examples: ["status:crashloop", "image:postgres", "cpu:>=2000", "ns:ns-user-5"],
 };
 
 // ---------------------------------------------------------------------------

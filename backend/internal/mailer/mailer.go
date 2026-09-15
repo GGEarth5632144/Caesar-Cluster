@@ -37,9 +37,10 @@ const implicitTLSPort = 465
 // ค่า purpose ที่ Mailer ติดไปกับ Delivery — ตรงกับค่าคงที่ฝั่ง entity.EmailDelivery
 // ประกาศซ้ำไว้ที่นี่เพราะ package mailer ไม่ import entity (เหตุผลเดียวกับที่ Recorder เป็น interface)
 const (
-	PurposeVerification     = "verification"
-	PurposePasswordReset    = "password_reset"
-	PurposeNamespaceDeleted = "namespace_deleted"
+	PurposeVerification           = "verification"
+	PurposePasswordReset          = "password_reset"
+	PurposeNamespaceDeleted       = "namespace_deleted"
+	PurposeServiceDeleteScheduled = "service_delete_scheduled"
 )
 
 // Config = ค่าที่ Mailer ต้องใช้ต่อกับ SMTP server — map ตรงกับ env SMTP_*/MAIL_* ใน config.Config
@@ -173,6 +174,30 @@ func (m *Mailer) SendNamespaceDeletedEmail(ctx context.Context, userID int, toEm
 		userID:  &userID,
 		to:      toEmail,
 		subject: "namespace ของคุณถูกลบ — Caesar Cluster",
+		text:    content.text(toName),
+		html:    content.html(toName),
+	})
+}
+
+// thaiTime = เวลาไทย (UTC+7) — FixedZone เพราะบางเครื่อง/คอนเทนเนอร์ไม่มี tzdata
+var thaiTime = time.FixedZone("ICT", 7*60*60)
+
+// SendServiceDeleteScheduledEmail แจ้งสมาชิกว่า service ในกลุ่มถูกแอดมินตั้งเวลาลบ
+func (m *Mailer) SendServiceDeleteScheduledEmail(ctx context.Context, userID int, toEmail, toName, serviceName, namespaceName string, deleteAt time.Time, appLink string) error {
+	content := actionEmail{
+		preheader: "service ในกลุ่มของคุณจะถูกลบภายใน 24 ชั่วโมง",
+		intro: fmt.Sprintf("ผู้ดูแลระบบได้ตั้งเวลาลบ service \"%s\" ใน namespace \"%s\" "+
+			"ระบบจะลบอัตโนมัติวันที่ %s หากต้องการเก็บข้อมูล กรุณาสำรองไว้ก่อนถึงเวลา",
+			serviceName, namespaceName, deleteAt.In(thaiTime).Format("02/01/2006 เวลา 15:04 น.")),
+		button:   "เข้าสู่ Caesar Cluster",
+		link:     appLink,
+		footnote: "หากมีข้อสงสัยหรือต้องการให้ยกเลิกการลบ กรุณาติดต่อผู้ดูแลระบบก่อนถึงเวลาที่กำหนด",
+	}
+	return m.send(ctx, outgoing{
+		purpose: PurposeServiceDeleteScheduled,
+		userID:  &userID,
+		to:      toEmail,
+		subject: "service ของคุณจะถูกลบใน 24 ชั่วโมง — Caesar Cluster",
 		text:    content.text(toName),
 		html:    content.html(toName),
 	})
