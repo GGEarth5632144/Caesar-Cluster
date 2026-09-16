@@ -133,7 +133,7 @@ export default function GroupMembers({
             <Input
               value={studentId}
               onChange={(e) => setStudentId(e.target.value)}
-              placeholder="Student ID (e.g. B6600001)"
+              placeholder="รหัสประจำตัว"
               disabled={inviting}
               className="flex-1"
             />

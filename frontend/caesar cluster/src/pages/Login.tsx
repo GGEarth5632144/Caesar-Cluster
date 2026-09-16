@@ -15,7 +15,7 @@ import ResendVerification from "@/components/ResendVerification";
 import { cn } from "@/lib/utils";
 
 const loginSchema = z.object({
-  student_id: z.string().min(1, "กรุณากรอกรหัสนักศึกษา"),
+  student_id: z.string().min(1, "กรุณากรอกรหัสประจำตัว"),
   password: z.string().min(1, "กรุณากรอกรหัสผ่าน"),
   remember: z.boolean(),
 });
@@ -92,7 +92,7 @@ export default function Login() {
         <div className="grid gap-5 sm:grid-cols-2">
           <div>
             <Input
-              placeholder="Student Number"
+              placeholder="รหัสประจำตัว"
               className={inputClass}
               {...register("student_id")}
             />

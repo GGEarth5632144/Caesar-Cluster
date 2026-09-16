@@ -36,10 +36,10 @@ const roleLabel = (roleId: number) => (roleId === 2 ? "admin" : "user");
 export const usersScope: SearchScope = {
   id: "admin-users",
   noun: "ผู้ใช้",
-  placeholder: "ค้นหาผู้ใช้ — ชื่อ, รหัสนักศึกษา, อีเมล หรือ role:admin",
+  placeholder: "ค้นหาผู้ใช้ — ชื่อ, รหัสประจำตัว, อีเมล หรือ role:admin",
   fields: [
     { id: "name", label: "ชื่อ-นามสกุล", aliases: ["ชื่อ", "realname"], get: (u: User) => u.real_name },
-    { id: "sid", label: "รหัสนักศึกษา", aliases: ["รหัส", "student", "student_id"], get: (u: User) => u.student_id },
+    { id: "sid", label: "รหัสประจำตัว", aliases: ["รหัส", "student", "student_id"], get: (u: User) => u.student_id },
     { id: "email", label: "อีเมล", aliases: ["อีเมล", "gmail", "mail"], get: (u: User) => u.gmail },
     {
       id: "role",
@@ -52,14 +52,6 @@ export const usersScope: SearchScope = {
         { value: "admin", label: "ผู้ดูแลระบบ" },
       ],
       get: (u: User) => roleLabel(u.role_id),
-    },
-    {
-      id: "year",
-      label: "ชั้นปี",
-      type: "number",
-      aliases: ["ปี", "ชั้นปี"],
-      exactOnly: true,
-      get: (u: User) => u.year_level,
     },
     {
       id: "space",
@@ -111,7 +103,7 @@ export const usersScope: SearchScope = {
       ],
     },
   ],
-  examples: ["role:admin", "space:no", "year:4 -role:admin", "nsname:lab"],
+  examples: ["role:admin", "space:no", "nsname:lab"],
 };
 
 // ---------------------------------------------------------------------------
@@ -227,10 +219,10 @@ const spaceTypeOptions = [
 export const adminRequestQueueScope: SearchScope = {
   id: "admin-request-queue",
   noun: "คำขอ",
-  placeholder: "ค้นหาคำขอ — ชื่อผู้ยื่น, รหัสนักศึกษา หรือ status:pending",
+  placeholder: "ค้นหาคำขอ — ชื่อผู้ยื่น, รหัสประจำตัว หรือ status:pending",
   fields: [
     { id: "name", label: "ชื่อผู้ยื่น", aliases: ["ชื่อ", "requester"], get: (r: AdminVmRequest) => r.requester_name },
-    { id: "sid", label: "รหัสนักศึกษา", aliases: ["รหัส", "student"], get: (r: AdminVmRequest) => r.requester_student_id },
+    { id: "sid", label: "รหัสประจำตัว", aliases: ["รหัส", "student"], get: (r: AdminVmRequest) => r.requester_student_id },
     { id: "desc", label: "รายละเอียดคำขอ", aliases: ["รายละเอียด", "description"], get: (r: AdminVmRequest) => r.description },
     { id: "reason", label: "เหตุผลที่ปฏิเสธ", aliases: ["เหตุผล", "deny"], get: (r: AdminVmRequest) => r.deny_reason },
     {
@@ -313,7 +305,7 @@ export const importPreviewScope: SearchScope = {
   placeholder: "ค้นหาในรายชื่อที่อ่านได้ — ชื่อ, รหัส หรือ enroll:10",
   fields: [
     { id: "name", label: "ชื่อ-นามสกุล", aliases: ["ชื่อ"], get: (s: EligibleStudentItem) => s.real_name },
-    { id: "sid", label: "รหัสนักศึกษา", aliases: ["รหัส", "student"], get: (s: EligibleStudentItem) => s.student_id },
+    { id: "sid", label: "รหัสประจำตัว", aliases: ["รหัส", "student"], get: (s: EligibleStudentItem) => s.student_id },
     { id: "major", label: "สาขา", aliases: ["สาขา"], get: (s: EligibleStudentItem) => s.major },
     {
       id: "enroll",

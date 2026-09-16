@@ -42,6 +42,7 @@ export type EligibleRole = 'user' | 'admin';
 // body ของ POST /admin/eligible-students/single — ตรงกับ dto.AddSingleEligibleStudentRequest
 export interface AddEligibleStudentPayload {
   student_id: string;
+  real_name?: string;
   major: string;
   enrollment_status: number;
   role: EligibleRole;
@@ -55,7 +56,6 @@ export interface EligibleStudent {
   enrollment_status: number;
   // คนที่สมัครแล้วถูกซิงก์ให้ตรงกับบัญชีจริงเสมอ ส่วนคนที่ยังไม่สมัครคือ role ที่จะได้ตอนสมัคร
   role: EligibleRole;
-  year_level: number;
   imported_at: string;
   created_at: string;
 }

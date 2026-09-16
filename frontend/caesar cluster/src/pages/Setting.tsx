@@ -35,7 +35,6 @@ export default function Setting() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   const initials = getInitials(user?.real_name ?? "") || "U";
-  const yearLabel = user?.year_level ? `ปี ${user.year_level}` : "—";
   const major = user?.major || "—";
 
   const nextRealName = `${firstName.trim()} ${lastName.trim()}`.trim();
@@ -110,7 +109,7 @@ export default function Setting() {
             {user?.real_name || "User"}
           </h1>
           <p className="mt-1 text-base font-medium text-[#BB6653]">
-            {user?.student_id} · {yearLabel} · {major}
+            {user?.student_id} · {major}
           </p>
           <p className="mt-1 text-base text-[#211a14]/50">{user?.gmail}</p>
         </div>
@@ -162,18 +161,15 @@ export default function Setting() {
             <Field label="Email">
               <Value>{user?.gmail}</Value>
             </Field>
-            <Field label="Student number">
+            <Field label="รหัสประจำตัว">
               <Value>{user?.student_id}</Value>
-            </Field>
-            <Field label="Year of study">
-              <Value>{yearLabel}</Value>
             </Field>
           </div>
 
           {isEditing && (
             <>
               <p className="mt-5 text-sm text-[#211a14]/50">
-                อีเมล รหัสนักศึกษา และชั้นปี ผูกกับรายชื่อผู้มีสิทธิ์ หากต้องการแก้ไขกรุณาติดต่อผู้ดูแลระบบ
+                อีเมลและรหัสประจำตัวผูกกับรายชื่อผู้มีสิทธิ์ หากต้องการแก้ไขกรุณาติดต่อผู้ดูแลระบบ
               </p>
               <div className="mt-6 flex gap-3">
                 <Button

@@ -39,7 +39,6 @@ type UpdateUserRequest struct {
 	StudentID *string `json:"student_id"`
 	RealName  *string `json:"real_name"`
 	Gmail     *string `json:"gmail" binding:"omitempty,email"`
-	Year      *int    `json:"year"`
 	RoleID    *int    `json:"role_id"`
 }
 
@@ -68,19 +67,15 @@ type ChangePasswordRequest struct {
 	NewPassword     string `json:"new_password" binding:"required,min=8"`
 }
 
-// UserWithYearLevel = entity.User + ชั้นปีที่คำนวณสดจาก student_id (entity.YearLevel)
-// + โควตาของ namespace ที่ผู้ใช้สังกัด (โควตาผูกกับ namespace ไม่ใช่ user แล้ว)
-//
-// ให้หน้า admin โชว์เป็น "Year 4" ได้ตรงๆ แทนที่จะโชว์ User.EntryYear (ปีที่เข้าศึกษา พ.ศ. เช่น 2566)
-// ซึ่งเป็นคนละความหมายกัน — ใช้ตอน ListUsers เท่านั้น (ดู AdminController.ListUsers)
+// UserWithNamespace = entity.User + โควตาของ namespace ที่ผู้ใช้สังกัด (โควตาผูกกับ namespace ไม่ใช่ user แล้ว)
+// ใช้ตอบ ListUsers/UpdateUser ของ AdminController
 //
 // CPULimitMilli/RAMLimitMB ดึงมาจาก namespace ของผู้ใช้ (ถ้ายังไม่มี space จะเป็น 0)
 //
 // NamespaceName คือชื่อ space ที่ผู้ใช้สังกัด — หน้า User Management โชว์ชื่อนี้แทนโควตา
 // (โควตาย้ายไปจัดการที่หน้า Namespace Management แล้ว) ผู้ใช้ที่ยังไม่มี space จะเป็นค่าว่าง
-type UserWithYearLevel struct {
+type UserWithNamespace struct {
 	entity.User
-	YearLevel     int    `json:"year_level"`
 	NamespaceName string `json:"namespace_name"`
 	CPULimitMilli int    `json:"cpu_limit_milli"`
 	RAMLimitMB    int    `json:"ram_limit_mb"`

@@ -1,15 +1,5 @@
 package dto
 
-import "backend/internal/entity"
-
-// EligibleStudentWithYearLevel = entity.EligibleStudent + ชั้นปีที่คำนวณสดจาก student_id (entity.YearLevel)
-// ใช้ตอบ GET /api/admin/eligible-students — หน้า "รายชื่อผู้มีสิทธิ์" โชว์ชั้นปีแทนชื่อ-สกุล
-// รหัสที่แกะปีไม่ได้จะได้ 0 (หน้าเว็บโชว์เป็นขีด) เหมือน UserWithYearLevel
-type EligibleStudentWithYearLevel struct {
-	entity.EligibleStudent
-	YearLevel int `json:"year_level"`
-}
-
 // AddEligibleStudentRequest = body ของ POST /api/admin/eligible-students
 // admin ใช้ยืนยัน (confirm) การ import รายชื่อ นศ. ที่มีสิทธิ์สมัคร (ตาราง "match" ใน ERD)
 // รับเป็น array เพื่อ import ทีละหลายคนได้ในครั้งเดียว — ปกติคือ "valid" list ที่ได้จาก
@@ -21,18 +11,19 @@ type AddEligibleStudentRequest struct {
 }
 
 // AddSingleEligibleStudentRequest = body ของ POST /api/admin/eligible-students/single — แอดมินเพิ่มทีละคนเอง
-// ต่างจาก import ตรงที่กำหนด role ได้ และไม่มีชื่อ (ไม่เขียนทับชื่อเดิมที่ import มาจากไฟล์)
+// ต่างจาก import ตรงที่กำหนด role ได้ ชื่อไม่บังคับ (เว้นว่าง = คงชื่อเดิม) และ admin ไม่ต้องมีสถานภาพ
 // data flow: JSON จาก client → AdminController.AddEligibleStudent → UPSERT eligible_students (+ users.role_id)
 type AddSingleEligibleStudentRequest struct {
-	StudentID        string `json:"student_id" binding:"required,min=3,max=20"`
+	StudentID        string `json:"student_id" binding:"required,max=20"`
+	RealName         string `json:"real_name" binding:"max=150"`
 	Major            string `json:"major" binding:"required,min=2,max=100"`
-	EnrollmentStatus int    `json:"enrollment_status" binding:"required"`
+	EnrollmentStatus int    `json:"enrollment_status" binding:"required_unless=Role admin"`
 	Role             string `json:"role" binding:"required,oneof=user admin"`
 }
 
 // EligibleStudentItem = 1 รายชื่อในลิสต์ที่ import เข้ามา (แถวหนึ่งจากไฟล์ Excel ของทะเบียน)
 type EligibleStudentItem struct {
-	StudentID        string `json:"student_id" binding:"required,min=3,max=20"`
+	StudentID        string `json:"student_id" binding:"required,max=20"`
 	RealName         string `json:"real_name"`
 	Major            string `json:"major" binding:"required,min=2,max=100"`
 	EnrollmentStatus int    `json:"enrollment_status" binding:"required"`

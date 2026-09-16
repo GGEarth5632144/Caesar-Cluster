@@ -18,7 +18,7 @@ import { usePageSearch } from "@/hooks/usePageSearch";
 import { usersScope } from "@/config/searchScopes";
 import { SearchStatus } from "@/components/ui/search-status";
 import { Highlight } from "@/components/ui/highlight";
-type YearTab = "all" | "1" | "2" | "3" | "4" | "5+" | "admin";
+type RoleTab = "all" | "user" | "admin";
 
 export default function UserManagement() {
   const navigate = useNavigate();
@@ -26,7 +26,7 @@ export default function UserManagement() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<YearTab>("all");
+  const [activeTab, setActiveTab] = useState<RoleTab>("all");
 
   // State สำหรับเก็บข้อมูล User ที่กำลังถูกแก้ไข (ถ้าเป็น null คือปิด Modal)
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -83,17 +83,15 @@ export default function UserManagement() {
     setEditingUser(null);
   };
 
-  // แท็บชั้นปีกรองก่อน แล้วค่อยส่งที่เหลือให้ช่องค้นหาด้านบนกรองต่อ
+  // แท็บกรองก่อน แล้วค่อยส่งที่เหลือให้ช่องค้นหาด้านบนกรองต่อ
   // เรียงแบบนี้เพราะแท็บคือ "ขอบเขตที่กำลังดูอยู่" ส่วนคำค้นคือการหาของในขอบเขตนั้น
   // ตัวเลข n/m ที่ Topbar โชว์จึงหมายถึง "เจอกี่คนในแท็บนี้" ซึ่งตรงกับสิ่งที่ตาเห็น
   const usersInTab = useMemo(
     () =>
       users.filter((user) => {
         if (activeTab === "admin") return user.role_id === 2;
-        if (activeTab === "all") return true;
-        if (user.role_id === 2) return false;
-        if (activeTab === "5+") return user.year_level >= 5;
-        return user.year_level.toString() === activeTab;
+        if (activeTab === "user") return user.role_id !== 2;
+        return true;
       }),
     [users, activeTab],
   );
@@ -104,13 +102,9 @@ export default function UserManagement() {
     highlightTerms,
   } = usePageSearch(usersScope, usersInTab);
 
-  const tabs: { id: YearTab; label: string }[] = [
+  const tabs: { id: RoleTab; label: string }[] = [
     { id: "all", label: "ทั้งหมด" },
-    { id: "1", label: "ปี 1" },
-    { id: "2", label: "ปี 2" },
-    { id: "3", label: "ปี 3" },
-    { id: "4", label: "ปี 4" },
-    { id: "5+", label: "ปี 5+" },
+    { id: "user", label: "User" },
     { id: "admin", label: "ผู้ดูแลระบบ" },
   ];
 
@@ -176,12 +170,11 @@ export default function UserManagement() {
         <div className="-mx-6 overflow-x-auto sm:mx-0">
           <table className="w-full min-w-[800px] table-fixed text-left text-base text-[#211a14]">
             <colgroup>
-              <col className="w-[28%]" />
-              <col className="w-[23%]" />
-              <col className="w-[19%]" />
-              <col className="w-[10%]" />
-              <col className="w-[10%]" />
-              <col className="w-[10%]" />
+              <col className="w-[30%]" />
+              <col className="w-[26%]" />
+              <col className="w-[22%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
             </colgroup>
             <thead>
               <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
@@ -189,16 +182,15 @@ export default function UserManagement() {
                 <th className="px-3 pb-4">Contact</th>
                 <th className="px-3 pb-4">Namespace</th>
                 <th className="px-3 pb-4 text-center">Role</th>
-                <th className="px-3 pb-4 text-center">Year</th>
                 <th className="px-6 pb-4 text-center sm:px-3">Action</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <TableRowsSkeleton rows={6} cols={6} />
+                <TableRowsSkeleton rows={6} cols={5} />
               ) : error ? (
                 <tr>
-                  <td colSpan={6} className="py-10">
+                  <td colSpan={5} className="py-10">
                     <div className="p-4 mx-auto max-w-sm rounded-xl bg-red-50 text-center text-red-600 text-base border border-red-100">
                       {error}
                     </div>
@@ -206,7 +198,7 @@ export default function UserManagement() {
                 </tr>
               ) : filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-16 text-center text-neutral-500">
+                  <td colSpan={5} className="py-16 text-center text-neutral-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Search className="size-8 text-[#BB6653]/30" />
                       <p>
@@ -294,11 +286,6 @@ export default function UserManagement() {
                         )}
                       </td>
 
-                      {/* ชั้นปีแยกคอลัมน์จาก role — แอดมินไม่มีชั้นปี ส่วนรหัสที่แกะปีไม่ได้ backend ส่ง 0 มา */}
-                      <td className="px-3 py-4 text-center text-[#211a14]/70">
-                        {!isAdmin && user.year_level > 0 ? `ปี ${user.year_level}` : "—"}
-                      </td>
-
                       <td className="px-6 py-4 text-center sm:px-3">
                         <div className="flex items-center justify-center gap-2">
                           <button 
@@ -378,8 +365,7 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
     setIsSubmitting(true);
     
     try {
-      // แปลงข้อมูลตัวเลขก่อนส่งไป API — ไม่ส่ง year เพราะเป็นค่าที่คำนวณสดจาก student_id เสมอ
-      // (ดู entity.YearLevel ฝั่ง backend) แก้ตรงนี้ไปก็ไม่มีผล ไม่ใช่ฟิลด์ที่แก้ไขได้
+      // แปลงข้อมูลตัวเลขก่อนส่งไป API
       const payload: UpdateUserDTO = {
         student_id: formData.student_id,
         real_name: formData.real_name,
@@ -428,9 +414,9 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
       )}
     >
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-        {/* รหัสนักศึกษา */}
+        {/* รหัสประจำตัว */}
         <div>
-          <label className={labelClass}>Student ID</label>
+          <label className={labelClass}>รหัสประจำตัว</label>
           <input name="student_id" value={formData.student_id} onChange={handleChange} required className={inputClass} />
         </div>
 
@@ -444,17 +430,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
         <div>
           <label className={labelClass}>Real Name</label>
           <input name="real_name" value={formData.real_name} onChange={handleChange} required className={inputClass} />
-        </div>
-
-
-        {/* ชั้นปี — คำนวณสดจาก student_id เสมอ แก้ไขตรงนี้ไม่ได้ (เปลี่ยน Student ID แล้วบันทึก ค่านี้จะขยับตาม) */}
-        <div>
-          <label className={labelClass}>Year</label>
-          <input
-            value={user.role_id !== 2 && user.year_level > 0 ? `ปี ${user.year_level}` : "—"}
-            disabled
-            className={`${inputClass} disabled:bg-black/5 disabled:text-[#211a14]/60`}
-          />
         </div>
 
         {/* ตำแหน่ง (Role) */}
@@ -486,11 +461,8 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
 // ==========================================
 // รหัสสถานภาพที่เลือกได้ — ชุดที่ enrollmentStatusLabel รู้จัก (60–89 = สิ้นสุดสถานภาพ ใส่ 60 ตัวแทนพอ)
 const ENROLLMENT_STATUS_OPTIONS = [10, 11, 12, 13, 40, 60];
-// รูปแบบเดียวกับ studentIDPattern ฝั่ง backend — กันไว้ก่อนส่ง ส่วน backend ตรวจซ้ำอีกชั้น
-const STUDENT_ID_PATTERN = /^[A-Za-z][0-9]{6,}$/;
-// เงื่อนไขเดียวกับด่านของ AuthController.Register — ใช้แค่เตือนว่าบันทึกแล้วเจ้าตัวจะยังสมัครไม่ได้
-// (คนที่ถูกกำหนดเป็น admin ข้ามสองด่านนี้)
-const MAJOR_CPE = "CPE";
+// เงื่อนไขเดียวกับด่านสถานภาพของ AuthController.Register — ใช้แค่เตือนว่าบันทึกแล้วเจ้าตัวจะยังสมัครไม่ได้
+// (คนที่ถูกกำหนดเป็น admin ข้ามด่านนี้)
 const ACTIVE_ENROLLMENT_STATUSES = [10, 11];
 
 // ป้ายและสีเดียวกับคอลัมน์ Role ในตารางผู้ใช้หลัก
@@ -498,6 +470,9 @@ const ROLE_BADGE: Record<EligibleRole, { label: string; className: string }> = {
   user: { label: "User", className: "bg-[#FFF8E8] text-[#BB6653]" },
   admin: { label: "Admin", className: "bg-red-50 text-red-600" },
 };
+
+const eligibleStatusLabel = (s: EligibleStudent) =>
+  s.role === "admin" ? "—" : enrollmentStatusLabel(s.enrollment_status);
 
 interface AddEligibleStudentModalProps {
   onClose: () => void;
@@ -507,8 +482,9 @@ interface AddEligibleStudentModalProps {
 
 function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStudentModalProps) {
   const [studentId, setStudentId] = useState("");
+  const [realName, setRealName] = useState("");
   const [role, setRole] = useState<EligibleRole>("user");
-  const [major, setMajor] = useState(MAJOR_CPE);
+  const [major, setMajor] = useState("");
   const [status, setStatus] = useState("10");
   const [existing, setExisting] = useState<EligibleStudent[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -522,32 +498,31 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
       .catch((err) => console.error("Failed to fetch eligible students:", err));
   }, []);
 
-  const normalizedId = studentId.trim().toUpperCase();
-  const idValid = STUDENT_ID_PATTERN.test(normalizedId);
-  const match = existing.find((s) => s.student_id.toUpperCase() === normalizedId);
+  const trimmedId = studentId.trim();
+  const match = existing.find((s) => s.student_id.toUpperCase() === trimmedId.toUpperCase());
   const trimmedMajor = major.trim();
-  const canRegister =
-    role === "admin" ||
-    (trimmedMajor === MAJOR_CPE && ACTIVE_ENROLLMENT_STATUSES.includes(Number(status)));
+  const isAdminRole = role === "admin";
+  const canRegister = isAdminRole || ACTIVE_ENROLLMENT_STATUSES.includes(Number(status));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!idValid || trimmedMajor.length < 2) return;
+    if (!trimmedId || trimmedMajor.length < 2) return;
 
     setIsSubmitting(true);
     try {
       const { user_role_updated } = await eligibleStudentsApi.addOne({
         // ใช้ตัวสะกดของแถวเดิมถ้ามี จะได้ชน student_id เดิมตอน upsert ไม่กลายเป็นแถวใหม่
-        student_id: match?.student_id ?? normalizedId,
+        student_id: match?.student_id ?? trimmedId,
+        real_name: realName.trim(),
         major: trimmedMajor,
-        enrollment_status: Number(status),
+        enrollment_status: isAdminRole ? 0 : Number(status),
         role,
       });
       notify.success(
         match ? "อัปเดตผู้มีสิทธิ์สำเร็จ" : "เพิ่มผู้มีสิทธิ์สำเร็จ",
         user_role_updated
-          ? `${normalizedId} สมัครใช้งานแล้ว — เปลี่ยน role ของบัญชีเป็น ${ROLE_BADGE[role].label} ทันที`
-          : `${normalizedId} ถูกบันทึกลงรายชื่อผู้มีสิทธิ์แล้ว (Role: ${ROLE_BADGE[role].label})`,
+          ? `${trimmedId} สมัครใช้งานแล้ว — เปลี่ยน role ของบัญชีเป็น ${ROLE_BADGE[role].label} ทันที`
+          : `${trimmedId} ถูกบันทึกลงรายชื่อผู้มีสิทธิ์แล้ว (Role: ${ROLE_BADGE[role].label})`,
       );
       if (user_role_updated) onUserRoleChanged();
       onClose();
@@ -582,7 +557,7 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
           </button>
           <button
             type="submit"
-            disabled={isSubmitting || !idValid || trimmedMajor.length < 2}
+            disabled={isSubmitting || !trimmedId || trimmedMajor.length < 2}
             className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
           >
             {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : match ? "อัปเดต" : "เพิ่ม"}
@@ -592,29 +567,35 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
     >
       <div className="flex flex-col gap-5">
         <div>
-          <label htmlFor="eligible-student-id" className={labelClass}>รหัสนักศึกษา</label>
+          <label htmlFor="eligible-student-id" className={labelClass}>รหัสประจำตัว</label>
           <input
             id="eligible-student-id"
             value={studentId}
             onChange={(e) => setStudentId(e.target.value)}
             disabled={isSubmitting}
-            placeholder="เช่น B6600907"
             maxLength={20}
             required
             className={inputClass}
           />
-          {normalizedId && !idValid && (
-            <p className="mt-1.5 text-sm text-red-500">
-              รูปแบบไม่ถูกต้อง — ตัวอักษร 1 ตัวตามด้วยตัวเลขอย่างน้อย 6 หลัก
-            </p>
-          )}
-          {idValid && match && (
+          {match && (
             <p className="mt-1.5 text-sm text-[#F08B51]">
               รหัสนี้มีในรายชื่ออยู่แล้ว ({ROLE_BADGE[match.role]?.label ?? match.role} · {match.major} ·{" "}
-              {enrollmentStatusLabel(match.enrollment_status)}) — บันทึกจะอัปเดต Role สาขา และสถานภาพเป็นค่าใหม่
+              {eligibleStatusLabel(match)}) — บันทึกจะอัปเดต Role สาขา สถานภาพ และชื่อ-สกุล (ถ้ากรอก) เป็นค่าใหม่
               ถ้าสมัครใช้งานแล้ว Role ของบัญชีจะเปลี่ยนทันที
             </p>
           )}
+        </div>
+
+        <div>
+          <label htmlFor="eligible-real-name" className={labelClass}>ชื่อ-สกุล (ไม่บังคับ)</label>
+          <input
+            id="eligible-real-name"
+            value={realName}
+            onChange={(e) => setRealName(e.target.value)}
+            disabled={isSubmitting}
+            maxLength={150}
+            className={inputClass}
+          />
         </div>
 
         <div>
@@ -629,9 +610,9 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
             <option value="user">User</option>
             <option value="admin">Admin</option>
           </select>
-          {role === "admin" && (
+          {isAdminRole && (
             <p className="mt-1.5 text-sm text-red-500">
-              ผู้ดูแลระบบเข้าถึงหน้าจัดการทั้งหมดได้ และสมัครได้โดยไม่ตรวจสาขาหรือสถานภาพ
+              ผู้ดูแลระบบเข้าถึงหน้าจัดการทั้งหมดได้ และไม่ต้องมีสถานภาพ
             </p>
           )}
         </div>
@@ -649,26 +630,28 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
           />
         </div>
 
-        <div>
-          <label htmlFor="eligible-status" className={labelClass}>สถานภาพ</label>
-          <select
-            id="eligible-status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            disabled={isSubmitting}
-            className={inputClass}
-          >
-            {ENROLLMENT_STATUS_OPTIONS.map((code) => (
-              <option key={code} value={code}>
-                {enrollmentStatusLabel(code)}
-              </option>
-            ))}
-          </select>
-        </div>
+        {!isAdminRole && (
+          <div>
+            <label htmlFor="eligible-status" className={labelClass}>สถานภาพ</label>
+            <select
+              id="eligible-status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              disabled={isSubmitting}
+              className={inputClass}
+            >
+              {ENROLLMENT_STATUS_OPTIONS.map((code) => (
+                <option key={code} value={code}>
+                  {enrollmentStatusLabel(code)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {!canRegister && (
           <p className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            บันทึกได้ แต่เจ้าตัวจะยังสมัครใช้งานไม่ได้ — ระบบเปิดให้เฉพาะสาขา {MAJOR_CPE} ที่สถานภาพ 10 หรือ 11
+            บันทึกได้ แต่เจ้าตัวจะยังสมัครใช้งานไม่ได้ — ระบบเปิดให้เฉพาะผู้ที่มีสถานภาพ 10 หรือ 11
           </p>
         )}
       </div>
@@ -710,8 +693,8 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
     const lower = searchTerm.toLowerCase();
     return (
       s.student_id.toLowerCase().includes(lower) ||
-      s.major.toLowerCase().includes(lower) ||
-      (s.year_level > 0 && `ปี ${s.year_level}`.includes(lower))
+      s.real_name.toLowerCase().includes(lower) ||
+      s.major.toLowerCase().includes(lower)
     );
   });
 
@@ -731,7 +714,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
           </div>
           <input
             type="text"
-            placeholder="ค้นหารหัส/สาขา/ปี"
+            placeholder="ค้นหารหัส/ชื่อ/สาขา"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
@@ -755,8 +738,8 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
           <thead>
             <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
               <th className="pb-3 pr-3">รหัสประจำตัว</th>
+              <th className="pb-3 pr-3">ชื่อ-สกุล</th>
               <th className="pb-3 pr-3">Role</th>
-              <th className="pb-3 pr-3">ชั้นปี</th>
               <th className="pb-3 pr-3">สาขาวิชา</th>
               <th className="pb-3">สถานภาพ</th>
             </tr>
@@ -767,6 +750,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
               return (
                 <tr key={s.student_id} className="border-b border-black/5 last:border-0">
                   <td className="py-3 pr-3 font-medium">{s.student_id}</td>
+                  <td className="py-3 pr-3">{s.real_name || "—"}</td>
                   <td className="py-3 pr-3">
                     <span
                       className={cn(
@@ -777,17 +761,20 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
                       {(ROLE_BADGE[s.role] ?? ROLE_BADGE.user).label}
                     </span>
                   </td>
-                  <td className="py-3 pr-3">{s.year_level > 0 ? `ปี ${s.year_level}` : "—"}</td>
                   <td className="py-3 pr-3 text-[#211a14]/70">{s.major}</td>
                   <td className="py-3">
-                    <span
-                      className={cn(
-                        "inline-flex rounded-full px-2.5 py-1 text-sm font-bold",
-                        isActive ? "bg-green-50 text-green-700" : "bg-black/5 text-[#211a14]/60"
-                      )}
-                    >
-                      {enrollmentStatusLabel(s.enrollment_status)}
-                    </span>
+                    {s.role === "admin" ? (
+                      "—"
+                    ) : (
+                      <span
+                        className={cn(
+                          "inline-flex rounded-full px-2.5 py-1 text-sm font-bold",
+                          isActive ? "bg-green-50 text-green-700" : "bg-black/5 text-[#211a14]/60"
+                        )}
+                      >
+                        {enrollmentStatusLabel(s.enrollment_status)}
+                      </span>
+                    )}
                   </td>
                 </tr>
               );

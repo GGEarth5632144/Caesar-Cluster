@@ -35,7 +35,7 @@ export default function VerifyEmail() {
       .verifyEmail({ token })
       .then((result) => {
         if (result.already) {
-          notify.info("อีเมลนี้ยืนยันแล้ว", "เข้าสู่ระบบด้วยรหัสนักศึกษาและรหัสผ่านของคุณได้เลย");
+          notify.info("อีเมลนี้ยืนยันแล้ว", "เข้าสู่ระบบด้วยรหัสประจำตัวและรหัสผ่านของคุณได้เลย");
           navigate(PATHS.login, { replace: true });
           return;
         }

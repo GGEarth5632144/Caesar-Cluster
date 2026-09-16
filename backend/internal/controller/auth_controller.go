@@ -63,7 +63,7 @@ func CheckMailer(ctx context.Context, cfg *config.Config) error {
 	return m.VerifyConnection(ctx)
 }
 
-// Register สมัครผู้ใช้ใหม่ — ผ่าน 4 ด่าน: มีใน eligible_students → เป็น CPE → สถานภาพยังเป็น นศ.
+// Register สมัครผู้ใช้ใหม่ — ผ่าน 3 ด่าน: มีใน eligible_students → สถานภาพยังเป็น นศ.
 // → student_id/gmail ยังไม่ถูกใช้ แล้วจึงสร้าง user (gmail_verified_at = NULL) + ส่งลิงก์ยืนยัน
 //
 // ยังไม่ออก JWT ที่นี่ — JWT ออกตอนกดลิงก์ (ดู VerifyEmail)
@@ -87,7 +87,7 @@ func (h *AuthController) Register(c *gin.Context) {
 	if err := db.Where("LOWER(student_id) = ?", req.StudentID).First(&eligible).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
             utils.Error(c, http.StatusForbidden, "STUDENT_NOT_FOUND",
-                "ไม่พบรหัสนักศึกษานี้ในฐานข้อมูล")
+                "ไม่พบรหัสประจำตัวนี้ในฐานข้อมูล")
             return
         }
         log.Printf("register: query eligible error: %v", err)
@@ -95,18 +95,11 @@ func (h *AuthController) Register(c *gin.Context) {
         return
     }
 
-	// คนที่แอดมินกำหนดเป็น admin ไว้ในรายชื่อข้ามด่าน 2–3 — สองด่านนี้มีไว้คัดนักศึกษา CPE ที่ยังเรียนอยู่
+	// คนที่แอดมินกำหนดเป็น admin ไว้ในรายชื่อข้ามด่านที่ 2 — ด่านนี้มีไว้คัดนักศึกษาที่ยังเรียนอยู่
 	// ส่วนผู้ดูแลระบบอาจเป็นอาจารย์/ผู้ช่วยสอนที่ไม่เข้าเกณฑ์นั้น และแอดมินเลือกให้เองแล้วจากหน้า User Management
 	assignedAdmin := eligible.Role == entity.RoleAdmin
 
-	// ด่านที่ 2: สมัครได้เฉพาะสาขา CPE เท่านั้น
-	if !assignedAdmin && eligible.Major != entity.MajorCPE {
-		utils.Error(c, http.StatusForbidden, "NOT_CPE",
-			"ระบบนี้เปิดให้เฉพาะนักศึกษาสาขาวิศวกรรมคอมพิวเตอร์ (CPE) เท่านั้น")
-		return
-	}
-
-	// ด่านที่ 3: สถานภาพต้องยังเป็นนักศึกษาอยู่ (ไม่ใช่จบ/ลาพัก/พ้นสภาพ)
+	// ด่านที่ 2: สถานภาพต้องยังเป็นนักศึกษาอยู่ (ไม่ใช่จบ/ลาพัก/พ้นสภาพ)
 	if !assignedAdmin && !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
 		utils.Error(c, http.StatusForbidden, "NOT_ACTIVE_STUDENT",
 			"สถานภาพนักศึกษาของรหัสนี้ไม่สามารถสมัครใช้งานได้")
@@ -121,7 +114,7 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
-	// ด่านที่ 4: เช็คซ้ำเองแทนการรอ unique constraint เพราะ error ของ Postgres
+	// ด่านที่ 3: เช็คซ้ำเองแทนการรอ unique constraint เพราะ error ของ Postgres
 	// บอกไม่ได้ว่าชนที่ student_id หรือ gmail ซึ่งเป็นคนละคำแนะนำกันสำหรับผู้ใช้
 	if handled := h.rejectDuplicateRegistration(c, db, req); handled {
 		return
@@ -145,18 +138,11 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
-	// ปีที่เข้าศึกษาไม่ใช่ค่า critical (ผ่านด่าน 1 มาแล้วแปลว่ารูปแบบรหัสน่าจะถูก) พังก็แค่ log ไม่ block
-	entryYear, err := entity.EntryYearFromStudentID(req.StudentID)
-	if err != nil {
-		log.Printf("register: แกะปีที่เข้าศึกษาจาก student_id %q ไม่สำเร็จ: %v", req.StudentID, err)
-	}
-
 	user := entity.User{
 		StudentID: eligible.StudentID,
 		RoleID:    userRole.ID,
 		RealName:  req.RealName,
 		Gmail:     req.Gmail,
-		EntryYear: entryYear,
 		Password:  string(hash),
 		// GmailVerifiedAt เว้นเป็น NULL — ล็อกอินไม่ได้จนกว่าจะกดลิงก์ในอีเมล
 	}
@@ -221,7 +207,7 @@ func (h *AuthController) rejectDuplicateRegistration(c *gin.Context, db *gorm.DB
 	}
 
 	if sameStudent {
-		utils.Error(c, http.StatusConflict, "REGISTER_FAILED", "รหัสนักศึกษานี้สมัครไปแล้ว")
+		utils.Error(c, http.StatusConflict, "REGISTER_FAILED", "รหัสประจำตัวนี้สมัครไปแล้ว")
 	} else {
 		utils.Error(c, http.StatusConflict, "GMAIL_TAKEN", "อีเมลนี้ถูกใช้สมัครไปแล้ว")
 	}
@@ -315,11 +301,6 @@ func (h *AuthController) buildSession(user *entity.User, roleName string, rememb
 		return nil, err
 	}
 
-	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
-	if err != nil {
-		log.Printf("login: คำนวณชั้นปีของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
-	}
-
 	return gin.H{
 		"token": token,
 		"user": gin.H{
@@ -327,7 +308,6 @@ func (h *AuthController) buildSession(user *entity.User, roleName string, rememb
 			"student_id":   user.StudentID,
 			"real_name":    user.RealName,
 			"gmail":        user.Gmail,
-			"year_level":   yearLevel,
 			"role":         roleName,
 			"namespace_id": user.NamespaceID,
 		},
@@ -347,11 +327,6 @@ func (h *AuthController) Me(c *gin.Context) {
 
 // mePayload = response ของ GET/PATCH /me
 func (h *AuthController) mePayload(c *gin.Context, user *entity.User) gin.H {
-	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
-	if err != nil {
-		log.Printf("me: คำนวณชั้นปีของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
-	}
-
 	major := ""
 	var eligible entity.EligibleStudent
 	if err := h.db.WithContext(c.Request.Context()).
@@ -366,7 +341,6 @@ func (h *AuthController) mePayload(c *gin.Context, user *entity.User) gin.H {
 		"student_id":   user.StudentID,
 		"real_name":    user.RealName,
 		"gmail":        user.Gmail,
-		"year_level":   yearLevel,
 		"major":        major,
 		"role":         c.GetString("role"),
 		"namespace_id": user.NamespaceID,
