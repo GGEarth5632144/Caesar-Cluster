@@ -642,7 +642,7 @@ export default function AdminDashboard() {
                 />
                 <Tooltip
                   labelFormatter={formatTooltipTime}
-                  formatter={(value: any, name: any, props: any) => {
+                  formatter={(value: any, _name: any, props: any) => {
                     const used = (Number(value) / 1024).toFixed(2);
                     const total = props.payload.maxRam
                       ? (Number(props.payload.maxRam) / 1024).toFixed(2)
