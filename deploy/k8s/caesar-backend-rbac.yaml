@@ -76,6 +76,13 @@ rules:
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [delete]
+  # database template (docs 029): credential อยู่ใน Secret <svc>-credentials
+  # DeployService: Create (มีค้างอยู่แล้ว → Update ทับ) · DeleteService / rollback: Delete
+  # DatabaseCredentials (GET /api/services/:id/connection): Get
+  # ⚠ ClusterRole = อ่าน Secret ได้ทุก namespace — ระดับเดียวกับ deployments create ที่มีอยู่แล้ว (ดู skill provisioner)
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, delete]
   # Status (ServiceHealthMonitor) และ Logs: List pod ของ service แล้วอ่าน log
   - apiGroups: [""]
     resources: [pods]

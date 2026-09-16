@@ -379,6 +379,12 @@ export default function Service() {
                             </div>
                             <div className="truncate text-sm text-[#211a14]/45" title={svc.image}>
                               <Highlight text={svc.image} terms={highlightTerms} />
+                              {/* database จาก template บอก engine/version ที่เลือก (docs 029) */}
+                              {svc.database_engine && (
+                                <span className="ml-1.5 rounded-md bg-[#FBDFDA] px-1.5 py-0.5 text-xs font-bold text-[#BB6653]">
+                                  {svc.database_engine} {svc.database_version}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -405,7 +411,7 @@ export default function Service() {
                             <Layers size={14} className="text-[#BB6653]" />
                             {METRIC_FORMAT.ram(usage.ram)}
                           </span>
-                          {svc.is_database && (
+                          {svc.storage_mb > 0 && (
                             <span className="flex items-center gap-1.5">
                               <HardDrive size={14} className="text-[#BB6653]" />
                               {METRIC_FORMAT.storage(usage.storage)}

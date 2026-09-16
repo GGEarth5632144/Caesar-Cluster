@@ -50,10 +50,15 @@ export interface AppService {
 
   env_vars: Record<string, string>;
 
-  // สองสวิตช์อิสระกันที่ผู้ใช้กดตอนสร้าง (ดู entity.Service ฝั่ง backend)
   // is_database = เข้าได้เฉพาะในกลุ่ม — ที่กระทบหน้าเว็บมากที่สุดคือไม่มี node_port เลย
   // เป็น null ตลอดชีวิต ไม่ใช่ "รออยู่" (ส่วน web ที่มีดิสก์ยังได้ node_port ตามปกติ)
+  // database ใหม่มาจาก template เท่านั้น (docs 029) — is_database=true แต่ database_engine ว่าง = database ยุคก่อน template
   is_database: boolean;
+  // '' = ไม่ใช่ database จาก template · มีค่า = มี connection URL ให้ (ดู isTemplateDatabase)
+  database_engine: '' | DatabaseEngineName;
+  database_version: string;
+  db_username: string;
+  db_name: string;
   // ขนาด PVC เป็น MB (0 = ไม่มีดิสก์ถาวร) — เช็คว่ามีดิสก์ด้วย hasStorage()
   storage_mb: number;
   // จุดที่ดิสก์ถูก mount เข้าไปใน container ('' = ไม่มีดิสก์ถาวร)
@@ -62,6 +67,47 @@ export interface AppService {
   delete_at: string | null;
 
   created_at: string;
+}
+
+/** database ที่สร้างจาก template — มี credential ใน Secret และ connection URL */
+export function isTemplateDatabase(svc: Pick<AppService, 'database_engine'>): boolean {
+  return svc.database_engine !== '';
+}
+
+export type DatabaseEngineName = 'postgresql' | 'mysql' | 'mariadb';
+
+/** GET /api/database-templates — backend กรอง version ที่หมด support (EOL) ออกให้แล้ว */
+export interface DatabaseTemplate {
+  engine: DatabaseEngineName;
+  label: string;
+  port: number;
+  min_ram_mb: number;
+  versions: { version: string; eol: string; lts: boolean; default: boolean }[];
+}
+
+export interface CreateDatabaseDTO {
+  engine: DatabaseEngineName;
+  version: string;
+  name: string;
+  username: string;
+  password: string;
+  database: string;
+  storage_mb: number;
+  cpu_milli: number;
+  ram_mb: number;
+}
+
+/** GET /api/services/:id/connection — มีรหัสผ่าน จึงเรียกเฉพาะตอนผู้ใช้กด "แสดง" */
+export interface DatabaseConnection {
+  engine: DatabaseEngineName;
+  version: string;
+  host: string;
+  fqdn: string;
+  port: number;
+  username: string;
+  password: string;
+  database: string;
+  url: string;
 }
 
 export interface UpdateServiceDTO {
@@ -92,7 +138,6 @@ export interface CreateServiceDTO {
   container_port?: number;
   replicas?: number;
   env_vars?: Record<string, string>;
-  is_database?: boolean;
   storage_mb?: number;
   data_path?: string;
 }
@@ -124,6 +169,21 @@ export const serviceApi = {
 
   remove: async (id: number) => {
     const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/services/${id}`);
+    return response.data.data;
+  },
+
+  databaseTemplates: async () => {
+    const response = await axiosClient.get<ApiResponse<DatabaseTemplate[]>>('/database-templates');
+    return Array.isArray(response.data.data) ? response.data.data : [];
+  },
+
+  createDatabase: async (payload: CreateDatabaseDTO) => {
+    const response = await axiosClient.post<ApiResponse<AppService>>('/databases', payload);
+    return response.data.data;
+  },
+
+  connection: async (id: number) => {
+    const response = await axiosClient.get<ApiResponse<DatabaseConnection>>(`/services/${id}/connection`);
     return response.data.data;
   },
 

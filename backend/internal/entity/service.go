@@ -144,6 +144,20 @@ type Service struct {
 	// แอปอย่าง Nextcloud/WordPress เก็บไฟล์ผู้ใช้ถาวร แต่ต้องเปิดให้คนนอกเข้าผ่าน NodePort
 	IsDatabase bool `gorm:"column:is_database;type:boolean;not null;default:false" json:"is_database"`
 
+	// ── database template (docs 029) — ว่างทั้งหมด = ไม่ใช่ database จาก template ─────────────
+	//
+	// database ใหม่ทุกตัวมาจาก template (engine + version ใน catalog) ส่วน is_database=true ที่ engine ว่าง
+	// คือ database ยุค image อิสระ ยังรันต่อได้แต่ไม่มี URL ให้ (ระบบไม่รู้ credential)
+	DatabaseEngine  string `gorm:"column:database_engine;type:varchar(20);not null;default:''" json:"database_engine"`
+	DatabaseVersion string `gorm:"column:database_version;type:varchar(20);not null;default:''" json:"database_version"`
+	DBUsername      string `gorm:"column:db_username;type:varchar(32);not null;default:''" json:"db_username"`
+	DBName          string `gorm:"column:db_name;type:varchar(63);not null;default:''" json:"db_name"`
+
+	// DBPassword/DBRootPassword = รหัสที่ส่งต่อให้ provisioner สร้าง Secret ตอน deploy เท่านั้น
+	// ไม่มีคอลัมน์ใน DB และไม่ออก JSON — รหัสอยู่ใน k8s Secret ที่เดียว
+	DBPassword     string `gorm:"-" json:"-"`
+	DBRootPassword string `gorm:"-" json:"-"`
+
 	// DataPath = จุดที่ PVC ถูก mount ("" = ไม่มีดิสก์ถาวร) — ผู้ใช้กรอกเอง ระบบไม่เดาให้
 	// เดาผิดแล้ว deploy สำเร็จและดิสก์ถูกจอง แต่ image เขียนลงที่อื่น ข้อมูลหายตอน restart แบบเงียบๆ
 	// ห้ามแก้หลัง deploy: ย้ายจุด mount = ข้อมูลเดิมหายไปจากสายตาโปรแกรมทั้งที่ยังอยู่บนดิสก์
@@ -168,3 +182,6 @@ func (Service) TableName() string { return "services" }
 // ใช้ StatefulSet เพราะ RollingUpdate ของ Deployment ปั้น Pod ใหม่ก่อนฆ่าตัวเก่า สองตัวจะแย่ง PVC
 // แบบ ReadWriteOnce ก้อนเดียวกันจน deploy ค้างถาวร (ส่วนเครือข่ายแยกไปคุมด้วย IsDatabase)
 func (s Service) HasStorage() bool { return s.StorageMB > 0 }
+
+// IsTemplateDatabase = database ที่สร้างจาก template — มี Secret credential และ connection URL
+func (s Service) IsTemplateDatabase() bool { return s.DatabaseEngine != "" }

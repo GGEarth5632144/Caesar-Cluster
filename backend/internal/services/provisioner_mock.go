@@ -22,11 +22,13 @@ type MockProvisioner struct {
 	// key = nsName + "/" + svcName; true = deploy อยู่, false = ถูกลบไปแล้ว
 	// "ไม่มี key" ต่างจาก false: แปลว่า mock ไม่เคยเห็น workload นี้เลย จึงตอบแทนคลัสเตอร์ไม่ได้
 	known map[string]bool
+	// credential ของ database template แทน k8s Secret — อยู่ในหน่วยความจำ รีสตาร์ทแล้วหาย (รับได้สำหรับ dev)
+	creds map[string]DatabaseCredentials
 }
 
 // NewMockProvisioner สร้าง mock — ถูกเลือกใช้ใน main เมื่อ PROVISIONER != "kubernetes"
 func NewMockProvisioner() *MockProvisioner {
-	return &MockProvisioner{known: make(map[string]bool)}
+	return &MockProvisioner{known: make(map[string]bool), creds: make(map[string]DatabaseCredentials)}
 }
 
 func mockKey(nsName, svcName string) string { return nsName + "/" + svcName }
@@ -56,6 +58,9 @@ func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc 
 	// จดไว้ว่าเคย deploy แล้ว เพื่อให้ Status ตอบได้ว่าของยังอยู่ไหม
 	m.mu.Lock()
 	m.known[mockKey(nsName, svc.Name)] = true
+	if svc.IsTemplateDatabase() {
+		m.creds[mockKey(nsName, svc.Name)] = DatabaseCredentials{Username: svc.DBUsername, Password: svc.DBPassword, Database: svc.DBName}
+	}
 	m.mu.Unlock()
 
 	// ของจริง: มีดิสก์ = StatefulSet + PVC (1 pod), ไม่มี = Deployment
@@ -148,6 +153,7 @@ func (m *MockProvisioner) Status(_ context.Context, nsName string, svc *entity.S
 func (m *MockProvisioner) DeleteService(ctx context.Context, nsName string, svc *entity.Service) error {
 	m.mu.Lock()
 	m.known[mockKey(nsName, svc.Name)] = false
+	delete(m.creds, mockKey(nsName, svc.Name))
 	m.mu.Unlock()
 
 	switch {
@@ -161,6 +167,21 @@ func (m *MockProvisioner) DeleteService(ctx context.Context, nsName string, svc 
 		log.Printf("[MOCK] ลบ service '%s' ออกจาก namespace '%s'", svc.Name, nsName)
 	}
 	return nil
+}
+
+// DatabaseCredentials คืน credential ที่จำไว้ตอน DeployService (แทนการอ่าน Secret)
+// ไม่เคยเห็น (เช่น backend รีสตาร์ท) = ErrMockNoRecord ด้วยเหตุผลเดียวกับ Status
+func (m *MockProvisioner) DatabaseCredentials(_ context.Context, nsName string, svc *entity.Service) (DatabaseCredentials, error) {
+	if !svc.IsTemplateDatabase() {
+		return DatabaseCredentials{}, ErrNotTemplateDatabase
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cred, ok := m.creds[mockKey(nsName, svc.Name)]
+	if !ok {
+		return DatabaseCredentials{}, ErrMockNoRecord
+	}
+	return cred, nil
 }
 
 // Logs จำลอง log ของ container ด้วยข้อความปลอมที่รูปแบบเหมือนจริง (มี timestamp นำหน้าแบบเดียวกับ

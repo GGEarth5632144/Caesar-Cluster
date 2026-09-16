@@ -128,6 +128,11 @@ func Setup(
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
 			protected.PATCH("/services/:id", svcCtl.Update)
+			protected.GET("/services/:id/connection", svcCtl.Connection)
+
+			// database จาก template (docs 029) — แทนสวิตช์ is_database เดิม
+			protected.GET("/database-templates", svcCtl.DatabaseTemplates)
+			protected.POST("/databases", svcCtl.CreateDatabase)
 
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram

@@ -94,6 +94,9 @@ type Provisioner interface {
 	//
 	// database มีดิสก์เสมอ (ServiceManager.Create บังคับ) จึงเหลือ 3 แบบ: web, web + ดิสก์ (เช่น Nextcloud), database
 	//
+	// database template (svc.IsTemplateDatabase) สร้าง Secret "<svc>-credentials" จาก svc.DBPassword ก่อน workload
+	// แล้ว pod อ่านค่าผ่าน secretKeyRef — สร้าง workload ก่อนแล้ว pod จะค้าง CreateContainerConfigError
+	//
 	// ServiceManager.Create เป็นคนเอา NodePort ไป UPDATE ลง DB อีกที — provisioner ไม่รู้จัก DB
 	DeployService(ctx context.Context, nsName string, svc *entity.Service) error
 
@@ -140,4 +143,10 @@ type Provisioner interface {
 	// opts.Follow = true แล้วการอ่านจะไม่จบเองจนกว่า ctx จะถูก cancel — ผู้เรียกต้องผูก ctx
 	// กับอายุของ HTTP request ไว้ ไม่ปล่อยให้เปิดค้างตลอดกาล
 	Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error)
+
+	// DatabaseCredentials อ่าน credential ของ database template กลับจาก Secret ที่ DeployService สร้างไว้
+	//
+	// รหัสผ่านไม่ได้อยู่ใน DB ของ backend — ที่นี่คือทางเดียวที่ระบบรู้รหัสหลัง deploy (docs 029)
+	// svc ที่ไม่ใช่ database template ต้องได้ ErrNotTemplateDatabase
+	DatabaseCredentials(ctx context.Context, nsName string, svc *entity.Service) (DatabaseCredentials, error)
 }

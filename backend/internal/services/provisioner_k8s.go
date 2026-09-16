@@ -503,7 +503,19 @@ func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string
 func (k *KubernetesProvisioner) deployStateful(
 	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
 ) error {
+	if svc.IsTemplateDatabase() {
+		if err := k.ensureDatabaseSecret(ctx, cs, nsName, svc); err != nil {
+			return err
+		}
+	}
 	if _, err := cs.AppsV1().StatefulSets(nsName).Create(ctx, statefulSetFor(nsName, svc), metav1.CreateOptions{}); err != nil {
+		// Secret เกิดไปแล้ว — เก็บทิ้งด้วย ไม่งั้นรหัสผ่านค้างอยู่บนคลัสเตอร์โดยไม่มีแถวใน DB
+		if svc.IsTemplateDatabase() {
+			delErr := cs.CoreV1().Secrets(nsName).Delete(context.WithoutCancel(ctx), databaseSecretName(svc.Name), metav1.DeleteOptions{})
+			if delErr != nil && !apierrors.IsNotFound(delErr) {
+				log.Printf("!! สร้าง StatefulSet '%s' ใน namespace '%s' ไม่สำเร็จ และลบ Secret ที่เพิ่งสร้างไม่สำเร็จด้วย: %v", svc.Name, nsName, delErr)
+			}
+		}
 		return fmt.Errorf("สร้าง StatefulSet '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 	}
 
@@ -557,9 +569,94 @@ func serviceLabels(svcName string) map[string]string {
 	}
 }
 
-func podSelector(svcName string) string       { return labelServiceName + "=" + svcName }
-func networkPolicyName(svcName string) string { return svcName + "-namespace-only" }
-func pvcName(svcName string) string           { return dataVolumeName + "-" + svcName + "-0" }
+func podSelector(svcName string) string        { return labelServiceName + "=" + svcName }
+func networkPolicyName(svcName string) string  { return svcName + "-namespace-only" }
+func pvcName(svcName string) string            { return dataVolumeName + "-" + svcName + "-0" }
+func databaseSecretName(svcName string) string { return svcName + "-credentials" }
+
+// databaseSecretFor ประกอบ Secret credential ของ database template (docs 029)
+// root-password มีเฉพาะ engine ที่ image บังคับ (MySQL/MariaDB) — backend สุ่มให้ ผู้ใช้ไม่เห็น
+func databaseSecretFor(nsName string, svc *entity.Service) *corev1.Secret {
+	// ใช้ Data ไม่ใช่ StringData: apiserver แปลงให้เหมือนกัน แต่ fake client ในเทสต์ไม่แปลง
+	data := map[string][]byte{
+		SecretKeyUsername: []byte(svc.DBUsername),
+		SecretKeyPassword: []byte(svc.DBPassword),
+		SecretKeyDatabase: []byte(svc.DBName),
+	}
+	if svc.DBRootPassword != "" {
+		data[SecretKeyRootPassword] = []byte(svc.DBRootPassword)
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      databaseSecretName(svc.Name),
+			Namespace: nsName,
+			Labels:    serviceLabels(svc.Name),
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+}
+
+// ensureDatabaseSecret สร้าง Secret ของ database — มีอยู่แล้ว (ค้างจากรอบที่ล้มกลางทางโดยไม่มีแถวใน DB) = เขียนทับ
+// เขียนทับได้เพราะชื่อ service ไม่ซ้ำใน namespace (unique ใน DB): Secret ชื่อนี้ไม่มีเจ้าของตัวจริงอยู่
+func (k *KubernetesProvisioner) ensureDatabaseSecret(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) error {
+	want := databaseSecretFor(nsName, svc)
+	_, err := cs.CoreV1().Secrets(nsName).Create(ctx, want, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		_, err = cs.CoreV1().Secrets(nsName).Update(ctx, want, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("สร้าง Secret ของ database '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+	return nil
+}
+
+// DatabaseCredentials อ่าน username/password/database กลับจาก Secret (ดูสัญญาใน Provisioner)
+func (k *KubernetesProvisioner) DatabaseCredentials(ctx context.Context, nsName string, svc *entity.Service) (DatabaseCredentials, error) {
+	if !svc.IsTemplateDatabase() {
+		return DatabaseCredentials{}, ErrNotTemplateDatabase
+	}
+	cs, err := k.client()
+	if err != nil {
+		return DatabaseCredentials{}, err
+	}
+	sec, err := cs.CoreV1().Secrets(nsName).Get(ctx, databaseSecretName(svc.Name), metav1.GetOptions{})
+	if err != nil {
+		return DatabaseCredentials{}, fmt.Errorf("อ่าน Secret ของ database '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+	return DatabaseCredentials{
+		Username: string(sec.Data[SecretKeyUsername]),
+		Password: string(sec.Data[SecretKeyPassword]),
+		Database: string(sec.Data[SecretKeyDatabase]),
+	}, nil
+}
+
+// databaseEnv = env ของ database template ที่อ่านค่าจาก Secret — ไม่มีรหัสจริงอยู่ใน pod spec
+func databaseEnv(svc *entity.Service) []corev1.EnvVar {
+	e, ok := findDatabaseEngine(svc.DatabaseEngine)
+	if !ok {
+		return nil
+	}
+	ref := func(name, key string) corev1.EnvVar {
+		return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: databaseSecretName(svc.Name)},
+				Key:                  key,
+			},
+		}}
+	}
+	env := []corev1.EnvVar{
+		ref(e.envUser, SecretKeyUsername),
+		ref(e.envPassword, SecretKeyPassword),
+		ref(e.envDatabase, SecretKeyDatabase),
+	}
+	if e.envRootPassword != "" {
+		env = append(env, ref(e.envRootPassword, SecretKeyRootPassword))
+	}
+	return env
+}
 
 // deploymentFor แปลง entity.Service → Deployment object (ยังไม่ยิงไปคลัสเตอร์)
 func deploymentFor(nsName string, svc *entity.Service) *appsv1.Deployment {
@@ -653,6 +750,9 @@ func podTemplateFor(svc *entity.Service, labels map[string]string) corev1.PodTem
 	env := make([]corev1.EnvVar, 0, len(svc.EnvVars))
 	for _, key := range slices.Sorted(maps.Keys(svc.EnvVars)) {
 		env = append(env, corev1.EnvVar{Name: key, Value: svc.EnvVars[key]})
+	}
+	if svc.IsTemplateDatabase() {
+		env = append(env, databaseEnv(svc)...)
 	}
 
 	return corev1.PodTemplateSpec{
@@ -952,6 +1052,12 @@ func (k *KubernetesProvisioner) DeleteService(ctx context.Context, nsName string
 		err = cs.NetworkingV1().NetworkPolicies(nsName).Delete(ctx, networkPolicyName(svc.Name), metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("ลบ NetworkPolicy ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+		}
+	}
+	if svc.IsTemplateDatabase() {
+		err = cs.CoreV1().Secrets(nsName).Delete(ctx, databaseSecretName(svc.Name), metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("ลบ Secret ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 		}
 	}
 	if svc.HasStorage() {

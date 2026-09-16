@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -62,9 +63,12 @@ func (h *ServiceController) Create(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
-	if !isValidK8sName(req.Name) {
-		utils.Error(c, http.StatusBadRequest, "INVALID_NAME",
-			"ชื่อต้องเป็นตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และขึ้นต้น-ลงท้ายด้วยตัวอักษรหรือตัวเลข")
+	if !isValidServiceName(req.Name) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_NAME", serviceNameMessage)
+		return
+	}
+	if req.IsDatabase {
+		utils.Error(c, http.StatusBadRequest, "DATABASE_USE_TEMPLATE", services.ErrDatabaseUseTemplate.Error())
 		return
 	}
 	if !isValidEnvVars(req.EnvVars) {
@@ -82,7 +86,6 @@ func (h *ServiceController) Create(c *gin.Context) {
 		ContainerPort:     req.ContainerPort,
 		Replicas:          req.Replicas,
 		EnvVars:           req.EnvVars,
-		IsDatabase:        req.IsDatabase,
 		StorageMB:         req.StorageMB,
 		DataPath:          req.DataPath,
 	})
@@ -285,9 +288,8 @@ func (h *ServiceController) Update(c *gin.Context) {
         return
     }
 
-    if !isValidK8sName(req.Name) {
-        utils.Error(c, http.StatusBadRequest, "INVALID_NAME",
-            "ชื่อต้องเป็นตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และขึ้นต้น-ลงท้ายด้วยตัวอักษรหรือตัวเลข")
+    if !isValidServiceName(req.Name) {
+        utils.Error(c, http.StatusBadRequest, "INVALID_NAME", serviceNameMessage)
         return
     }
     if !isValidEnvVars(req.EnvVars) {
@@ -323,6 +325,12 @@ func (h *ServiceController) Update(c *gin.Context) {
             utils.Error(c, http.StatusBadRequest, "STORAGE_SINGLE_REPLICA", err.Error())
         case errors.Is(err, services.ErrStorageImmutable):
             utils.Error(c, http.StatusConflict, "STORAGE_IMMUTABLE", err.Error())
+        case errors.Is(err, services.ErrDatabaseImmutable):
+            utils.Error(c, http.StatusConflict, "DATABASE_IMMUTABLE", err.Error())
+        case errors.Is(err, services.ErrDatabaseRAMTooLow):
+            utils.Error(c, http.StatusBadRequest, "DATABASE_RAM_TOO_LOW", err.Error())
+        case errors.Is(err, services.ErrDatabaseUseTemplate):
+            utils.Error(c, http.StatusBadRequest, "DATABASE_USE_TEMPLATE", err.Error())
         default:
             log.Printf("update service error: %v", err)
             utils.Error(c, http.StatusInternalServerError, "INTERNAL", "แก้ไข service ไม่สำเร็จ")
@@ -333,4 +341,94 @@ func (h *ServiceController) Update(c *gin.Context) {
     utils.OK(c, http.StatusOK, svc)
 }
 
+// DatabaseTemplates คืน engine + version ที่ยังเลือก deploy ได้ (กรองตามวัน EOL ณ ตอนที่เรียก)
+func (h *ServiceController) DatabaseTemplates(c *gin.Context) {
+	utils.OK(c, http.StatusOK, services.DatabaseTemplates(time.Now()))
+}
 
+// CreateDatabase deploy database จาก template เข้า space ของผู้ใช้ (docs 029)
+//
+// data flow: JSON body → bind CreateDatabaseRequest → ตรวจชื่อ service → ServiceManager.CreateDatabase
+// (ตรวจ engine/version/credential/RAM ขั้นต่ำ → จองโควตา → Secret → StatefulSet → ClusterIP + NetworkPolicy)
+// ตอบ service ที่สร้าง (ไม่มีรหัสผ่าน — ดูผ่าน GET /api/services/:id/connection)
+func (h *ServiceController) CreateDatabase(c *gin.Context) {
+	nsID, ok := currentNamespaceID(c, h.db)
+	if !ok {
+		return
+	}
+
+	var req dto.CreateDatabaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+	if !isValidServiceName(req.Name) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_NAME", serviceNameMessage)
+		return
+	}
+
+	svc, err := h.svc.CreateDatabase(c.Request.Context(), c.GetInt("userID"), nsID, services.CreateDatabaseParams{
+		Engine:            req.Engine,
+		Version:           req.Version,
+		Name:              req.Name,
+		Username:          req.Username,
+		Password:          req.Password,
+		Database:          req.Database,
+		StorageMB:         req.StorageMB,
+		RequestTemplateID: req.RequestTemplateID,
+		CPUMilli:          req.CPUMilli,
+		RAMMB:             req.RAMMB,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrDatabaseEngineNotFound), errors.Is(err, services.ErrDatabaseVersionNotFound):
+			utils.Error(c, http.StatusBadRequest, "DATABASE_VERSION_NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrDatabaseInvalidInput):
+			utils.Error(c, http.StatusBadRequest, "DATABASE_INVALID_INPUT", err.Error())
+		case errors.Is(err, services.ErrDatabaseRAMTooLow):
+			utils.Error(c, http.StatusBadRequest, "DATABASE_RAM_TOO_LOW", err.Error())
+		case errors.Is(err, services.ErrQuotaExceeded):
+			utils.Error(c, http.StatusConflict, "QUOTA_EXCEEDED", err.Error())
+		case errors.Is(err, services.ErrServiceTooLarge):
+			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
+		case errors.Is(err, services.ErrRequestTemplateNotFound):
+			utils.Error(c, http.StatusBadRequest, "TEMPLATE_NOT_FOUND", err.Error())
+		default:
+			log.Printf("create database error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "deploy database ไม่สำเร็จ")
+		}
+		return
+	}
+	utils.OK(c, http.StatusCreated, svc)
+}
+
+// Connection คืนข้อมูลเชื่อมต่อ database template รวมรหัสผ่านที่อ่านจาก Secret
+// สมาชิก namespace เท่านั้น (ของ space อื่นได้ 404) — List ไม่เคยส่งรหัสผ่าน หน้าเว็บเรียกเส้นนี้ตอนกด "แสดง"
+func (h *ServiceController) Connection(c *gin.Context) {
+	nsID, ok := currentNamespaceID(c, h.db)
+	if !ok {
+		return
+	}
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return
+	}
+
+	// รหัสผ่านอยู่ใน response — ห้าม proxy/เบราว์เซอร์เก็บ cache
+	c.Header("Cache-Control", "no-store")
+	conn, err := h.svc.Connection(c.Request.Context(), id, nsID)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrServiceNotFound):
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrNotTemplateDatabase):
+			utils.Error(c, http.StatusConflict, "NOT_TEMPLATE_DATABASE", err.Error())
+		default:
+			log.Printf("database connection error: %v", err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อ่านข้อมูลการเชื่อมต่อไม่สำเร็จ")
+		}
+		return
+	}
+	utils.OK(c, http.StatusOK, conn)
+}
