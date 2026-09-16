@@ -78,16 +78,12 @@ func Auth(jwtSecret string, db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// LEFT JOIN ไม่ใช่ INNER JOIN: ถ้า role_id ชี้ไปหาแถวที่ไม่มีอยู่ (seed ไม่ครบ)
-		// INNER JOIN จะคืนศูนย์แถว ซึ่งแยกไม่ออกจาก "ไม่มีบัญชีนี้แล้ว" ผู้ใช้จะโดนเตะออกพร้อม
-		// ข้อความว่าบัญชีถูกลบ ทั้งที่บัญชียังอยู่ครบและปัญหาจริงอยู่ที่ตาราง roles
-		searchKeyword := strings.ToLower(c.Query("search"))
 		var u authUser
 		err = db.WithContext(c.Request.Context()).
 			Table("users AS u").
 			Select("u.id AS id, u.namespace_id AS namespace_id, COALESCE(r.name, '') AS role_name").
 			Joins("LEFT JOIN roles r ON r.id = u.role_id").
-			Where("LOWER(u.username) = ?", searchKeyword).
+			Where("u.id = ?", int(sub)).
 			Scan(&u).Error
 		if err != nil {
 			log.Printf("auth: อ่านบัญชี id=%d ไม่สำเร็จ: %v", int(sub), err)
