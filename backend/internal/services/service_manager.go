@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"strings"
 	"time"
 
@@ -28,6 +29,11 @@ var (
 
 	// ตอบเป็น error แทนการแก้ค่าให้เงียบๆ ไม่งั้นผู้เรียก API จะเข้าใจว่าได้ 3 Pod ทั้งที่ระบบให้ 1
 	ErrStorageReplicas = errors.New("service ที่มีดิสก์ถาวรต้องมี 1 pod เท่านั้น — สอง pod เขียนดิสก์ก้อนเดียวกันคือข้อมูลพัง")
+
+	// ค่าที่ผูกกับ PVC แก้หลัง deploy ไม่ได้: เปลี่ยนชื่อ = PVC ใหม่ที่ว่างเปล่า, ขนาด = volumeClaimTemplates
+	// แก้ไม่ได้, data_path = ข้อมูลเดิมหายจากสายตาโปรแกรม, ถอดดิสก์/สลับ database = ต้องลบ PVC ทิ้ง
+	// ตอบ error ให้ผู้ใช้ลบแล้วสร้างใหม่เองอย่างรู้ตัว ดีกว่าแอบลบข้อมูลให้ (docs 030)
+	ErrStorageImmutable = errors.New("service ที่มีดิสก์ถาวรแก้ค่านี้ไม่ได้ ต้องลบแล้วสร้างใหม่ (ข้อมูลในดิสก์จะหาย)")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
@@ -519,13 +525,16 @@ type UpdateServiceParams struct {
 	DataPath      string
 }
 
-// Update ขอแก้ไขการตั้งค่า Service โดยใช้กระบวนการ Redeploy
+// Update แก้ไขการตั้งค่าของ Service ที่ deploy ไปแล้ว
 //
-// data flow: 
-//   - เช็คสิทธิ์และดึง Service เก่า
-//   - ถอน Workload เก่าในคลัสเตอร์ก่อน (แต่ห้ามถอน PVC ถ้ามีดิสก์)
-//   - ล็อกโควตา: คืนโควตาเก่า แล้วบวกโควตาใหม่ ถ้าผ่านให้อัปเดต DB
-//   - สร้าง Workload ใหม่ขึ้นคลัสเตอร์
+// data flow:
+//   - อ่าน Service เดิม → แปลงคำขอตามกติกาเดียวกับ Create (default พอร์ต/replica, กติกาดิสก์)
+//   - service ที่มีดิสก์: ตรวจว่าไม่ได้แก้ค่าที่ผูกกับ PVC (storageChange) ก่อนแตะ DB
+//   - ReserveScale ล็อก namespace → เช็คโควตาโดยไม่นับยอดเดิมของตัวเอง → บันทึกค่าใหม่
+//   - prov.UpdateService แก้ workload ในที่ (ไม่ลบ PVC, NodePort คงเดิม) → เขียน node_port ที่ได้กลับ
+//
+// เดิมทำ DeleteService แล้ว DeployService ทันที ซึ่งลบ PVC ทิ้ง = กดแก้ไข service ที่มีดิสก์แล้วข้อมูลหาย
+// และ PVC ใหม่ชื่อเดิมชนโฟลเดอร์ NFS ที่ provisioner ยังลบไม่เสร็จ → pod ค้าง "stale NFS file handle" (docs 030)
 func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespaceID int, p UpdateServiceParams) (*entity.Service, error) {
 	var svc entity.Service
 	if err := m.db.WithContext(ctx).Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error; err != nil {
@@ -563,8 +572,20 @@ func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespac
 	}
 
 	oldSvc := svc
+	next := svc
+	next.Name = p.Name
+	next.IsDatabase = p.IsDatabase
+	next.StorageMB = storageMB
+	next.DataPath = dataPath
 
-	// 1. เช็คโควตาและบันทึก DB ก่อน (ถ้าโควตาไม่ผ่าน แอปเก่าบน K8s จะยังไม่ถูกลบ)
+	// ตรวจก่อนจองโควตา — ถ้าปล่อยไปถึง provisioner ค่าใหม่จะถูกบันทึกลง DB แล้วทั้งที่คลัสเตอร์ยังเป็นของเดิม
+	if oldSvc.HasStorage() {
+		if msg := storageChange(&oldSvc, &next); msg != "" {
+			return nil, fmt.Errorf("%w: %s", ErrStorageImmutable, msg)
+		}
+	}
+
+	// 1. เช็คโควตาและบันทึก DB ก่อน (ถ้าโควตาไม่ผ่าน workload บนคลัสเตอร์ยังไม่ถูกแตะ)
 	err := m.quota.ReserveScale(ctx, namespaceID, serviceID, ResourceRequest{
 		CPUMilli:  p.CPUMilli,
 		RAMMB:     p.RAMMB,
@@ -577,12 +598,15 @@ func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespac
 		svc.RAMMB = p.RAMMB
 		svc.ContainerPort = containerPort
 		svc.Replicas = replicas
-		svc.EnvVars = entity.EnvVarMap(p.EnvVars)
+		// ไม่ส่ง env_vars มา = ไม่มี env — ต้องเป็น map ว่างไม่ใช่ nil: Save ของ GORM เขียน nil map
+		// เป็น NULL ชน NOT NULL ของคอลัมน์ (Create ไม่เจอเพราะข้ามคอลัมน์ที่มี default)
+		svc.EnvVars = entity.EnvVarMap{}
+		maps.Copy(svc.EnvVars, p.EnvVars)
 		svc.IsDatabase = p.IsDatabase
 		svc.StorageMB = storageMB
 		svc.DataPath = dataPath
 		svc.Status = entity.ServiceCreating
-		svc.NodePort = nil 
+		svc.NodePort = nil
 
 		return tx.Save(&svc).Error
 	})
@@ -592,19 +616,13 @@ func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespac
 
 	nsName := K8sNamespaceName(svc.NamespaceID)
 
-	// 2. ถอน workload เดิมออกจากคลัสเตอร์
-	if err := m.prov.DeleteService(ctx, nsName, &oldSvc); err != nil {
-		m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("status", "failed")
-		return nil, fmt.Errorf("ลบ workload เดิมไม่สำเร็จ: %w", err)
-	}
-
-	// 3. Deploy workload ตัวใหม่ขึ้นคลัสเตอร์
-	if err := m.prov.DeployService(ctx, nsName, &svc); err != nil {
-		m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("status", "failed")
+	// 2. แก้ workload บนคลัสเตอร์ให้ตรงกับค่าใหม่ (ในที่ — ไม่ลบ PVC)
+	if err := m.prov.UpdateService(ctx, nsName, &oldSvc, &svc); err != nil {
+		m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("status", entity.ServiceFailed)
 		return nil, err
 	}
 
-	// 4. บันทึก NodePort ใหม่ถ้าได้รับจัดสรร
+	// 3. บันทึก NodePort (เลขเดิมเมื่อแก้ในที่ / เลขใหม่เมื่อสร้างใหม่) — ReserveScale ล้างเป็น NULL ไว้
 	if svc.NodePort != nil {
 		if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("node_port", svc.NodePort).Error; err != nil {
 			return nil, err
@@ -612,4 +630,22 @@ func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespac
 	}
 
 	return &svc, nil
+}
+
+// storageChange บอกว่าค่าใหม่ของ service ที่มีดิสก์อยู่แล้วไปแตะค่าที่ผูกกับ PVC หรือไม่ ("" = ไม่แตะ)
+// ใช้ทั้งใน ServiceManager.Update (ตอบผู้ใช้ก่อนแตะ DB) และ KubernetesProvisioner.UpdateService (กันซ้ำ)
+func storageChange(oldSvc, svc *entity.Service) string {
+	switch {
+	case !svc.HasStorage():
+		return "ถอดดิสก์ถาวรออก"
+	case svc.Name != oldSvc.Name:
+		return fmt.Sprintf("เปลี่ยนชื่อจาก %q เป็น %q", oldSvc.Name, svc.Name)
+	case svc.StorageMB != oldSvc.StorageMB:
+		return fmt.Sprintf("เปลี่ยนขนาดดิสก์จาก %d MB เป็น %d MB", oldSvc.StorageMB, svc.StorageMB)
+	case svc.DataPath != oldSvc.DataPath:
+		return fmt.Sprintf("เปลี่ยน data_path จาก %q เป็น %q", oldSvc.DataPath, svc.DataPath)
+	case svc.IsDatabase != oldSvc.IsDatabase:
+		return "สลับสวิตช์ database"
+	}
+	return ""
 }

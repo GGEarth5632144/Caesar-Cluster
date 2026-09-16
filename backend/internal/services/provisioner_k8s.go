@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 
 	"backend/internal/entity"
 )
@@ -775,6 +776,144 @@ func (k *KubernetesProvisioner) ScaleService(ctx context.Context, nsName, svcNam
 			svcName, nsName, replicas, err)
 	}
 	log.Printf("[k8s] scale '%s' ใน namespace '%s' เป็น %d replica แล้ว", svcName, nsName, replicas)
+	return nil
+}
+
+// UpdateService แก้ workload เดิมในที่ให้ตรงกับ svc (ดูสัญญาใน Provisioner)
+// data flow: ServiceManager.Update ตรวจกติกาดิสก์ + จองโควตา + บันทึกค่าใหม่ลง DB แล้ว
+// → แก้ pod template ของ StatefulSet/Deployment → แก้พอร์ตของ Service (+ NetworkPolicy ของ database)
+// → เซ็ต svc.NodePort เป็นเลขเดิมของ Service
+//
+// ลำดับ: workload ก่อน Service — พอร์ตใหม่ของ Service ชี้ไปที่ container ที่ยังฟังพอร์ตเก่าอยู่
+// ช่วงสั้นๆ ระหว่าง rollout ไม่ว่าจะเรียงแบบไหน แต่ถ้า workload แก้ไม่ผ่าน (เช่น ชน LimitRange)
+// Service จะยังชี้พอร์ตเดิมที่ใช้งานได้อยู่
+//
+// ใช้ Get → Update ใน RetryOnConflict ไม่ใช่ merge patch แบบ ScaleService: ต้องแทน pod template ทั้งก้อน
+// (env ที่ผู้ใช้ลบออกต้องหายจริง) ซึ่ง merge patch ของ list ทำไม่ได้ — ชน resourceVersion กับ controller
+// ที่เขียน status อยู่ได้ จึงวนอ่านใหม่แล้วลองอีกรอบ
+func (k *KubernetesProvisioner) UpdateService(ctx context.Context, nsName string, oldSvc, svc *entity.Service) error {
+	if oldSvc.HasStorage() {
+		if msg := storageChange(oldSvc, svc); msg != "" {
+			return fmt.Errorf("%w: %s", ErrStorageImmutable, msg)
+		}
+	} else if svc.Name != oldSvc.Name || svc.HasStorage() {
+		// ชื่อ object หรือชนิด workload เปลี่ยน แก้ในที่ไม่ได้ — ไม่มีดิสก์เดิมให้หาย ลบแล้วสร้างใหม่ได้
+		if err := k.DeleteService(ctx, nsName, oldSvc); err != nil {
+			return fmt.Errorf("ลบ workload เดิมไม่สำเร็จ: %w", err)
+		}
+		return k.DeployService(ctx, nsName, svc)
+	}
+
+	cs, err := k.client()
+	if err != nil {
+		return err
+	}
+
+	if svc.HasStorage() {
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			sts, err := cs.AppsV1().StatefulSets(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			// แทนแค่ pod template — volumeClaimTemplates/selector แก้ไม่ได้ (k8s ห้าม) และไม่ต้องแก้
+			// เพราะ storageChange รับประกันแล้วว่าขนาดดิสก์และชื่อเท่าเดิม
+			sts.Spec.Template = statefulSetFor(nsName, svc).Spec.Template
+			_, err = cs.AppsV1().StatefulSets(nsName).Update(ctx, sts, metav1.UpdateOptions{})
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("แก้ StatefulSet '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+		}
+	} else {
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			dep, err := cs.AppsV1().Deployments(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			want := deploymentFor(nsName, svc)
+			dep.Spec.Template = want.Spec.Template
+			dep.Spec.Replicas = want.Spec.Replicas
+			_, err = cs.AppsV1().Deployments(nsName).Update(ctx, dep, metav1.UpdateOptions{})
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("แก้ Deployment '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+		}
+	}
+
+	nodePort, err := k.updateServicePort(ctx, cs, nsName, svc)
+	if err != nil {
+		return err
+	}
+	if svc.IsDatabase {
+		if err := k.updateNetworkPolicyPort(ctx, cs, nsName, svc); err != nil {
+			return err
+		}
+		svc.NodePort = nil
+	} else {
+		svc.NodePort = &nodePort
+	}
+
+	log.Printf("[k8s] แก้ service '%s' ใน namespace '%s' ในที่แล้ว (image=%s, %dm CPU / %d MB, port %d) — PVC และ NodePort คงเดิม",
+		svc.Name, nsName, svc.Image, svc.CPUMilli, svc.RAMMB, svc.ContainerPort)
+	return nil
+}
+
+// updateServicePort ชี้ Service เดิมไปที่ ContainerPort ใหม่ แล้วคืนเลข nodePort เดิม (ClusterIP ได้ 0)
+// ไม่แตะ nodePort — ปล่อยค่าที่ Get มาไว้ k8s จึงไม่จ่ายเลขใหม่
+func (k *KubernetesProvisioner) updateServicePort(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) (int, error) {
+	var nodePort int
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cur, err := cs.CoreV1().Services(nsName).Get(ctx, svc.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if len(cur.Spec.Ports) == 0 {
+			return fmt.Errorf("Service ไม่มีพอร์ต")
+		}
+		p := &cur.Spec.Ports[0]
+		nodePort = int(p.NodePort)
+		port := int32(svc.ContainerPort)
+		if p.Port == port && p.TargetPort == intstr.FromInt32(port) {
+			return nil
+		}
+		p.Port, p.TargetPort = port, intstr.FromInt32(port)
+		_, err = cs.CoreV1().Services(nsName).Update(ctx, cur, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("แก้พอร์ตของ Service '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
+	if !svc.IsDatabase && nodePort == 0 {
+		return 0, fmt.Errorf("Service '%s' ใน namespace '%s' ไม่มี nodePort — ไม่ใช่ Service ที่ DeployService สร้าง", svc.Name, nsName)
+	}
+	return nodePort, nil
+}
+
+// updateNetworkPolicyPort ให้ NetworkPolicy ของ database เปิดพอร์ตเดียวกับ ContainerPort ใหม่
+// ลืมแก้แล้ว pod ใน namespace ต่อ database ไม่ได้ทั้งที่ Service ถูกต้อง (policy ยังเปิดพอร์ตเก่า)
+func (k *KubernetesProvisioner) updateNetworkPolicyPort(
+	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
+) error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cur, err := cs.NetworkingV1().NetworkPolicies(nsName).Get(ctx, networkPolicyName(svc.Name), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		want := networkPolicyFor(nsName, svc).Spec.Ingress
+		if len(cur.Spec.Ingress) == 1 && len(cur.Spec.Ingress[0].Ports) == 1 &&
+			cur.Spec.Ingress[0].Ports[0].Port != nil && *cur.Spec.Ingress[0].Ports[0].Port == *want[0].Ports[0].Port {
+			return nil
+		}
+		cur.Spec.Ingress = want
+		_, err = cs.NetworkingV1().NetworkPolicies(nsName).Update(ctx, cur, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("แก้ NetworkPolicy ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
+	}
 	return nil
 }
 

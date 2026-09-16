@@ -52,22 +52,26 @@ rules:
     resources: [resourcequotas, limitranges]
     verbs: [get, create, update]
   # createNodePortService (DeployService): Create — ไม่เลือก nodePort เอง · DeleteService: Delete
+  # updateServicePort (UpdateService): Get + Update พอร์ต โดยคงเลข nodePort เดิม
   - apiGroups: [""]
     resources: [services]
-    verbs: [create, delete]
+    verbs: [get, create, update, delete]
   # DeployService: Create (+ Delete ตอน rollback เมื่อสร้าง Service ไม่ผ่าน)
   # ScaleService: merge patch spec.replicas · DeleteService: Delete · Status: Get
+  # UpdateService: Get + Update pod template / replicas (แก้ในที่)
   - apiGroups: [apps]
     resources: [deployments]
-    verbs: [get, create, patch, delete]
+    verbs: [get, create, update, patch, delete]
   # DeployService (database): Create StatefulSet · DeleteService / rollback: Delete · Status: Get
+  # UpdateService: Get + Update pod template — ไม่ลบ StatefulSet เพื่อไม่ให้ PVC หาย (docs 030)
   - apiGroups: [apps]
     resources: [statefulsets]
-    verbs: [get, create, delete]
+    verbs: [get, create, update, delete]
   # DeployService (database): Create NetworkPolicy · DeleteService / rollback: Delete
+  # updateNetworkPolicyPort (UpdateService ของ database): Get + Update พอร์ต
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
-    verbs: [create, delete]
+    verbs: [get, create, update, delete]
   # DeleteService (database): PVC จาก volumeClaimTemplates — StatefulSet controller สร้างให้ เราแค่ตามลบ
   - apiGroups: [""]
     resources: [persistentvolumeclaims]

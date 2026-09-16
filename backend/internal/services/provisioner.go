@@ -102,6 +102,20 @@ type Provisioner interface {
 	// (NodePort ต้องคงเดิม ไม่งั้น URL ที่ผู้ใช้ถืออยู่จะใช้ไม่ได้)
 	ScaleService(ctx context.Context, nsName, svcName string, replicas int) error
 
+	// UpdateService ทำให้ workload บนคลัสเตอร์ตรงกับ svc (ค่าใหม่) โดยรู้ว่าของเดิมคือ oldSvc
+	//
+	// ถ้าชื่อและชนิด workload เท่าเดิม ให้แก้ของเดิมในที่ (pod template, replicas, พอร์ตของ Service)
+	// ไม่ลบแล้วสร้างใหม่ เพราะ:
+	//   - service ที่มีดิสก์: ลบ = ลบ PVC = ข้อมูลหาย และ PVC ใหม่ชื่อเดิมจะชนกับโฟลเดอร์ NFS
+	//     ที่ provisioner ยังลบไม่เสร็จ (pod ค้าง "stale NFS file handle" — docs 030)
+	//   - ทุก service: Service เดิมคงอยู่ = เลข NodePort ไม่เปลี่ยน URL ที่ผู้ใช้ถืออยู่ยังใช้ได้
+	// และเซ็ต svc.NodePort กลับเป็นเลขเดิม (database ปล่อย nil) ให้ ServiceManager เขียนลง DB
+	//
+	// service ที่มีดิสก์ห้ามเปลี่ยนชื่อ / ขนาดดิสก์ / data_path / สวิตช์ database / ถอดดิสก์ออก
+	// → คืน ErrStorageImmutable (ServiceManager.Update ตรวจก่อนแล้ว ที่นี่กันซ้ำอีกชั้น)
+	// service ไม่มีดิสก์ที่เปลี่ยนชื่อหรือขอดิสก์เพิ่ม ต้องเปลี่ยนชนิด/ชื่อ object จึงลบแล้วสร้างใหม่ได้ (ไม่มีข้อมูลให้หาย)
+	UpdateService(ctx context.Context, nsName string, oldSvc, svc *entity.Service) error
+
 	// DeleteService ลบ workload ตัวเดียวออกจาก namespace
 	//
 	// รับทั้ง svc ไม่ใช่แค่ชื่อ เพราะของที่ต้องถอนต่างกันตามสองแกนเดียวกับ DeployService

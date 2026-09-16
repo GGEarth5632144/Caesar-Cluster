@@ -45,6 +45,9 @@ func (p *disconnectingProv) EnsureNamespace(context.Context, *entity.Namespace) 
 func (p *disconnectingProv) DeleteNamespace(context.Context, string) error                { return nil }
 func (p *disconnectingProv) DeleteService(context.Context, string, *entity.Service) error { return nil }
 func (p *disconnectingProv) ScaleService(context.Context, string, string, int) error      { return nil }
+func (p *disconnectingProv) UpdateService(context.Context, string, *entity.Service, *entity.Service) error {
+	return nil
+}
 func (p *disconnectingProv) Logs(context.Context, string, string, LogOptions) (io.ReadCloser, error) {
 	return nil, nil
 }
