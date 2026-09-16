@@ -64,6 +64,19 @@ export interface AppService {
   created_at: string;
 }
 
+export interface UpdateServiceDTO {
+  name?: string;
+  image?: string;
+  request_template_id?: number;
+  cpu_milli?: number;
+  ram_mb?: number;
+  container_port?: number;
+  replicas?: number;
+  env_vars?: Record<string, string>;
+  is_database?: boolean;
+  storage_mb?: number;
+  data_path?: string;
+}
 export interface AdminService extends AppService {
   namespace_name: string;
   creator_name: string;
@@ -80,10 +93,7 @@ export interface CreateServiceDTO {
   replicas?: number;
   env_vars?: Record<string, string>;
   is_database?: boolean;
-  // ส่ง storage_mb หรือ data_path มา = ขอดิสก์ถาวร ได้ทั้งฐานข้อมูลและ web (backend ถือตามนี้ทันที)
-  // ส่งเป็น MB เสมอ — หน้าเว็บแปลงจากหน่วยที่ผู้ใช้เลือกให้แล้ว (ดู config/database.ts)
   storage_mb?: number;
-  // data_path บังคับส่งทุกครั้งที่ขอดิสก์ — ระบบไม่เดาจุด mount ให้
   data_path?: string;
 }
 
@@ -115,6 +125,11 @@ export const serviceApi = {
   remove: async (id: number) => {
     const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/services/${id}`);
     return response.data.data;
+  },
+
+  update: async (id: number, payload: UpdateServiceDTO): Promise<AppService> => {
+    const response = await axiosClient.patch<ApiResponse<AppService>>(`/services/${id}`, payload);
+    return response.data.data; 
   },
 };
 

@@ -262,3 +262,73 @@ func (h *ServiceController) Logs(c *gin.Context) {
 		}
 	}
 }
+
+// Update ขอแก้ไขการตั้งค่า Service (ใช้กระบวนการ Redeploy: ลบของเดิมสร้างของใหม่)
+//
+// data flow: JSON body -> bind UpdateServiceRequest -> ตรวจรูปแบบ
+// -> แปลงเป็น services.UpdateServiceParams -> ServiceManager.Update -> ตอบ service ที่แก้ไขเสร็จ
+func (h *ServiceController) Update(c *gin.Context) {
+    nsID, ok := currentNamespaceID(c, h.db)
+    if !ok {
+        return
+    }
+
+    id, err := strconv.Atoi(c.Param("id"))
+    if err != nil {
+        utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+        return
+    }
+
+    var req dto.UpdateServiceRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+        return
+    }
+
+    if !isValidK8sName(req.Name) {
+        utils.Error(c, http.StatusBadRequest, "INVALID_NAME",
+            "ชื่อต้องเป็นตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และขึ้นต้น-ลงท้ายด้วยตัวอักษรหรือตัวเลข")
+        return
+    }
+    if !isValidEnvVars(req.EnvVars) {
+        utils.Error(c, http.StatusBadRequest, "INVALID_ENV_VARS",
+            "env vars ต้องมีไม่เกิน 20 ตัว ชื่อ key เป็นตัวอักษร/เลข/underscore และขึ้นต้นด้วยตัวอักษรหรือ underscore เท่านั้น")
+        return
+    }
+
+    svc, err := h.svc.Update(c.Request.Context(), id, c.GetInt("userID"), nsID, services.UpdateServiceParams{
+        Name:          req.Name,
+        Image:         req.Image,
+        CPUMilli:      req.CPUMilli,
+        RAMMB:         req.RAMMB,
+        ContainerPort: req.ContainerPort,
+        Replicas:      req.Replicas,
+        EnvVars:       req.EnvVars,
+        IsDatabase:    req.IsDatabase,
+        StorageMB:     req.StorageMB,
+        DataPath:      req.DataPath,
+    })
+
+    if err != nil {
+        switch {
+        case errors.Is(err, services.ErrServiceNotFound):
+            utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+        case errors.Is(err, services.ErrQuotaExceeded):
+            utils.Error(c, http.StatusConflict, "QUOTA_EXCEEDED", err.Error())
+        case errors.Is(err, services.ErrServiceTooLarge):
+            utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
+        case errors.Is(err, services.ErrDataPathRequired):
+            utils.Error(c, http.StatusBadRequest, "DATA_PATH_REQUIRED", err.Error())
+        case errors.Is(err, services.ErrStorageReplicas):
+            utils.Error(c, http.StatusBadRequest, "STORAGE_SINGLE_REPLICA", err.Error())
+        default:
+            log.Printf("update service error: %v", err)
+            utils.Error(c, http.StatusInternalServerError, "INTERNAL", "แก้ไข service ไม่สำเร็จ")
+        }
+        return
+    }
+    
+    utils.OK(c, http.StatusOK, svc)
+}
+
+
