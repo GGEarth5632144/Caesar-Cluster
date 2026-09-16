@@ -40,7 +40,7 @@ func Setup(
 	nsCtl := controller.NewNamespaceController(db, nsMgr)
 	svcCtl := controller.NewServiceController(db, svcMgr)
 	tmplCtl := controller.NewRequestTemplateController(db)
-	adminCtl := controller.NewAdminController(db, nsMgr, svcMgr)
+	adminCtl := controller.NewAdminController(db, cfg, nsMgr, svcMgr)
 	reqCtl := controller.NewRequestController(db)
 	aiReviewReqCtl := controller.NewAIReviewRequestController(db)
 	inviteCtl := controller.NewInviteController(inviteMgr)
@@ -103,6 +103,8 @@ func Setup(
 		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db))
 		{
 			protected.GET("/me", authCtl.Me)
+			protected.PATCH("/me", authCtl.UpdateMe)
+			protected.POST("/me/password", middlewares.RateLimit(5, 15*time.Minute), authCtl.ChangePassword)
 			protected.GET("/request-templates", tmplCtl.List)
 
 			protected.GET("/requests", reqCtl.ListMine)
@@ -136,6 +138,7 @@ func Setup(
 		{
 			admin.GET("/eligible-students", adminCtl.ListEligibleStudents)
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
+			admin.POST("/eligible-students/single", adminCtl.AddEligibleStudent)
 			admin.POST("/eligible-students/preview", adminCtl.PreviewEligibleStudents)
 
 			admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
@@ -146,6 +149,11 @@ func Setup(
 			admin.GET("/namespaces", adminCtl.ListNamespaces)
 			admin.PATCH("/namespaces/:id/quota", adminCtl.SetNamespaceQuota)
 			admin.DELETE("/namespaces/:id", adminCtl.DeleteNamespace)
+
+			admin.GET("/services", adminCtl.ListServices)
+			admin.DELETE("/services/:id", adminCtl.DeleteService)
+			admin.POST("/services/:id/schedule-delete", adminCtl.ScheduleServiceDelete)
+			admin.DELETE("/services/:id/schedule-delete", adminCtl.CancelServiceDelete)
 
 			// ก้อนสรุปของหน้า AdminDashboard — นับทุกอย่างที่ Postgres แล้วส่งกลับแค่ตัวเลข
 			// แทนที่จะยกตาราง users + requests ขึ้นมานับเองในเบราว์เซอร์ทุก 30 วินาที

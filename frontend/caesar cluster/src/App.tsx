@@ -27,7 +27,7 @@ const AdminImportStudents = lazy(() => import("@/pages/admin/AdminImportStudents
 const RequestResources = lazy(() => import("@/pages/user/RequestResources"));
 const UserManagement = lazy(() => import("@/pages/admin/Usermanagement"));
 const NamespaceManagement = lazy(() => import("@/pages/admin/NamespaceManagement"));
-const MyServices = lazy(() => import("@/pages/user/RequestQuotar"));
+const MyService = lazy(() => import("@/pages/user/MyService"));
 const Service = lazy(() => import("@/pages/admin/Service"));
 const IPCmanagement = lazy(() => import("@/pages/admin/IPCmanagement"));
 const Auditlog = lazy(() => import("@/pages/admin/Auditlog"));
@@ -91,7 +91,7 @@ return (
                   <Route index element={<UserDashboard />} />
                   <Route path={PATHS.settings} element={<Setting />} />
                   <Route path={PATHS.requestResources} element={<RequestResources />} />
-                  <Route path={PATHS.services} element={<MyServices />} />
+                  <Route path={PATHS.services} element={<MyService />} />
                   <Route path={PATHS.createService} element={<Createservice />} />
                   <Route path={`${PATHS.serviceLogs}/:serviceId`} element={<ServiceLogs />} />
                   <Route path={PATHS.generalDashboard} element={<GeneralDashboard user={user} />} />

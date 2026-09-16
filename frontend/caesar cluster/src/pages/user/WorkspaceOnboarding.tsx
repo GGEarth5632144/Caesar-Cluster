@@ -7,13 +7,15 @@ import LogoLoader from "@/components/ui/LogoLoader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
 import axiosClient from "@/api/axiosClient";
-import { getApiErrorMessage } from "@/api/authApi";
+import { authApi, getApiErrorMessage } from "@/api/authApi";
+import { useAuthStore } from "@/store/authStore";
 import { vmRequestApi, type VmRequest } from "@/api/requests";
 import type { RequestTemplate } from "@/api/adminrequest";
 import { PATHS } from "@/config/routes";
 
 export default function WorkspaceOnboarding() {
   const navigate = useNavigate();
+  const refreshUser = useAuthStore((state) => state.refreshUser);
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   // รายละเอียดคำขอที่ผู้ใช้เขียนเอง — จะถูกส่งเป็น description ไปให้ admin เห็นใน AdminRequestQueue
@@ -31,7 +33,13 @@ export default function WorkspaceOnboarding() {
   const fetchLatestRequest = async () => {
     setCheckingRequests(true);
     try {
-      const mine = await vmRequestApi.listMine();
+      // ถาม /me คู่กันเพื่อแยก "เพิ่งได้รับอนุมัติแต่ store ยังไม่รู้" ออกจาก "เคยได้รับอนุมัติแต่ space ถูกลบไปแล้ว"
+      // ดูแค่สถานะคำขอล่าสุดแยกไม่ออก เพราะคำขอเก่ายังเป็น approved ค้างอยู่ตลอดไป
+      const [mine, me] = await Promise.all([vmRequestApi.listMine(), authApi.me()]);
+      if (me.namespace_id) {
+        refreshUser(me); // UserDashboard สลับไป GeneralDashboard เองโดยไม่ต้อง login ใหม่
+        return;
+      }
       setLatestRequest(mine.length > 0 ? mine[0] : null);
     } catch (err) {
       console.error(err);
@@ -116,21 +124,6 @@ export default function WorkspaceOnboarding() {
         >
           ดูสถานะคำขอ
         </button>
-      </div>
-    );
-  }
-
-  // คำขอล่าสุดเพิ่งได้รับอนุมัติ แต่ session ปัจจุบันยังไม่มี namespace_id (ต้อง refresh token)
-  if (latestRequest && latestRequest.status === "approved") {
-    return (
-      <div className="flex min-h-full flex-col items-center justify-center gap-4 px-4 py-10 text-center font-mono">
-        <div className="flex size-20 items-center justify-center rounded-2xl bg-[#DEE8CE] text-[#5A8F5A]">
-          <Check size={36} />
-        </div>
-        <h1 className="text-4xl font-bold text-[#211a14]">Virtual Machine ของคุณพร้อมใช้งานแล้ว!</h1>
-        <p className="max-w-xl text-lg text-[#211a14]/60">
-          กรุณาเข้าสู่ระบบใหม่อีกครั้งเพื่อโหลดข้อมูล Space ล่าสุดของคุณ
-        </p>
       </div>
     );
   }

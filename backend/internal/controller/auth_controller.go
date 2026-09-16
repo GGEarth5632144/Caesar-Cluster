@@ -95,15 +95,19 @@ func (h *AuthController) Register(c *gin.Context) {
         return
     }
 
+	// คนที่แอดมินกำหนดเป็น admin ไว้ในรายชื่อข้ามด่าน 2–3 — สองด่านนี้มีไว้คัดนักศึกษา CPE ที่ยังเรียนอยู่
+	// ส่วนผู้ดูแลระบบอาจเป็นอาจารย์/ผู้ช่วยสอนที่ไม่เข้าเกณฑ์นั้น และแอดมินเลือกให้เองแล้วจากหน้า User Management
+	assignedAdmin := eligible.Role == entity.RoleAdmin
+
 	// ด่านที่ 2: สมัครได้เฉพาะสาขา CPE เท่านั้น
-	if eligible.Major != entity.MajorCPE {
+	if !assignedAdmin && eligible.Major != entity.MajorCPE {
 		utils.Error(c, http.StatusForbidden, "NOT_CPE",
 			"ระบบนี้เปิดให้เฉพาะนักศึกษาสาขาวิศวกรรมคอมพิวเตอร์ (CPE) เท่านั้น")
 		return
 	}
 
 	// ด่านที่ 3: สถานภาพต้องยังเป็นนักศึกษาอยู่ (ไม่ใช่จบ/ลาพัก/พ้นสภาพ)
-	if !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
+	if !assignedAdmin && !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
 		utils.Error(c, http.StatusForbidden, "NOT_ACTIVE_STUDENT",
 			"สถานภาพนักศึกษาของรหัสนี้ไม่สามารถสมัครใช้งานได้")
 		return
@@ -123,9 +127,14 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 
+	// role มาจากที่แอดมินกำหนดไว้ในรายชื่อผู้มีสิทธิ์ (default user) — ค่าอื่นที่ไม่รู้จักถือเป็น user
+	roleName := entity.RoleUser
+	if assignedAdmin {
+		roleName = entity.RoleAdmin
+	}
 	var userRole entity.Role
-	if err := db.Where("name = ?", entity.RoleUser).First(&userRole).Error; err != nil {
-		log.Printf("register: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", entity.RoleUser, err)
+	if err := db.Where("name = ?", roleName).First(&userRole).Error; err != nil {
+		log.Printf("register: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", roleName, err)
 		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ระบบยังตั้งค่าไม่ครบ")
 		return
 	}
@@ -146,7 +155,6 @@ func (h *AuthController) Register(c *gin.Context) {
 		StudentID: req.StudentID,
 		RoleID:    userRole.ID,
 		RealName:  req.RealName,
-		NickName:  req.NickName,
 		Gmail:     req.Gmail,
 		EntryYear: entryYear,
 		Password:  string(hash),
@@ -318,7 +326,6 @@ func (h *AuthController) buildSession(user *entity.User, roleName string, rememb
 			"id":           user.ID,
 			"student_id":   user.StudentID,
 			"real_name":    user.RealName,
-			"nick_name":    user.NickName,
 			"gmail":        user.Gmail,
 			"year_level":   yearLevel,
 			"role":         roleName,
@@ -335,22 +342,111 @@ func (h *AuthController) Me(c *gin.Context) {
 		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
 		return
 	}
+	utils.OK(c, http.StatusOK, h.mePayload(c, &user))
+}
 
+// mePayload = response ของ GET/PATCH /me
+func (h *AuthController) mePayload(c *gin.Context, user *entity.User) gin.H {
 	yearLevel, err := entity.YearLevel(user.StudentID, time.Now())
 	if err != nil {
 		log.Printf("me: คำนวณชั้นปีของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
 	}
 
-	utils.OK(c, http.StatusOK, gin.H{
+	major := ""
+	var eligible entity.EligibleStudent
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("student_id = ?", user.StudentID).First(&eligible).Error; err == nil {
+		major = eligible.Major
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("me: อ่านสาขาของ student_id %q ไม่สำเร็จ: %v", user.StudentID, err)
+	}
+
+	return gin.H{
 		"id":           user.ID,
 		"student_id":   user.StudentID,
 		"real_name":    user.RealName,
-		"nick_name":    user.NickName,
 		"gmail":        user.Gmail,
 		"year_level":   yearLevel,
+		"major":        major,
 		"role":         c.GetString("role"),
 		"namespace_id": user.NamespaceID,
+	}
+}
+
+// UpdateMe แก้ชื่อ-นามสกุลของผู้ใช้เอง
+func (h *AuthController) UpdateMe(c *gin.Context) {
+	var req dto.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "ชื่อไม่เกิน 100 ตัวอักษร")
+		return
+	}
+	realName := strings.Join(strings.Fields(req.RealName), " ")
+	if realName == "" {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณากรอกชื่อ")
+		return
+	}
+
+	db := h.db.WithContext(c.Request.Context())
+	userID := c.GetInt("userID")
+	if err := db.Model(&entity.User{}).Where("id = ?", userID).Update("real_name", realName).Error; err != nil {
+		log.Printf("update me: อัปเดตชื่อของ user %d ไม่สำเร็จ: %v", userID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "บันทึกข้อมูลไม่สำเร็จ")
+		return
+	}
+
+	var user entity.User
+	if err := db.First(&user, userID).Error; err != nil {
+		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
+		return
+	}
+	utils.OK(c, http.StatusOK, h.mePayload(c, &user))
+}
+
+// ChangePassword เปลี่ยนรหัสผ่าน — รหัสเดิมผิดตอบ 400 เพราะ 401 จะทำให้หน้าเว็บ logout
+func (h *AuthController) ChangePassword(c *gin.Context) {
+	var req dto.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร")
+		return
+	}
+
+	db := h.db.WithContext(c.Request.Context())
+	var user entity.User
+	if err := db.First(&user, c.GetInt("userID")).Error; err != nil {
+		utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบผู้ใช้")
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_CURRENT_PASSWORD", "รหัสผ่านปัจจุบันไม่ถูกต้อง")
+		return
+	}
+	if req.NewPassword == req.CurrentPassword {
+		utils.Error(c, http.StatusBadRequest, "SAME_PASSWORD", "รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านปัจจุบัน")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "hash ไม่สำเร็จ")
+		return
+	}
+
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&entity.User{}).Where("id = ?", user.ID).
+			Update("password", string(hash)).Error; err != nil {
+			return err
+		}
+		return tx.Where("user_id = ? AND used_at IS NULL", user.ID).
+			Delete(&entity.PasswordResetToken{}).Error
 	})
+	if err != nil {
+		log.Printf("change-password: เปลี่ยนรหัสผ่านของ user %d ไม่สำเร็จ: %v", user.ID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เปลี่ยนรหัสผ่านไม่สำเร็จ")
+		return
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"message": "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว"})
 }
 
 // ตอบกลับ /forgot-password เสมอไม่ว่าจะมีอีเมลนี้ในระบบหรือไม่ กันการเดาว่ามีบัญชีอยู่ไหม

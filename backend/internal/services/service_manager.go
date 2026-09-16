@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -17,17 +18,16 @@ var (
 	ErrRequestTemplateNotFound = errors.New("ไม่พบ template ที่เลือก (หรือถูกปิดใช้งานแล้ว)")
 	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
 	ErrServiceNotReady         = errors.New("service ยังไม่พร้อม — รอให้ deploy เสร็จก่อนค่อยปรับจำนวน replica")
+	ErrLogsUnavailable         = errors.New("ยังอ่าน log ไม่ได้ — container ของ service นี้ยังไม่เริ่มทำงาน (ถ้าเพิ่ง deploy รอสักครู่แล้วกดลองใหม่)")
 
-	// ── error ของสวิตช์ database (ดู entity.Service.IsDatabase) ────────────────────────
+	// ── error ของดิสก์ถาวร (ดู entity.Service.HasStorage) ────────────────────────────
 
 	// ระบบไม่เดาจุด mount ให้ไม่ว่าจะเป็น image อะไร เพราะเดาผิดแล้วได้ PVC ที่ไม่มีใครเขียนลง
 	// ข้อมูลหายตอน Pod restart ทั้งที่ทุกอย่างดูเหมือนสำเร็จ
 	ErrDataPathRequired = errors.New("ต้องระบุตำแหน่งที่ image นี้เก็บข้อมูล")
 
 	// ตอบเป็น error แทนการแก้ค่าให้เงียบๆ ไม่งั้นผู้เรียก API จะเข้าใจว่าได้ 3 Pod ทั้งที่ระบบให้ 1
-	ErrDatabaseReplicas = errors.New("database ต้องมี 1 pod เท่านั้น — สอง pod เขียนดิสก์ก้อนเดียวกันคือข้อมูลพัง")
-
-	ErrStorageNotAllowed = errors.New("ดิสก์ถาวรใช้ได้เฉพาะ service ที่เปิดสวิตช์ database")
+	ErrStorageReplicas = errors.New("service ที่มีดิสก์ถาวรต้องมี 1 pod เท่านั้น — สอง pod เขียนดิสก์ก้อนเดียวกันคือข้อมูลพัง")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
@@ -47,12 +47,13 @@ type CreateServiceParams struct {
 	Replicas      int
 	EnvVars       map[string]string
 
-	// IsDatabase = สวิตช์จากหน้าเว็บ เปิดแล้ว Create จะบังคับกติกาของ database ทั้งชุด
-	// (เครือข่ายปิด + ดิสก์ถาวร + 1 pod) — ดู entity.Service.IsDatabase
+	// IsDatabase = สวิตช์ "เข้าได้เฉพาะใน namespace" จากหน้าเว็บ — database ต้องมีดิสก์เสมอ
+	// Create จึงบังคับกติกาดิสก์ถาวรให้ด้วย (ดู entity.Service.IsDatabase)
 	IsDatabase bool
-	// StorageMB เป็น 0 ได้ = ใช้ entity.DefaultStorageMBPerService (มีผลเฉพาะตอน IsDatabase)
+	// StorageMB > 0 หรือส่ง DataPath มา = ขอดิสก์ถาวร (ได้ทั้ง database และ web)
+	// ขอดิสก์แต่ StorageMB เป็น 0 = ใช้ entity.DefaultStorageMBPerService
 	StorageMB int
-	// DataPath = จุดที่ image เก็บข้อมูล — บังคับกรอกทุกครั้งที่ IsDatabase
+	// DataPath = จุดที่ image เก็บข้อมูล — บังคับกรอกทุกครั้งที่ขอดิสก์
 	DataPath string
 }
 
@@ -127,14 +128,20 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 	storageMB := 0
 	dataPath := ""
 
-	// ── สวิตช์ database: แปลง "ติ๊กหนึ่งครั้ง" เป็นกติกาทั้งชุด ────────────────────────
+	// ── ดิสก์ถาวร: แปลงคำขอเป็นกติกาทั้งชุด (StatefulSet + PVC + 1 pod) ─────────────────
+	//
+	// ขอดิสก์ได้สองทาง: เปิดสวิตช์ database (database ต้องมีดิสก์เสมอ) หรือเป็น web ที่ส่ง
+	// storage_mb/data_path มา เช่น Nextcloud ที่เก็บไฟล์ผู้ใช้ไว้ใน /var/www/html
+	// ส่งมาช่องใดช่องหนึ่งก็ถือว่าขอดิสก์ แล้วบังคับให้ครบ (ขนาดมี default ส่วน path ไม่เดาให้)
+	// ไม่ใช่ทิ้ง data_path ที่ส่งมาเงียบๆ — ผู้ใช้จะคิดว่าข้อมูลถาวรทั้งที่ไม่ใช่
 	//
 	// ตรวจให้จบก่อนแตะ DB เพราะเป็นการตรวจคำขอล้วนๆ ไม่ต้องถือ lock ระหว่างทำ
-	if p.IsDatabase {
-		if p.Replicas > entity.DatabaseReplicas {
-			return nil, ErrDatabaseReplicas
+	wantsStorage := p.IsDatabase || p.StorageMB > 0 || strings.TrimSpace(p.DataPath) != ""
+	if wantsStorage {
+		if p.Replicas > entity.StorageReplicas {
+			return nil, ErrStorageReplicas
 		}
-		replicas = entity.DatabaseReplicas
+		replicas = entity.StorageReplicas
 		storageMB = p.StorageMB
 		if storageMB == 0 {
 			storageMB = entity.DefaultStorageMBPerService
@@ -143,9 +150,6 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 			return nil, fmt.Errorf("%w: %s", ErrDataPathRequired, msg)
 		}
 		dataPath = strings.TrimRight(strings.TrimSpace(p.DataPath), "/")
-	} else if p.StorageMB > 0 {
-		// ขอดิสก์โดยไม่เปิดสวิตช์ = คำขอที่ขัดแย้งในตัวเอง ตอบให้ชัดดีกว่าเงียบๆ ไม่สร้าง PVC ให้
-		return nil, ErrStorageNotAllowed
 	}
 
 	svc := &entity.Service{
@@ -244,10 +248,11 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 		return nil, err
 	}
 
-	// เช็คก่อนเรื่องสถานะ เพราะถ้าเช็คทีหลัง การ scale database ที่ยังไม่ขึ้นจะได้ error ว่า
-	// "ยังไม่พร้อม" ซึ่งชวนให้เข้าใจผิดว่ารอแล้วทำได้ (ต้องกันที่นี่ ไม่ใช่แค่ซ่อน dropdown บนหน้าเว็บ)
-	if svc.IsDatabase {
-		return nil, ErrDatabaseReplicas
+	// เช็คก่อนเรื่องสถานะ เพราะถ้าเช็คทีหลัง การ scale service ที่มีดิสก์ (รวม database) ซึ่งยังไม่ขึ้น
+	// จะได้ error ว่า "ยังไม่พร้อม" ซึ่งชวนให้เข้าใจผิดว่ารอแล้วทำได้ (ต้องกันที่นี่ ไม่ใช่แค่ซ่อน dropdown บนหน้าเว็บ)
+	// และ ScaleService ของจริงแก้แค่ Deployment — ปล่อยผ่านมาจะได้ NotFound จาก StatefulSet
+	if svc.HasStorage() {
+		return nil, ErrStorageReplicas
 	}
 
 	// ห้าม scale ระหว่างที่ยังไม่ได้ยืนยันว่า workload ขึ้นจริง ไม่งั้น DB กับคลัสเตอร์จะ drift ถาวร:
@@ -333,11 +338,105 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 		return err
 	}
 
-	// ส่งทั้ง svc ไปเพราะ database ต้องถอน PVC + NetworkPolicy เพิ่มด้วย (ดู Provisioner.DeleteService)
+	// ส่งทั้ง svc ไปเพราะมีดิสก์ต้องถอน PVC และ database ต้องถอน NetworkPolicy เพิ่มด้วย (ดู Provisioner.DeleteService)
 	if err := m.prov.DeleteService(ctx, K8sNamespaceName(ns.ID), &svc); err != nil {
 		return err
 	}
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
+}
+
+// ScheduledDeleteDelay = ระยะเวลาก่อนลบ service ที่แอดมินตั้งเวลาไว้
+const ScheduledDeleteDelay = 24 * time.Hour
+
+const scheduledDeleteCheckInterval = time.Minute
+
+// AdminService = service + ชื่อ namespace และผู้สร้าง สำหรับหน้า admin
+type AdminService struct {
+	entity.Service
+	NamespaceName    string `json:"namespace_name"`
+	CreatorName      string `json:"creator_name"`
+	CreatorStudentID string `json:"creator_student_id"`
+}
+
+// ListAll คืน service ทั้งระบบ เรียงใหม่→เก่า
+func (m *ServiceManager) ListAll(ctx context.Context) ([]AdminService, error) {
+	var list []AdminService
+	err := m.db.WithContext(ctx).Table("services AS s").
+		Select(`s.*, n.name AS namespace_name,
+			COALESCE(u.real_name, '') AS creator_name,
+			COALESCE(u.student_id, '') AS creator_student_id`).
+		Joins("JOIN namespaces n ON n.id = s.namespace_id").
+		Joins("LEFT JOIN users u ON u.id = s.created_by").
+		Order("s.created_at DESC").
+		Scan(&list).Error
+	return list, err
+}
+
+// DeleteByID ลบ service โดยไม่จำกัด namespace — ใช้กับฝั่ง admin
+func (m *ServiceManager) DeleteByID(ctx context.Context, serviceID int) error {
+	var svc entity.Service
+	if err := m.db.WithContext(ctx).Select("id", "namespace_id").First(&svc, serviceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrServiceNotFound
+		}
+		return err
+	}
+	return m.Delete(ctx, svc.ID, svc.NamespaceID)
+}
+
+// ScheduleDelete ตั้งเวลาลบ service ใน ScheduledDeleteDelay (ตั้งซ้ำ = นับใหม่)
+func (m *ServiceManager) ScheduleDelete(ctx context.Context, serviceID int) (time.Time, error) {
+	deleteAt := time.Now().UTC().Add(ScheduledDeleteDelay)
+	return deleteAt, m.setDeleteAt(ctx, serviceID, gorm.Expr("?", deleteAt))
+}
+
+// CancelScheduledDelete ยกเลิกเวลาลบที่ตั้งไว้
+func (m *ServiceManager) CancelScheduledDelete(ctx context.Context, serviceID int) error {
+	return m.setDeleteAt(ctx, serviceID, gorm.Expr("NULL"))
+}
+
+func (m *ServiceManager) setDeleteAt(ctx context.Context, serviceID int, value any) error {
+	res := m.db.WithContext(ctx).Model(&entity.Service{}).Where("id = ?", serviceID).Update("delete_at", value)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrServiceNotFound
+	}
+	return nil
+}
+
+// StartScheduledDeletion เปิด worker ลบ service ที่ถึงเวลาลบ — หยุดเมื่อ ctx ถูก cancel
+func (m *ServiceManager) StartScheduledDeletion(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(scheduledDeleteCheckInterval)
+		defer ticker.Stop()
+		for {
+			m.deleteDue(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (m *ServiceManager) deleteDue(ctx context.Context) {
+	var due []entity.Service
+	if err := m.db.WithContext(ctx).Select("id", "namespace_id", "name").
+		Where("delete_at IS NOT NULL AND delete_at <= ?", time.Now().UTC()).
+		Find(&due).Error; err != nil {
+		log.Printf("scheduled delete: อ่านรายการไม่สำเร็จ: %v", err)
+		return
+	}
+	for _, svc := range due {
+		if err := m.Delete(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, ErrServiceNotFound) {
+			log.Printf("scheduled delete: ลบ service '%s' (id=%d) ไม่สำเร็จ: %v", svc.Name, svc.ID, err)
+			continue
+		}
+		log.Printf("scheduled delete: ลบ service '%s' (id=%d) ตามเวลาที่ตั้งไว้แล้ว", svc.Name, svc.ID)
+	}
 }
 
 // Logs เปิด stream ของ log จาก service หนึ่งตัว — ระบบไม่เก็บสำเนา log ไว้ อ่านสดจากคลัสเตอร์ทุกครั้ง

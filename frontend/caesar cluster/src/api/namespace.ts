@@ -84,9 +84,11 @@ export const adminNamespaceApi = {
   },
 
   // ลบทั้ง space — service/รีวิว/คอนเทนเนอร์ในนั้นถูกลบตาม ส่วนสมาชิกแค่หลุดออกจาก space ไม่ถูกลบบัญชี
-  remove: async (id: number) => {
-    const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(
+  // reason บังคับ — backend ส่งทางอีเมลถึงสมาชิกทุกคน (notified = จำนวนคนที่ถูกส่งแจ้ง)
+  remove: async (id: number, reason: string) => {
+    const response = await axiosClient.delete<ApiResponse<{ deleted: number; notified: number }>>(
       `/admin/namespaces/${id}`,
+      { data: { reason } },
     );
     return response.data.data;
   },

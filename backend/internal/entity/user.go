@@ -12,7 +12,6 @@ type User struct {
 	StudentID   string `gorm:"column:student_id;type:varchar(20);unique;not null" json:"student_id"`
 	RoleID      int    `gorm:"column:role_id;type:integer;not null;index:idx_users_role" json:"role_id"`
 	RealName    string `gorm:"column:real_name;type:varchar(100);not null" json:"real_name"`
-	NickName    string `gorm:"column:nick_name;type:varchar(50)" json:"nick_name"`
 	NamespaceID *int   `gorm:"column:namespace_id;type:integer;index:idx_users_namespace" json:"namespace_id"`
 	Password    string `gorm:"column:password;type:varchar(255);not null" json:"-"`
 	Gmail       string `gorm:"column:gmail;type:varchar(100);unique;not null" json:"gmail"`

@@ -9,7 +9,6 @@ type RegisterRequest struct {
 	StudentID string `json:"student_id" binding:"required"`
 	RealName  string `json:"real_name" binding:"required"`
 	Gmail     string `json:"gmail" binding:"required,email"`
-	NickName  string `json:"nick_name"`
 	Password  string `json:"password" binding:"required,min=8"`
 }
 
@@ -40,7 +39,6 @@ type UpdateUserRequest struct {
 	StudentID *string `json:"student_id"`
 	RealName  *string `json:"real_name"`
 	Gmail     *string `json:"gmail" binding:"omitempty,email"`
-	NickName  *string `json:"nick_name"`
 	Year      *int    `json:"year"`
 	RoleID    *int    `json:"role_id"`
 }
@@ -57,6 +55,17 @@ type ForgotPasswordRequest struct {
 type ResetPasswordRequest struct {
 	Token       string `json:"token" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
+// UpdateProfileRequest = body ของ PATCH /api/me
+type UpdateProfileRequest struct {
+	RealName string `json:"real_name" binding:"required,max=100"`
+}
+
+// ChangePasswordRequest = body ของ POST /api/me/password
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=8"`
 }
 
 // UserWithYearLevel = entity.User + ชั้นปีที่คำนวณสดจาก student_id (entity.YearLevel)

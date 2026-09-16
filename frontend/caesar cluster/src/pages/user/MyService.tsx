@@ -22,7 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { ServiceCardsSkeleton } from "@/components/ui/PageSkeletons";
 import GroupMembers from "@/components/GroupMembers";
-import { serviceApi, isSettled, type AppService } from "@/api/services";
+import { serviceApi, isSettled, hasStorage, type AppService } from "@/api/services";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
@@ -63,6 +63,7 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ENV_VARS = 20;
 
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+const floorTo = (v: number, step: number) => Math.floor(v / step) * step;
 
 function formatCores(milli: number) {
   return `${(milli / 1000).toFixed(1)} cores`;
@@ -177,7 +178,7 @@ function statusAdvice(svc: AppService): string | null {
   return null;
 }
 
-export default function RequestQuotar() {
+export default function MyService() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const [services, setServices] = useState<AppService[]>([]);
@@ -322,6 +323,8 @@ export default function RequestQuotar() {
             // ระหว่าง status=creating ตัว provisioner ยังถือสเปกเดิม แทรก scale ตอนนั้นแล้ว
             // คลัสเตอร์จะได้จำนวนเก่าแต่ DB บอกจำนวนใหม่ — backend ปฏิเสธอยู่แล้ว ตรงนี้กันไม่ให้กดไปเจอ error เปล่าๆ
             const canScale = svc.status === "running";
+            // มีดิสก์ (รวม database) = 1 pod ตลอดชีวิต และลบแล้วข้อมูลหาย — แยกจาก is_database ที่บอกแค่เรื่องเครือข่าย
+            const withDisk = hasStorage(svc);
 
             return (
               <div
@@ -422,7 +425,7 @@ export default function RequestQuotar() {
                       ? `${(svc.ram_mb / 1024).toFixed(1)} GB`
                       : `${svc.ram_mb} MB`}
                   </div>
-                  {svc.is_database ? (
+                  {withDisk ? (
                     <div className="flex items-center gap-1.5" title="ดิสก์ถาวร">
                       <HardDrive size={16} className="text-[#BB6653]" />
                       {formatStorage(svc.storage_mb)}
@@ -461,16 +464,20 @@ export default function RequestQuotar() {
                 )}
 
                 {/* เพิ่มตัวรับโหลดตอนคนใช้เยอะ — กินสเปกต่อ Pod x จำนวนนี้ ระบบเช็คโควตากลุ่มให้ก่อนทุกครั้ง
-                    database ปรับไม่ได้เลย จึงเอา dropdown ออกไปพร้อมบอกเหตุผล ไม่ใช่ทิ้งช่องจางๆ
-                    ที่กดไม่ได้ไว้ให้คนสงสัยว่าตัวเองทำอะไรผิด */}
+                    service ที่มีดิสก์ (รวม database) ปรับไม่ได้เลย จึงเอา dropdown ออกไปพร้อมบอกเหตุผล
+                    ไม่ใช่ทิ้งช่องจางๆ ที่กดไม่ได้ไว้ให้คนสงสัยว่าตัวเองทำอะไรผิด */}
                 <div className="flex items-center justify-between gap-2 text-sm">
                   <span className="flex items-center gap-1.5 text-[#211a14]/50">
                     <Copy size={16} className="text-[#BB6653]" /> Replicas
                   </span>
-                  {svc.is_database ? (
+                  {withDisk ? (
                     <span
                       className="text-[#211a14]/45"
-                      title="ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย"
+                      title={
+                        svc.is_database
+                          ? "ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย"
+                          : "ดิสก์ถาวรใช้ได้ทีละ pod — เพิ่มจำนวนแล้วสอง pod จะเขียนดิสก์ก้อนเดียวกันจนข้อมูลพัง"
+                      }
                     >
                       1 pod &middot; ปรับไม่ได้
                     </span>
@@ -496,12 +503,13 @@ export default function RequestQuotar() {
 
                 {isConfirming ? (
                   <div className="flex flex-col gap-2 pt-1">
-                    {/* ลบ database = ลบ PVC ตามไปด้วย ข้อมูลข้างในหายถาวร กู้ไม่ได้
+                    {/* ลบ service ที่มีดิสก์ = ลบ PVC ตามไปด้วย ข้อมูลข้างในหายถาวร กู้ไม่ได้ (ไม่มี backup)
                         ต้องเตือนคนละระดับกับการลบ nginx ที่สร้างใหม่ได้ใน 10 วินาที */}
-                    {svc.is_database && (
+                    {withDisk && (
                       <p className="flex items-start gap-1.5 text-sm text-red-600">
                         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                        ข้อมูลทั้งหมดในฐานข้อมูลนี้ ({formatStorage(svc.storage_mb)}) จะถูกลบถาวร กู้คืนไม่ได้
+                        {svc.is_database ? "ข้อมูลทั้งหมดในฐานข้อมูลนี้" : "ไฟล์ทั้งหมดในดิสก์ของ service นี้"}{" "}
+                        ({formatStorage(svc.storage_mb)}) จะถูกลบถาวร กู้คืนไม่ได้
                       </p>
                     )}
                     <div className="flex items-center gap-2">
@@ -685,10 +693,15 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const [envNotice, setEnvNotice] = useState<string | null>(null);
   const envFileRef = useRef<HTMLInputElement>(null);
 
-  // ── สวิตช์ database ────────────────────────────────────────────────────────
-  // ติ๊กครั้งเดียวเปลี่ยน 4 อย่างพร้อมกัน (เครือข่ายปิด + ดิสก์ถาวร + 1 pod + StatefulSet)
-  // เพราะทั้งสี่ถูกหรือผิดพร้อมกันเสมอ จึงรวมเป็นสวิตช์เดียว ไม่ใช่สี่ช่องให้ติ๊กแยก
+  // ── เครือข่าย + ดิสก์: สองสวิตช์อิสระกัน (docs 022) ─────────────────────────────
+  // isDatabase = เข้าได้เฉพาะในกลุ่ม (ไม่มี node port) · withStorage = ดิสก์ถาวร (PVC + 1 pod)
+  // เคยรวมเป็นสวิตช์เดียว แต่แอปอย่าง Nextcloud ต้องการดิสก์ถาวร "และ" ให้คนนอกเข้าได้
+  //
+  // ฐานข้อมูลต้องมีดิสก์เสมอ (backend บังคับ) จึงคิด storageOn จากทั้งสองตัว แทนการไปแก้ค่า withStorage ให้
+  // — ปิดสวิตช์ฐานข้อมูลแล้ว สวิตช์ดิสก์กลับไปเป็นค่าที่ผู้ใช้เลือกไว้เอง ไม่ต้องจำแยก
   const [isDatabase, setIsDatabase] = useState(false);
+  const [withStorage, setWithStorage] = useState(false);
+  const storageOn = isDatabase || withStorage;
   // เก็บเป็น MB เสมอ ส่วนหน่วยที่โชว์เป็นเรื่องของหน้าจอล้วนๆ ไม่เคยส่งขึ้น API
   const [storageMb, setStorageMb] = useState<number>(STORAGE_BOUNDS.defaultMB);
   const [storageUnit, setStorageUnit] = useState<StorageUnit>("GB");
@@ -698,8 +711,8 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // ตำแหน่งเก็บข้อมูลบังคับกรอกทุกครั้งที่เปิดสวิตช์ ไม่ว่าจะใช้ image อะไร
-  const dataPathError = isDatabase ? validateDataPath(dataPath) : "";
+  // ตำแหน่งเก็บข้อมูลบังคับกรอกทุกครั้งที่มีดิสก์ ไม่ว่าจะใช้ image อะไร
+  const dataPathError = storageOn ? validateDataPath(dataPath) : "";
 
   // ── โควตา: "ที่มีอยู่จริง" คือเพดานของกลุ่มหักที่ service เดิมกินไปแล้ว ────────────────
   const cpuLimit = namespace?.cpu_limit_milli ?? 0;
@@ -714,13 +727,13 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const ramAvailable = Math.max(ramLimit - ramUsed, 0);
   const storageAvailable = Math.max(storageLimit - storageUsed, 0);
 
-  // database ตรึงที่ 1 pod เสมอ — ค่าที่ใช้คิดโควตาต้องตามนั้น ไม่ใช่ค่าใน dropdown ที่ซ่อนไปแล้ว
-  const effectiveReplicas = isDatabase ? 1 : replicas;
+  // มีดิสก์ (รวม database) ตรึงที่ 1 pod เสมอ — ค่าที่ใช้คิดโควตาต้องตามนั้น ไม่ใช่ค่าใน dropdown ที่ซ่อนไปแล้ว
+  const effectiveReplicas = storageOn ? 1 : replicas;
 
   // ที่กินจริง = สเปกต่อ Pod x จำนวน Pod (0.5 core x 3 = 1.5 core) ตรงกับที่ backend คิดใน QuotaService
   const cpuTotal = cpuMilli * effectiveReplicas;
   const ramTotal = ramMb * effectiveReplicas;
-  const storageTotal = isDatabase ? storageMb : 0;
+  const storageTotal = storageOn ? storageMb : 0;
 
   // ยอดคงเหลือหลังหักตัวที่กำลังจะขอ — ติดลบเมื่อไรคือขอเกิน (backend จะตอบ ErrQuotaExceeded อยู่ดี)
   const cpuRemaining = cpuAvailable - cpuTotal;
@@ -728,7 +741,23 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const storageRemaining = storageAvailable - storageTotal;
   const overCpu = namespace !== null && cpuRemaining < 0;
   const overRam = namespace !== null && ramRemaining < 0;
-  const overStorage = namespace !== null && isDatabase && storageRemaining < 0;
+  const overStorage = namespace !== null && storageOn && storageRemaining < 0;
+
+  // เพดานแถบเลื่อน = ที่กลุ่มเหลือ ÷ จำนวน pod (ไม่เกินเพดานต่อ service) — ต่ำกว่าค่าขั้นต่ำ = ใช้เต็มแล้ว
+  const cpuFit = namespace ? floorTo(cpuAvailable / effectiveReplicas, 100) : MAX_CPU_MILLI;
+  const ramFit = namespace ? floorTo(ramAvailable / effectiveReplicas, 128) : MAX_RAM_MB;
+  const storageFit = namespace ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB) : STORAGE_BOUNDS.maxMB;
+  const cpuFull = cpuFit < MIN_CPU_MILLI;
+  const ramFull = ramFit < MIN_RAM_MB;
+  const storageFull = storageFit < STORAGE_BOUNDS.minMB;
+  const cpuMax = clamp(cpuFit, MIN_CPU_MILLI, MAX_CPU_MILLI);
+  const ramMax = clamp(ramFit, MIN_RAM_MB, MAX_RAM_MB);
+  const storageMax = clamp(storageFit, STORAGE_BOUNDS.minMB, STORAGE_BOUNDS.maxMB);
+
+  // เพดานลดลง (โหลดโควตาเสร็จ / เพิ่ม replica) ค่าที่เลือกไว้ต้องลดตาม
+  useEffect(() => setCpuMilli((v) => Math.min(v, cpuMax)), [cpuMax]);
+  useEffect(() => setRamMb((v) => Math.min(v, ramMax)), [ramMax]);
+  useEffect(() => setStorageMb((v) => Math.min(v, storageMax)), [storageMax]);
 
   const buildEnvMap = () => {
     const env: Record<string, string> = {};
@@ -756,11 +785,11 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
     !overCpu &&
     !overRam &&
     !overStorage &&
-    // เปิดสวิตช์แล้วต้องบอกตำแหน่งเก็บข้อมูลที่ใช้ได้ก่อน ไม่งั้น backend ตีกลับอยู่ดี
-    (!isDatabase || dataPathError === "");
+    // มีดิสก์แล้วต้องบอกตำแหน่งเก็บข้อมูลที่ใช้ได้ก่อน ไม่งั้น backend ตีกลับอยู่ดี
+    (!storageOn || dataPathError === "");
 
   // บอกเหตุผลข้างปุ่มแทนที่จะปล่อยให้ปุ่มเทาเฉยๆ แล้วผู้ใช้เดาเอง
-  const blockedReason = !isDatabase
+  const blockedReason = !storageOn
     ? null
     : dataPathError
       ? dataPathError
@@ -827,9 +856,8 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
         container_port: portNumber,
         replicas: effectiveReplicas,
         is_database: isDatabase,
-        // ส่งเฉพาะตอนเป็น database — ส่งมาตอนไม่ใช่ backend ตอบ STORAGE_NOT_ALLOWED
-        ...(isDatabase ? { storage_mb: storageMb } : {}),
-        ...(isDatabase ? { data_path: dataPath.trim() } : {}),
+        // ส่งเฉพาะตอนมีดิสก์ — backend ถือว่าส่ง storage_mb หรือ data_path มาเมื่อไหร่คือขอดิสก์ทันที
+        ...(storageOn ? { storage_mb: storageMb, data_path: dataPath.trim() } : {}),
       });
       onCreated(svc);
     } catch (err) {
@@ -975,29 +1003,60 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               </span>
               <span className="text-sm text-[#211a14]/50">
                 {isDatabase
-                  ? "ข้อมูลจะไม่หายเวลา restart และเปิดให้เฉพาะ service ในกลุ่มของคุณ"
-                  : "ปิดอยู่ — deploy แบบปกติ เข้าถึงได้จากนอกระบบ"}
+                  ? "เปิดให้เฉพาะ service ในกลุ่มของคุณ ไม่มีพอร์ตให้คนนอกเข้า และมีดิสก์ถาวรเสมอ"
+                  : "ปิดอยู่ — เข้าถึงได้จากนอกระบบผ่านพอร์ตที่ระบบจ่ายให้"}
               </span>
             </span>
-            <span
-              className={cn(
-                "relative h-7 w-12 shrink-0 rounded-full transition-colors",
-                isDatabase ? "bg-[#BB6653]" : "bg-black/15",
-              )}
-            >
+            <SwitchKnob on={isDatabase} />
+          </button>
+
+          {/* ── สวิตช์ดิสก์ถาวร ─────────────────────────────────────────────────
+              แยกจากสวิตช์ฐานข้อมูลเพราะแอปอย่าง Nextcloud/WordPress ต้องเก็บไฟล์ผู้ใช้ถาวร แต่ต้องเปิด
+              ให้คนนอกเข้าได้ (docs 022) · ฐานข้อมูลมีดิสก์เสมอ จึงล็อกเปิดพร้อมบอกเหตุผล ไม่ซ่อนทิ้ง
+              — ผู้ใช้ต้องเห็นว่ามีดิสก์อยู่ ถึงจะเข้าใจว่าทำไมต้องกรอกตำแหน่งเก็บข้อมูลด้านล่าง
+              ข้อความตอนปิดเตือนเรื่องที่เจอจริง: image ที่มี VOLUME ดูเหมือนเก็บไฟล์ได้ แต่หายเมื่อ pod ถูกสร้างใหม่ */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={storageOn}
+            disabled={submitting || isDatabase}
+            onClick={() => setWithStorage((v) => !v)}
+            className={cn(
+              "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-colors",
+              storageOn
+                ? "border-[#BB6653] bg-[#FBDFDA]"
+                : "border-black/10 bg-white hover:border-[#BB6653]/30",
+              isDatabase && "cursor-not-allowed",
+              submitting && "opacity-60",
+            )}
+          >
+            <HardDrive
+              size={20}
+              className={cn("shrink-0", storageOn ? "text-[#BB6653]" : "text-[#211a14]/30")}
+            />
+            <span className="flex min-w-0 flex-1 flex-col">
               <span
-                className={cn(
-                  "absolute top-1 size-5 rounded-full bg-white shadow transition-all",
-                  isDatabase ? "left-6" : "left-1",
-                )}
-              />
+                className={cn("text-base font-bold", storageOn ? "text-[#BB6653]" : "text-[#211a14]")}
+              >
+                ดิสก์ถาวร
+              </span>
+              <span className="text-sm text-[#211a14]/50">
+                {isDatabase
+                  ? "ฐานข้อมูลมีดิสก์ถาวรเสมอ — ปิดสวิตช์นี้ไม่ได้"
+                  : storageOn
+                    ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
+                    : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ (Nextcloud, WordPress) จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+              </span>
             </span>
+            {isDatabase && <Lock size={16} className="shrink-0 text-[#BB6653]" />}
+            <SwitchKnob on={storageOn} />
           </button>
 
           {/* ── ตำแหน่งเก็บข้อมูล ────────────────────────────────────────────────
               กรอกผิดคือเคสที่อันตรายที่สุดของฟีเจอร์นี้: deploy สำเร็จและดิสก์ถูกจอง แต่ image
-              เขียนลงที่อื่น ข้อมูลหายตอน restart แบบไม่มีสัญญาณเตือน คำอธิบายใต้ช่องจึงต้องพูดตรงๆ */}
-          {isDatabase && (
+              เขียนลงที่อื่น ข้อมูลหายตอน restart แบบไม่มีสัญญาณเตือน คำอธิบายใต้ช่องจึงต้องพูดตรงๆ
+              ตัวอย่างเปลี่ยนตามสวิตช์ฐานข้อมูล — คนทำ Nextcloud ไม่ได้มองหา path ของ PostgreSQL */}
+          {storageOn && (
             <div className="flex flex-col gap-2">
               <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
                 ตำแหน่งที่ image นี้เก็บข้อมูล
@@ -1013,7 +1072,7 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   value={dataPath}
                   onChange={(e) => setDataPath(e.target.value)}
                   disabled={submitting}
-                  placeholder="/var/lib/mydb"
+                  placeholder={isDatabase ? "/var/lib/mydb" : "/var/www/html"}
                   spellCheck={false}
                   className="w-full bg-transparent font-mono text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
                 />
@@ -1026,7 +1085,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               >
                 {dataPath.trim() !== "" && dataPathError
                   ? dataPathError
-                  : "ดูได้จากเอกสารของ image เช่น PostgreSQL ใช้ /var/lib/postgresql/data, MySQL ใช้ /var/lib/mysql — ถ้ากรอกผิด ระบบจะ deploy สำเร็จแต่ข้อมูลจะไม่ถูกเก็บและหายเมื่อ restart"}
+                  : isDatabase
+                    ? "ดูได้จากเอกสารของ image เช่น PostgreSQL ใช้ /var/lib/postgresql/data, MySQL ใช้ /var/lib/mysql — ถ้ากรอกผิด ระบบจะ deploy สำเร็จแต่ข้อมูลจะไม่ถูกเก็บและหายเมื่อ restart"
+                    : "ดูได้จากเอกสารของ image เช่น Nextcloud ใช้ /var/www/html, WordPress ใช้ /var/www/html/wp-content — ถ้ากรอกผิด ระบบจะ deploy สำเร็จแต่ไฟล์จะไม่ถูกเก็บและหายเมื่อ restart"}
               </p>
             </div>
           )}
@@ -1055,13 +1116,13 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     type="number"
                     step="0.1"
                     min={MIN_CPU_MILLI / 1000}
-                    max={MAX_CPU_MILLI / 1000}
+                    max={cpuMax / 1000}
                     value={(cpuMilli / 1000).toFixed(1)}
-                    disabled={submitting}
+                    disabled={submitting || cpuFull}
                     onChange={(e) => {
                       const cores = Number(e.target.value);
                       if (!Number.isFinite(cores)) return;
-                      setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, MAX_CPU_MILLI));
+                      setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, cpuMax));
                     }}
                     className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
@@ -1071,13 +1132,14 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               <input
                 type="range"
                 min={MIN_CPU_MILLI}
-                max={MAX_CPU_MILLI}
+                max={cpuMax}
                 step={100}
                 value={cpuMilli}
-                disabled={submitting}
+                disabled={submitting || cpuFull}
                 onChange={(e) => setCpuMilli(Number(e.target.value))}
                 className="w-full accent-[#BB6653] disabled:opacity-50"
               />
+              {cpuFull && <p className="text-sm text-red-500">CPU ของกลุ่มถูกใช้เต็มแล้ว</p>}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -1090,13 +1152,13 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     type="number"
                     step="128"
                     min={MIN_RAM_MB}
-                    max={MAX_RAM_MB}
+                    max={ramMax}
                     value={ramMb}
-                    disabled={submitting}
+                    disabled={submitting || ramFull}
                     onChange={(e) => {
                       const mb = Number(e.target.value);
                       if (!Number.isFinite(mb)) return;
-                      setRamMb(clamp(Math.round(mb), MIN_RAM_MB, MAX_RAM_MB));
+                      setRamMb(clamp(Math.round(mb), MIN_RAM_MB, ramMax));
                     }}
                     className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
@@ -1106,18 +1168,19 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               <input
                 type="range"
                 min={MIN_RAM_MB}
-                max={MAX_RAM_MB}
+                max={ramMax}
                 step={128}
                 value={ramMb}
-                disabled={submitting}
+                disabled={submitting || ramFull}
                 onChange={(e) => setRamMb(Number(e.target.value))}
                 className="w-full accent-[#BB6653] disabled:opacity-50"
               />
+              {ramFull && <p className="text-sm text-red-500">Memory ของกลุ่มถูกใช้เต็มแล้ว</p>}
             </div>
 
             {/* Storage — อยู่ต่อจาก Memory เพราะหักโควตากลุ่มเหมือนกัน
                 ตัวเลือกหน่วยเปลี่ยนแค่ตัวเลขที่โชว์ ไม่ได้เปลี่ยนขนาดจริง (5 GB สลับไป MB ต้องเห็น 5120) */}
-            {isDatabase && (
+            {storageOn && (
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-2">
                   <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
@@ -1127,19 +1190,15 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     <input
                       type="number"
                       min={STORAGE_BOUNDS.minMB / UNIT_FACTOR[storageUnit]}
-                      max={STORAGE_BOUNDS.maxMB / UNIT_FACTOR[storageUnit]}
+                      max={storageMax / UNIT_FACTOR[storageUnit]}
                       step={storageUnit === "GB" ? 1 : STORAGE_BOUNDS.stepMB}
                       value={storageMb / UNIT_FACTOR[storageUnit]}
-                      disabled={submitting}
+                      disabled={submitting || storageFull}
                       onChange={(e) => {
                         const n = Number(e.target.value);
                         if (!Number.isFinite(n)) return;
                         setStorageMb(
-                          clamp(
-                            Math.round(n * UNIT_FACTOR[storageUnit]),
-                            STORAGE_BOUNDS.minMB,
-                            STORAGE_BOUNDS.maxMB,
-                          ),
+                          clamp(Math.round(n * UNIT_FACTOR[storageUnit]), STORAGE_BOUNDS.minMB, storageMax),
                         );
                       }}
                       className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
@@ -1158,32 +1217,36 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                 <input
                   type="range"
                   min={STORAGE_BOUNDS.minMB}
-                  max={STORAGE_BOUNDS.maxMB}
+                  max={storageMax}
                   step={STORAGE_BOUNDS.stepMB}
                   value={storageMb}
-                  disabled={submitting}
+                  disabled={submitting || storageFull}
                   onChange={(e) => setStorageMb(Number(e.target.value))}
                   className="w-full accent-[#BB6653] disabled:opacity-50"
                 />
-                <p className="text-sm text-[#211a14]/40">
-                  พื้นที่เก็บข้อมูลของฐานข้อมูลนี้ เพิ่มทีหลังได้แต่ลดไม่ได้
+                <p className={cn("text-sm", storageFull ? "text-red-500" : "text-[#211a14]/40")}>
+                  {storageFull
+                    ? "พื้นที่เก็บข้อมูลของกลุ่มเหลือไม่พอสร้างฐานข้อมูลใหม่"
+                    : "พื้นที่เก็บข้อมูลของฐานข้อมูลนี้ เพิ่มทีหลังได้แต่ลดไม่ได้"}
                 </p>
               </div>
             )}
 
             {/* จำนวน Pod ที่รันขนานกัน เอาไว้รองรับโหลด/ทำ HA — ทรัพยากรถูกคูณตามจำนวนนี้
                 แต่ไม่กระทบเพดานต่อ service เพราะมันคือการทำซ้ำ Pod
-                database เอา dropdown ออกไปเลยพร้อมบอกเหตุผล ไม่ทิ้งช่องจางๆ ที่กดไม่ได้ไว้
+                มีดิสก์ (รวม database) เอา dropdown ออกไปเลยพร้อมบอกเหตุผล ไม่ทิ้งช่องจางๆ ที่กดไม่ได้ไว้
                 เพราะช่องที่กดไม่ได้ทำให้คนสงสัยว่าตัวเองทำอะไรผิด */}
             <div className="flex items-center justify-between gap-2">
               <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
                 <Copy size={14} className="text-[#BB6653]" /> Replicas
               </label>
-              {isDatabase ? (
+              {storageOn ? (
                 <span className="text-right text-sm text-[#211a14]/45">
                   <span className="font-bold text-[#211a14]/70">1 pod</span>
                   <br />
-                  ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย
+                  {isDatabase
+                    ? "ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย"
+                    : "ดิสก์ถาวรใช้ได้ทีละ pod — สอง pod เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง"}
                 </span>
               ) : (
                 <select
@@ -1193,7 +1256,15 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   className="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
                 >
                   {REPLICA_CHOICES.map((n) => (
-                    <option key={n} value={n}>
+                    <option
+                      key={n}
+                      value={n}
+                      // ใช้สเปกต่ำสุดแล้วยังเกินโควตา = เลือกไม่ได้
+                      disabled={
+                        namespace !== null &&
+                        (n * MIN_CPU_MILLI > cpuAvailable || n * MIN_RAM_MB > ramAvailable)
+                      }
+                    >
                       {n} {n === 1 ? "pod" : "pods"}
                     </option>
                   ))}
@@ -1206,7 +1277,7 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                 <div
                   className={cn(
                     "grid gap-x-5 gap-y-2 text-sm",
-                    isDatabase
+                    storageOn
                       ? "grid-cols-[1fr_auto_auto_auto]"
                       : "grid-cols-[1fr_auto_auto]",
                   )}
@@ -1214,14 +1285,14 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   <span className="font-bold uppercase tracking-wider text-[#211a14]/35">Summary</span>
                   <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">CPU</span>
                   <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Memory</span>
-                  {isDatabase && (
+                  {storageOn && (
                     <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Disk</span>
                   )}
 
                   <span className="text-[#211a14]/55">Group quota</span>
                   <span className="text-right text-[#211a14]/70">{formatCores(cpuLimit)}</span>
                   <span className="text-right text-[#211a14]/70">{formatRam(ramLimit)}</span>
-                  {isDatabase && (
+                  {storageOn && (
                     <span className="text-right text-[#211a14]/70">{formatStorage(storageLimit)}</span>
                   )}
 
@@ -1231,7 +1302,7 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   </span>
                   <span className="text-right text-[#211a14]/70">- {formatCores(cpuUsed)}</span>
                   <span className="text-right text-[#211a14]/70">- {formatRam(ramUsed)}</span>
-                  {isDatabase && (
+                  {storageOn && (
                     <span className="text-right text-[#211a14]/70">- {formatStorage(storageUsed)}</span>
                   )}
 
@@ -1246,7 +1317,7 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   </span>
                   <span className="text-right text-[#BB6653]">- {formatCores(cpuTotal)}</span>
                   <span className="text-right text-[#BB6653]">- {formatRam(ramTotal)}</span>
-                  {isDatabase && (
+                  {storageOn && (
                     <span className="text-right text-[#BB6653]">- {formatStorage(storageTotal)}</span>
                   )}
 
@@ -1269,7 +1340,7 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   >
                     {formatRam(ramRemaining)}
                   </span>
-                  {isDatabase && (
+                  {storageOn && (
                     <span
                       className={cn(
                         "border-t border-black/5 pt-2 text-right font-bold",
@@ -1437,5 +1508,24 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
 
       </div>
     </div>
+  );
+}
+
+// ปุ่มเลื่อนของสวิตช์ในฟอร์ม — ใช้ร่วมกันระหว่างสวิตช์ฐานข้อมูลกับสวิตช์ดิสก์ถาวร
+function SwitchKnob({ on }: { on: boolean }) {
+  return (
+    <span
+      className={cn(
+        "relative h-7 w-12 shrink-0 rounded-full transition-colors",
+        on ? "bg-[#BB6653]" : "bg-black/15",
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-1 size-5 rounded-full bg-white shadow transition-all",
+          on ? "left-6" : "left-1",
+        )}
+      />
+    </span>
   );
 }

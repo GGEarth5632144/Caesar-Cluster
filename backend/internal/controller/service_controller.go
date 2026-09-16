@@ -94,13 +94,11 @@ func (h *ServiceController) Create(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
 		case errors.Is(err, services.ErrRequestTemplateNotFound):
 			utils.Error(c, http.StatusBadRequest, "TEMPLATE_NOT_FOUND", err.Error())
-		// สวิตช์ database — ทั้งสามผู้ใช้แก้เองได้ จึงเป็น 400 และแยก code เพราะหน้าเว็บจัดการคนละแบบ
+		// ดิสก์ถาวร — ทั้งสองผู้ใช้แก้เองได้ จึงเป็น 400 และแยก code เพราะหน้าเว็บจัดการคนละแบบ
 		case errors.Is(err, services.ErrDataPathRequired):
 			utils.Error(c, http.StatusBadRequest, "DATA_PATH_REQUIRED", err.Error())
-		case errors.Is(err, services.ErrDatabaseReplicas):
-			utils.Error(c, http.StatusBadRequest, "DATABASE_SINGLE_REPLICA", err.Error())
-		case errors.Is(err, services.ErrStorageNotAllowed):
-			utils.Error(c, http.StatusBadRequest, "STORAGE_NOT_ALLOWED", err.Error())
+		case errors.Is(err, services.ErrStorageReplicas):
+			utils.Error(c, http.StatusBadRequest, "STORAGE_SINGLE_REPLICA", err.Error())
 		default:
 			log.Printf("create service error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "deploy ไม่สำเร็จ")
@@ -144,9 +142,9 @@ func (h *ServiceController) Scale(c *gin.Context) {
 			utils.Error(c, http.StatusConflict, "QUOTA_EXCEEDED", err.Error())
 		case errors.Is(err, services.ErrServiceTooLarge):
 			utils.Error(c, http.StatusBadRequest, "SERVICE_TOO_LARGE", err.Error())
-		// database ปรับจำนวน Pod ไม่ได้เลย — หน้าเว็บซ่อน dropdown ให้อยู่แล้ว แต่เส้นนี้เรียกตรงได้
-		case errors.Is(err, services.ErrDatabaseReplicas):
-			utils.Error(c, http.StatusBadRequest, "DATABASE_SINGLE_REPLICA", err.Error())
+		// service ที่มีดิสก์ (รวม database) ปรับจำนวน Pod ไม่ได้ — หน้าเว็บซ่อน dropdown ให้อยู่แล้ว แต่เส้นนี้เรียกตรงได้
+		case errors.Is(err, services.ErrStorageReplicas):
+			utils.Error(c, http.StatusBadRequest, "STORAGE_SINGLE_REPLICA", err.Error())
 		default:
 			log.Printf("scale service error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ปรับจำนวน replica ไม่สำเร็จ")
@@ -230,6 +228,8 @@ func (h *ServiceController) Logs(c *gin.Context) {
 		switch {
 		case errors.Is(err, services.ErrServiceNotFound):
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case errors.Is(err, services.ErrLogsUnavailable):
+			utils.Error(c, http.StatusConflict, "LOGS_UNAVAILABLE", err.Error())
 		default:
 			log.Printf("stream logs error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ดึง log ไม่สำเร็จ")

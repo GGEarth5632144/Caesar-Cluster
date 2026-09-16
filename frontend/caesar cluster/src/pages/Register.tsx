@@ -69,7 +69,6 @@ export default function Register() {
       const result = await authApi.register({
         student_id: values.student_id,
         real_name: `${values.first_name} ${values.last_name}`.trim(),
-        nick_name: values.last_name,
         gmail: values.gmail,
         password: values.password,
       });

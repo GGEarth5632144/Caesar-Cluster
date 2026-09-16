@@ -238,6 +238,153 @@ func testAppSvc() *entity.Service {
 	}
 }
 
+// testWebDiskSvc = web ที่มีดิสก์ถาวรแต่ไม่ใช่ database — แบบ Nextcloud ที่เก็บไฟล์ผู้ใช้ใน /var/www/html (docs 022)
+func testWebDiskSvc() *entity.Service {
+	return &entity.Service{
+		ID: 8, Name: "nextcloud", Image: "nextcloud:apache",
+		CPUMilli: 500, RAMMB: 512, ContainerPort: 80, Replicas: 1,
+		StorageMB: 5120, DataPath: "/var/www/html",
+	}
+}
+
+// fakeNodePorts ให้ fake API จ่ายเลข NodePort ก่อน object ถูกเก็บ เหมือนที่ apiserver จริงทำ
+// fake ไม่มีตัวจ่าย — ไม่เติมให้ createNodePortService จะถือว่าช่วงพอร์ตเต็มแล้วคืน error
+func fakeNodePorts(cs *fake.Clientset, port int32) {
+	cs.PrependReactor("create", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		s := action.(k8stesting.CreateAction).GetObject().(*corev1.Service)
+		if s.Spec.Type == corev1.ServiceTypeNodePort {
+			s.Spec.Ports[0].NodePort = port
+		}
+		return false, nil, nil
+	})
+}
+
+// TestK8sDeployWebWithStorage — web ที่มีดิสก์ต้องได้ทั้งดิสก์ (StatefulSet + PVC) และทางเข้าจากนอก (NodePort)
+//
+// สองอย่างนี้เคยผูกกับสวิตช์ database จนได้แค่อย่างเดียว: เปิดสวิตช์ = มีดิสก์แต่คนนอกเข้าไม่ได้,
+// ไม่เปิด = เข้าได้แต่ไฟล์ที่ผู้ใช้อัปโหลดอยู่บนดิสก์ชั่วคราวของ node หายตอน pod ถูกสร้างใหม่ (docs 022)
+func TestK8sDeployWebWithStorage(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	fakeNodePorts(cs, 30456)
+	ctx := context.Background()
+	svc := testWebDiskSvc()
+
+	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
+		t.Fatalf("DeployService: %v", err)
+	}
+	if svc.NodePort == nil || *svc.NodePort != 30456 {
+		t.Fatalf("web ที่มีดิสก์ต้องได้ NodePort ที่คลัสเตอร์จ่ายกลับมา ได้ %v", svc.NodePort)
+	}
+
+	sts, err := cs.AppsV1().StatefulSets("ns-7").Get(ctx, "nextcloud", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("มีดิสก์ต้องเป็น StatefulSet: %v", err)
+	}
+	if got := *sts.Spec.Replicas; got != 1 {
+		t.Errorf("replicas = %d ต้องเป็น 1", got)
+	}
+	if len(sts.Spec.VolumeClaimTemplates) != 1 {
+		t.Fatalf("ต้องมี volumeClaimTemplate 1 อัน ได้ %d", len(sts.Spec.VolumeClaimTemplates))
+	}
+	if sc := sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc == nil || *sc != "caesar-nfs" {
+		t.Errorf("PVC ต้องระบุ storageClassName caesar-nfs ได้ %v", sc)
+	}
+	disk := sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]
+	if disk.Value() != 5120<<20 {
+		t.Errorf("ขนาดดิสก์ = %s ต้องเป็น 5Gi", disk.String())
+	}
+	c := sts.Spec.Template.Spec.Containers[0]
+	if len(c.VolumeMounts) != 1 || c.VolumeMounts[0].MountPath != "/var/www/html" {
+		t.Errorf("ดิสก์ต้อง mount ที่ data_path ได้ %+v", c.VolumeMounts)
+	}
+
+	k8sSvc, err := cs.CoreV1().Services("ns-7").Get(ctx, "nextcloud", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Service ต้องถูกสร้าง: %v", err)
+	}
+	if k8sSvc.Spec.Type != corev1.ServiceTypeNodePort {
+		t.Errorf("web ที่มีดิสก์ต้องเป็น NodePort ได้ %s", k8sSvc.Spec.Type)
+	}
+	if _, err := cs.NetworkingV1().NetworkPolicies("ns-7").Get(ctx, networkPolicyName("nextcloud"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Error("web ที่มีดิสก์ต้องไม่มี NetworkPolicy (ไม่งั้น NodePort เข้าไม่ได้)")
+	}
+	if _, err := cs.AppsV1().Deployments("ns-7").Get(ctx, "nextcloud", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Error("มีดิสก์ต้องไม่สร้าง Deployment (สอง pod จะแย่งดิสก์ก้อนเดียวกันตอน rollout)")
+	}
+}
+
+// TestK8sDeployWebWithStorageCleansUpOnFailure — NodePort (ชิ้นสุดท้าย) พังต้องถอน StatefulSet ที่สร้างไปแล้วด้วย
+func TestK8sDeployWebWithStorageCleansUpOnFailure(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ctx := context.Background()
+	cs.PrependReactor("create", "services", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("ช่วง NodePort เต็ม")
+	})
+	svc := testWebDiskSvc()
+
+	if err := k.DeployService(ctx, "ns-7", svc); err == nil {
+		t.Fatal("ต้องคืน error เมื่อสร้างไม่ครบ")
+	}
+	if svc.NodePort != nil {
+		t.Errorf("พังแล้วต้องไม่มี NodePort ค้างใน struct ได้ %d", *svc.NodePort)
+	}
+	if _, err := cs.AppsV1().StatefulSets("ns-7").Get(ctx, "nextcloud", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Error("StatefulSet ที่สร้างค้างต้องถูกถอนออก")
+	}
+}
+
+// TestK8sDeleteWebWithStorageRemovesDisk — ลบ web ที่มีดิสก์ต้องเก็บ PVC ด้วย (โควตาดิสก์ถึงจะคืนจริง)
+// และต้องไม่พังเพราะไปหา NetworkPolicy ที่ web ไม่เคยมี
+func TestK8sDeleteWebWithStorageRemovesDisk(t *testing.T) {
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName("nextcloud"), Namespace: "ns-7"}}
+	k, cs := newFakeProvisioner(pvc)
+	fakeNodePorts(cs, 30456)
+	ctx := context.Background()
+	svc := testWebDiskSvc()
+
+	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
+		t.Fatalf("DeployService: %v", err)
+	}
+	if err := k.DeleteService(ctx, "ns-7", svc); err != nil {
+		t.Fatalf("DeleteService: %v", err)
+	}
+
+	checks := map[string]error{}
+	_, checks["StatefulSet"] = cs.AppsV1().StatefulSets("ns-7").Get(ctx, "nextcloud", metav1.GetOptions{})
+	_, checks["Service"] = cs.CoreV1().Services("ns-7").Get(ctx, "nextcloud", metav1.GetOptions{})
+	_, checks["PVC"] = cs.CoreV1().PersistentVolumeClaims("ns-7").Get(ctx, pvcName("nextcloud"), metav1.GetOptions{})
+	for what, err := range checks {
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("%s ต้องถูกลบ แต่ยังอยู่ (err=%v)", what, err)
+		}
+	}
+
+	if err := k.DeleteService(ctx, "ns-7", svc); err != nil {
+		t.Errorf("ลบซ้ำต้องผ่าน (idempotent) ได้ %v", err)
+	}
+}
+
+// TestK8sStatusReadsStatefulSetForWebWithStorage — Status ต้องไปดู StatefulSet ไม่ใช่ Deployment
+// ดูผิดตัวแล้วจะรายงานว่า workload หาย (NotFound) และ monitor เขียน failed ทับทั้งที่ของรันอยู่
+func TestK8sStatusReadsStatefulSetForWebWithStorage(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	fakeNodePorts(cs, 30456)
+	ctx := context.Background()
+	svc := testWebDiskSvc()
+
+	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
+		t.Fatalf("DeployService: %v", err)
+	}
+	st, err := k.Status(ctx, "ns-7", svc)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	// fake ไม่มี controller สร้าง pod ให้ — คำตอบที่ถูกคือ "ยังไม่มี pod" ไม่ใช่ "ของหาย"
+	if st.Phase == PhaseGone || st.Reason != "NoPods" {
+		t.Errorf("ต้องเห็น StatefulSet แล้วรายงานว่ายังไม่มี pod ได้ %+v", st)
+	}
+}
+
 // TestK8sDeployDatabaseIsClosedAndPersistent — สวิตช์ database ต้องออกมาเป็นของ 3 ชิ้นที่ถูกต้อง
 // ทุกชิ้น: StatefulSet ที่มีดิสก์ mount ตรงจุด, Service ที่ไม่มี NodePort, NetworkPolicy ที่รับเฉพาะ
 // namespace ตัวเอง — ข้อไหนหลุดอาการจะต่างกันคนละแบบและทุกแบบ "ดูเหมือนสำเร็จ"
@@ -330,14 +477,7 @@ func TestK8sDeployDatabaseIsClosedAndPersistent(t *testing.T) {
 func TestK8sDeployAppGetsNodePort(t *testing.T) {
 	k, cs := newFakeProvisioner()
 	ctx := context.Background()
-	// fake API ไม่มีตัวจ่าย NodePort — เติมเลขให้ก่อน object ถูกเก็บ เหมือนที่ apiserver จริงทำ
-	cs.PrependReactor("create", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		s := action.(k8stesting.CreateAction).GetObject().(*corev1.Service)
-		if s.Spec.Type == corev1.ServiceTypeNodePort {
-			s.Spec.Ports[0].NodePort = 30123
-		}
-		return false, nil, nil
-	})
+	fakeNodePorts(cs, 30123)
 	svc := testAppSvc()
 
 	if err := k.DeployService(ctx, "ns-7", svc); err != nil {
@@ -576,8 +716,8 @@ func TestK8sStatusAttachesCrashLogs(t *testing.T) {
 func TestK8sLogsStreamsFromPod(t *testing.T) {
 	ctx := context.Background()
 	k, _ := newFakeProvisioner()
-	if _, err := k.Logs(ctx, "ns-7", "web", LogOptions{}); err == nil {
-		t.Error("ไม่มี pod ต้อง error ไม่ใช่คืน stream ว่าง")
+	if _, err := k.Logs(ctx, "ns-7", "web", LogOptions{}); !errors.Is(err, ErrLogsUnavailable) {
+		t.Errorf("ไม่มี pod ต้องได้ ErrLogsUnavailable ได้: %v", err)
 	}
 
 	pod := &corev1.Pod{
@@ -593,6 +733,40 @@ func TestK8sLogsStreamsFromPod(t *testing.T) {
 	b, _ := io.ReadAll(stream)
 	if !strings.Contains(string(b), "fake logs") {
 		t.Errorf("ต้องได้ log จาก pod ได้ %q", string(b))
+	}
+}
+
+// TestLogsMergesPodsOfService ยืนยันว่าอ่าน log ครบทุก replica ของ service (และไม่ปน Pod ของ service อื่น)
+// โดยแต่ละบรรทัดถูกแปะชื่อ pod ไว้
+func TestLogsMergesPodsOfService(t *testing.T) {
+	k, cs := newFakeProvisioner()
+	ctx := context.Background()
+
+	for name, svc := range map[string]string{"web-a": "web", "web-b": "web", "db-a": "db"} {
+		_, err := cs.CoreV1().Pods("ns-7").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: "ns-7", Labels: serviceLabels(svc),
+		}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("เตรียม Pod ไม่สำเร็จ: %v", err)
+		}
+	}
+
+	stream, err := k.Logs(ctx, "ns-7", "web", LogOptions{Timestamps: true})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	defer stream.Close()
+	out, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("อ่าน stream: %v", err)
+	}
+
+	got := string(out)
+	if strings.Count(got, "\n") != 2 || !strings.Contains(got, "[web-a]") || !strings.Contains(got, "[web-b]") {
+		t.Errorf("ต้องได้ 2 บรรทัดจาก web-a กับ web-b ได้ %q", got)
+	}
+	if strings.Contains(got, "[db-a]") {
+		t.Errorf("ต้องไม่มี log ของ service อื่นปน ได้ %q", got)
 	}
 }
 

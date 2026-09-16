@@ -2,7 +2,7 @@ package dto
 
 // CreateAIReviewRequestRequest = body ของ POST /api/ai-review-requests
 //
-// RequestQuotar.tsx (handleDeployWithAI) ยิงมาที่นี่คู่ขนานกับตอนที่ยิง POST /api/review ไปที่ Cluster-AI
+// MyService.tsx (handleDeployWithAI) ยิงมาที่นี่คู่ขนานกับตอนที่ยิง POST /api/review ไปที่ Cluster-AI
 // โดยตรง — เก็บไว้เป็น "ใบเสร็จ" ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า router state หาย (refresh/เปิดลิงก์ตรง)
 // เพราะ Cluster-AI เก็บแค่สถานะ pipeline ใน memory ไม่ได้เก็บ service_name/image/cpu/ram ที่ submit มาด้วย
 //

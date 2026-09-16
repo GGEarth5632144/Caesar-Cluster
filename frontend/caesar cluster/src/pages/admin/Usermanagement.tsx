@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, UserPlus, Edit2, Trash2, Boxes, Loader2, Users } from "lucide-react";
+import { Search, UserPlus, Edit2, Trash2, Boxes, Loader2, Users, FileSpreadsheet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableRowsSkeleton, SimpleRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { AdminModal } from "@/components/ui/admin-modal";
@@ -8,9 +8,11 @@ import { userManagementApi, type User, type UpdateUserDTO } from "@/api/adminuse
 import {
   eligibleStudentsApi,
   enrollmentStatusLabel,
+  type EligibleRole,
   type EligibleStudent,
 } from "@/api/eligibleStudents";
 import { PATHS } from "@/config/routes";
+import { getApiErrorMessage } from "@/api/authApi";
 import { notify, confirmAction } from "@/lib/modal";
 import { usePageSearch } from "@/hooks/usePageSearch";
 import { usersScope } from "@/config/searchScopes";
@@ -30,6 +32,8 @@ export default function UserManagement() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   // เปิด/ปิด modal "ตรวจสอบรายชื่อผู้มีสิทธิ์"
   const [showEligibleList, setShowEligibleList] = useState(false);
+  // เปิด/ปิด modal "เพิ่มผู้มีสิทธิ์" ทีละคน
+  const [showAddEligible, setShowAddEligible] = useState(false);
 
   const fetchUsers = async () => {
     try {
@@ -127,13 +131,22 @@ export default function UserManagement() {
             ตรวจสอบรายชื่อผู้มีสิทธิ์
           </button>
           
-          {/* ปุ่มเพิ่ม (ปุ่มหลัก สีทึบ) — พาไปหน้า Import Students เพื่ออัปโหลดไฟล์รายชื่อจากทะเบียน */}
+          {/* Import ทั้งไฟล์ — พาไปหน้า Import Students เพื่ออัปโหลดไฟล์รายชื่อจากทะเบียน */}
           <button
             onClick={() => navigate(`/${PATHS.adminImportStudents}`)}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] bg-transparent px-5 py-2 text-base font-bold text-[#BB6653] shadow-sm hover:bg-[#BB6653]/10 transition-colors"
+          >
+            <FileSpreadsheet size={20} />
+            Import จากไฟล์
+          </button>
+
+          {/* ปุ่มหลัก — เพิ่มผู้มีสิทธิ์ทีละคน สำหรับคนที่ตกหล่นจากไฟล์ทะเบียน */}
+          <button
+            onClick={() => setShowAddEligible(true)}
             className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-2.5 text-base font-bold text-white shadow-sm hover:bg-[#F08B51] transition-colors"
           >
             <UserPlus size={20} />
-            เพิ่มรายชื่อผู้มีสิทธิ์
+            เพิ่มผู้มีสิทธิ์
           </button>
         </div>
       </div>
@@ -163,10 +176,11 @@ export default function UserManagement() {
         <div className="-mx-6 overflow-x-auto sm:mx-0">
           <table className="w-full min-w-[800px] table-fixed text-left text-base text-[#211a14]">
             <colgroup>
-              <col className="w-[30%]" />
-              <col className="w-[25%]" />
-              <col className="w-[20%]" />
-              <col className="w-[15%]" />
+              <col className="w-[28%]" />
+              <col className="w-[23%]" />
+              <col className="w-[19%]" />
+              <col className="w-[10%]" />
+              <col className="w-[10%]" />
               <col className="w-[10%]" />
             </colgroup>
             <thead>
@@ -174,16 +188,17 @@ export default function UserManagement() {
                 <th className="px-6 pb-4 sm:px-3">Student Info</th>
                 <th className="px-3 pb-4">Contact</th>
                 <th className="px-3 pb-4">Namespace</th>
-                <th className="px-3 pb-4 text-center">Role / Year</th>
+                <th className="px-3 pb-4 text-center">Role</th>
+                <th className="px-3 pb-4 text-center">Year</th>
                 <th className="px-6 pb-4 text-center sm:px-3">Action</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <TableRowsSkeleton rows={6} cols={5} />
+                <TableRowsSkeleton rows={6} cols={6} />
               ) : error ? (
                 <tr>
-                  <td colSpan={5} className="py-10">
+                  <td colSpan={6} className="py-10">
                     <div className="p-4 mx-auto max-w-sm rounded-xl bg-red-50 text-center text-red-600 text-base border border-red-100">
                       {error}
                     </div>
@@ -191,7 +206,7 @@ export default function UserManagement() {
                 </tr>
               ) : filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-16 text-center text-neutral-500">
+                  <td colSpan={6} className="py-16 text-center text-neutral-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Search className="size-8 text-[#BB6653]/30" />
                       <p>
@@ -224,12 +239,7 @@ export default function UserManagement() {
                           </div>
                           <div className="min-w-0">
                             <div className="truncate font-semibold text-[#211a14]" title={user.real_name}>
-                              <Highlight text={user.real_name} terms={highlightTerms} />{" "}
-                              {user.nick_name && (
-                                <span className="text-[#211a14]/50">
-                                  (<Highlight text={user.nick_name} terms={highlightTerms} />)
-                                </span>
-                              )}
+                              <Highlight text={user.real_name} terms={highlightTerms} />
                             </div>
                             <div className="text-sm text-[#211a14]/60 mt-0.5">
                               <Highlight text={user.student_id} terms={highlightTerms} />
@@ -279,9 +289,14 @@ export default function UserManagement() {
                           </span>
                         ) : (
                           <span className="inline-flex rounded-full bg-[#FFF8E8] px-2.5 py-1 text-sm font-bold text-[#BB6653]">
-                            Year {user.year_level}
+                            User
                           </span>
                         )}
+                      </td>
+
+                      {/* ชั้นปีแยกคอลัมน์จาก role — แอดมินไม่มีชั้นปี ส่วนรหัสที่แกะปีไม่ได้ backend ส่ง 0 มา */}
+                      <td className="px-3 py-4 text-center text-[#211a14]/70">
+                        {!isAdmin && user.year_level > 0 ? `ปี ${user.year_level}` : "—"}
                       </td>
 
                       <td className="px-6 py-4 text-center sm:px-3">
@@ -322,6 +337,14 @@ export default function UserManagement() {
 
       {/* ---------------- ตรวจสอบรายชื่อผู้มีสิทธิ์ Modal ---------------- */}
       {showEligibleList && <EligibleStudentsModal onClose={() => setShowEligibleList(false)} />}
+
+      {/* ---------------- เพิ่มผู้มีสิทธิ์ทีละคน Modal ---------------- */}
+      {showAddEligible && (
+        <AddEligibleStudentModal
+          onClose={() => setShowAddEligible(false)}
+          onUserRoleChanged={fetchUsers}
+        />
+      )}
     </div>
   );
 }
@@ -341,7 +364,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
   const [formData, setFormData] = useState({
     student_id: user.student_id,
     real_name: user.real_name,
-    nick_name: user.nick_name || "",
     gmail: user.gmail || "",
     role_id: user.role_id.toString(),
   });
@@ -361,7 +383,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
       const payload: UpdateUserDTO = {
         student_id: formData.student_id,
         real_name: formData.real_name,
-        nick_name: formData.nick_name,
         gmail: formData.gmail,
         role_id: parseInt(formData.role_id, 10),
       };
@@ -425,17 +446,12 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
           <input name="real_name" value={formData.real_name} onChange={handleChange} required className={inputClass} />
         </div>
 
-        {/* ชื่อเล่น */}
-        <div>
-          <label className={labelClass}>Nickname</label>
-          <input name="nick_name" value={formData.nick_name} onChange={handleChange} className={inputClass} />
-        </div>
 
         {/* ชั้นปี — คำนวณสดจาก student_id เสมอ แก้ไขตรงนี้ไม่ได้ (เปลี่ยน Student ID แล้วบันทึก ค่านี้จะขยับตาม) */}
         <div>
           <label className={labelClass}>Year</label>
           <input
-            value={`Year ${user.year_level}`}
+            value={user.role_id !== 2 && user.year_level > 0 ? `ปี ${user.year_level}` : "—"}
             disabled
             className={`${inputClass} disabled:bg-black/5 disabled:text-[#211a14]/60`}
           />
@@ -460,6 +476,201 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
               : "ผู้ใช้ยังไม่มี namespace — จะสังกัด space เมื่อสร้างหรือเข้าร่วมกลุ่มแล้ว"}
           </div>
         </div>
+      </div>
+    </AdminModal>
+  );
+}
+
+// ==========================================
+// Modal เพิ่มผู้มีสิทธิ์ทีละคน — สำหรับคนที่ตกหล่นจากไฟล์ทะเบียน ไม่ต้องทำไฟล์ Excel ขึ้นมาใหม่
+// ==========================================
+// รหัสสถานภาพที่เลือกได้ — ชุดที่ enrollmentStatusLabel รู้จัก (60–89 = สิ้นสุดสถานภาพ ใส่ 60 ตัวแทนพอ)
+const ENROLLMENT_STATUS_OPTIONS = [10, 11, 12, 13, 40, 60];
+// รูปแบบเดียวกับ studentIDPattern ฝั่ง backend — กันไว้ก่อนส่ง ส่วน backend ตรวจซ้ำอีกชั้น
+const STUDENT_ID_PATTERN = /^[A-Za-z][0-9]{6,}$/;
+// เงื่อนไขเดียวกับด่านของ AuthController.Register — ใช้แค่เตือนว่าบันทึกแล้วเจ้าตัวจะยังสมัครไม่ได้
+// (คนที่ถูกกำหนดเป็น admin ข้ามสองด่านนี้)
+const MAJOR_CPE = "CPE";
+const ACTIVE_ENROLLMENT_STATUSES = [10, 11];
+
+// ป้ายและสีเดียวกับคอลัมน์ Role ในตารางผู้ใช้หลัก
+const ROLE_BADGE: Record<EligibleRole, { label: string; className: string }> = {
+  user: { label: "User", className: "bg-[#FFF8E8] text-[#BB6653]" },
+  admin: { label: "Admin", className: "bg-red-50 text-red-600" },
+};
+
+interface AddEligibleStudentModalProps {
+  onClose: () => void;
+  /** เรียกเมื่อรหัสนี้สมัครไปแล้วและ role ของบัญชีถูกเปลี่ยน — ตารางผู้ใช้หลักต้องโหลดใหม่ */
+  onUserRoleChanged: () => void;
+}
+
+function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStudentModalProps) {
+  const [studentId, setStudentId] = useState("");
+  const [role, setRole] = useState<EligibleRole>("user");
+  const [major, setMajor] = useState(MAJOR_CPE);
+  const [status, setStatus] = useState("10");
+  const [existing, setExisting] = useState<EligibleStudent[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // โหลดรายชื่อเดิมไว้เตือนว่ารหัสนี้มีอยู่แล้ว — เส้นบันทึกเป็น upsert ถ้าไม่เตือนจะเขียนทับเงียบๆ
+  // โหลดไม่ได้ก็ยังเพิ่มได้ตามปกติ แค่ไม่มีคำเตือน
+  useEffect(() => {
+    eligibleStudentsApi
+      .listAll()
+      .then((data) => setExisting(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to fetch eligible students:", err));
+  }, []);
+
+  const normalizedId = studentId.trim().toUpperCase();
+  const idValid = STUDENT_ID_PATTERN.test(normalizedId);
+  const match = existing.find((s) => s.student_id.toUpperCase() === normalizedId);
+  const trimmedMajor = major.trim();
+  const canRegister =
+    role === "admin" ||
+    (trimmedMajor === MAJOR_CPE && ACTIVE_ENROLLMENT_STATUSES.includes(Number(status)));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!idValid || trimmedMajor.length < 2) return;
+
+    setIsSubmitting(true);
+    try {
+      const { user_role_updated } = await eligibleStudentsApi.addOne({
+        // ใช้ตัวสะกดของแถวเดิมถ้ามี จะได้ชน student_id เดิมตอน upsert ไม่กลายเป็นแถวใหม่
+        student_id: match?.student_id ?? normalizedId,
+        major: trimmedMajor,
+        enrollment_status: Number(status),
+        role,
+      });
+      notify.success(
+        match ? "อัปเดตผู้มีสิทธิ์สำเร็จ" : "เพิ่มผู้มีสิทธิ์สำเร็จ",
+        user_role_updated
+          ? `${normalizedId} สมัครใช้งานแล้ว — เปลี่ยน role ของบัญชีเป็น ${ROLE_BADGE[role].label} ทันที`
+          : `${normalizedId} ถูกบันทึกลงรายชื่อผู้มีสิทธิ์แล้ว (Role: ${ROLE_BADGE[role].label})`,
+      );
+      if (user_role_updated) onUserRoleChanged();
+      onClose();
+    } catch (err) {
+      console.error("Failed to add eligible student:", err);
+      notify.error("เพิ่มผู้มีสิทธิ์ไม่สำเร็จ", getApiErrorMessage(err, "โปรดลองใหม่อีกครั้ง"));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const inputClass = "w-full rounded-xl border border-black/10 bg-white px-4 py-2.5 text-base text-[#211a14] outline-none focus:border-[#BB6653] focus:ring-1 focus:ring-[#BB6653] disabled:opacity-60";
+  const labelClass = "mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]";
+
+  return (
+    <AdminModal
+      onClose={onClose}
+      busy={isSubmitting}
+      size="sm"
+      title="เพิ่มผู้มีสิทธิ์"
+      subtitle="เพิ่มผู้มีสิทธิ์ทีละคนพร้อมกำหนด Role — เจ้าตัวสมัครและยืนยันอีเมลเองตามปกติ"
+      onSubmit={handleSubmit}
+      footer={(close) => (
+        <>
+          <button
+            type="button"
+            onClick={close}
+            disabled={isSubmitting}
+            className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 hover:bg-black/5 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting || !idValid || trimmedMajor.length < 2}
+            className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+          >
+            {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : match ? "อัปเดต" : "เพิ่ม"}
+          </button>
+        </>
+      )}
+    >
+      <div className="flex flex-col gap-5">
+        <div>
+          <label htmlFor="eligible-student-id" className={labelClass}>รหัสนักศึกษา</label>
+          <input
+            id="eligible-student-id"
+            value={studentId}
+            onChange={(e) => setStudentId(e.target.value)}
+            disabled={isSubmitting}
+            placeholder="เช่น B6600907"
+            maxLength={20}
+            required
+            className={inputClass}
+          />
+          {normalizedId && !idValid && (
+            <p className="mt-1.5 text-sm text-red-500">
+              รูปแบบไม่ถูกต้อง — ตัวอักษร 1 ตัวตามด้วยตัวเลขอย่างน้อย 6 หลัก
+            </p>
+          )}
+          {idValid && match && (
+            <p className="mt-1.5 text-sm text-[#F08B51]">
+              รหัสนี้มีในรายชื่ออยู่แล้ว ({ROLE_BADGE[match.role]?.label ?? match.role} · {match.major} ·{" "}
+              {enrollmentStatusLabel(match.enrollment_status)}) — บันทึกจะอัปเดต Role สาขา และสถานภาพเป็นค่าใหม่
+              ถ้าสมัครใช้งานแล้ว Role ของบัญชีจะเปลี่ยนทันที
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor="eligible-role" className={labelClass}>Role</label>
+          <select
+            id="eligible-role"
+            value={role}
+            onChange={(e) => setRole(e.target.value as EligibleRole)}
+            disabled={isSubmitting}
+            className={inputClass}
+          >
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          {role === "admin" && (
+            <p className="mt-1.5 text-sm text-red-500">
+              ผู้ดูแลระบบเข้าถึงหน้าจัดการทั้งหมดได้ และสมัครได้โดยไม่ตรวจสาขาหรือสถานภาพ
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor="eligible-major" className={labelClass}>สาขาวิชา</label>
+          <input
+            id="eligible-major"
+            value={major}
+            onChange={(e) => setMajor(e.target.value)}
+            disabled={isSubmitting}
+            maxLength={100}
+            required
+            className={inputClass}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="eligible-status" className={labelClass}>สถานภาพ</label>
+          <select
+            id="eligible-status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            disabled={isSubmitting}
+            className={inputClass}
+          >
+            {ENROLLMENT_STATUS_OPTIONS.map((code) => (
+              <option key={code} value={code}>
+                {enrollmentStatusLabel(code)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {!canRegister && (
+          <p className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            บันทึกได้ แต่เจ้าตัวจะยังสมัครใช้งานไม่ได้ — ระบบเปิดให้เฉพาะสาขา {MAJOR_CPE} ที่สถานภาพ 10 หรือ 11
+          </p>
+        )}
       </div>
     </AdminModal>
   );
@@ -499,8 +710,8 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
     const lower = searchTerm.toLowerCase();
     return (
       s.student_id.toLowerCase().includes(lower) ||
-      s.real_name.toLowerCase().includes(lower) ||
-      s.major.toLowerCase().includes(lower)
+      s.major.toLowerCase().includes(lower) ||
+      (s.year_level > 0 && `ปี ${s.year_level}`.includes(lower))
     );
   });
 
@@ -520,7 +731,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
           </div>
           <input
             type="text"
-            placeholder="ค้นหารหัส/ชื่อ/สาขา"
+            placeholder="ค้นหารหัส/สาขา/ปี"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-xl border border-black/10 bg-white py-2 pl-9 pr-3 text-base text-[#211a14] outline-none focus:ring-2 focus:ring-[#BB6653]/50"
@@ -529,7 +740,7 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
       }
     >
       {isLoading ? (
-        <SimpleRowsSkeleton rows={7} cols={4} />
+        <SimpleRowsSkeleton rows={7} cols={5} />
       ) : error ? (
         <div className="mx-auto max-w-sm rounded-xl border border-red-100 bg-red-50 p-4 text-center text-base text-red-600">
           {error}
@@ -544,7 +755,8 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
           <thead>
             <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
               <th className="pb-3 pr-3">รหัสประจำตัว</th>
-              <th className="pb-3 pr-3">ชื่อ-สกุล</th>
+              <th className="pb-3 pr-3">Role</th>
+              <th className="pb-3 pr-3">ชั้นปี</th>
               <th className="pb-3 pr-3">สาขาวิชา</th>
               <th className="pb-3">สถานภาพ</th>
             </tr>
@@ -555,7 +767,17 @@ function EligibleStudentsModal({ onClose }: EligibleStudentsModalProps) {
               return (
                 <tr key={s.student_id} className="border-b border-black/5 last:border-0">
                   <td className="py-3 pr-3 font-medium">{s.student_id}</td>
-                  <td className="py-3 pr-3">{s.real_name || "—"}</td>
+                  <td className="py-3 pr-3">
+                    <span
+                      className={cn(
+                        "inline-flex rounded-full px-2.5 py-1 text-sm font-bold",
+                        (ROLE_BADGE[s.role] ?? ROLE_BADGE.user).className
+                      )}
+                    >
+                      {(ROLE_BADGE[s.role] ?? ROLE_BADGE.user).label}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-3">{s.year_level > 0 ? `ปี ${s.year_level}` : "—"}</td>
                   <td className="py-3 pr-3 text-[#211a14]/70">{s.major}</td>
                   <td className="py-3">
                     <span

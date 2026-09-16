@@ -85,11 +85,14 @@ type Provisioner interface {
 	// DeployService สร้าง workload จริงเข้าไปใน namespace ที่กำหนด
 	// (สเปกต่อ 1 Pod มาจาก svc.CPUMilli/RAMMB, จำนวน Pod จาก svc.Replicas, พอร์ตจาก svc.ContainerPort)
 	//
-	// svc.IsDatabase แยกทางเดินเป็นสองแบบ:
-	//   false → Deployment + Service ชนิด NodePort แล้วเซ็ต svc.NodePort กลับเข้า struct เดิม
-	//   true  → StatefulSet + PVC + Service ชนิด ClusterIP + NetworkPolicy และห้ามจ่าย NodePort
-	//           (ปล่อย svc.NodePort เป็น nil) — ไม่เคยจองพอร์ตบน node ก็ไม่มีประตูให้เคาะ
-	//           ซึ่งเชื่อถือได้กว่าการหวังให้ NetworkPolicy ทำงานถูก
+	// ทางเดินแยกด้วยสองแกนที่เป็นอิสระต่อกัน:
+	//   svc.HasStorage() → workload: false = Deployment, true = StatefulSet + PVC (ตรึง 1 pod)
+	//                      StatefulSet ปิด pod เก่าก่อนเปิดตัวใหม่ สอง pod จึงไม่แย่งเขียนดิสก์ก้อนเดียวกัน
+	//   svc.IsDatabase   → เครือข่าย: false = Service ชนิด NodePort แล้วเซ็ต svc.NodePort กลับเข้า struct เดิม
+	//                      true = Service ชนิด ClusterIP + NetworkPolicy และห้ามจ่าย NodePort (ปล่อย nil)
+	//                      — ไม่เคยจองพอร์ตบน node ก็ไม่มีประตูให้เคาะ ซึ่งเชื่อถือได้กว่าการหวังให้ NetworkPolicy ทำงานถูก
+	//
+	// database มีดิสก์เสมอ (ServiceManager.Create บังคับ) จึงเหลือ 3 แบบ: web, web + ดิสก์ (เช่น Nextcloud), database
 	//
 	// ServiceManager.Create เป็นคนเอา NodePort ไป UPDATE ลง DB อีกที — provisioner ไม่รู้จัก DB
 	DeployService(ctx context.Context, nsName string, svc *entity.Service) error
@@ -101,7 +104,8 @@ type Provisioner interface {
 
 	// DeleteService ลบ workload ตัวเดียวออกจาก namespace
 	//
-	// รับทั้ง svc ไม่ใช่แค่ชื่อ เพราะของที่ต้องถอนต่างกันตาม svc.IsDatabase
+	// รับทั้ง svc ไม่ใช่แค่ชื่อ เพราะของที่ต้องถอนต่างกันตามสองแกนเดียวกับ DeployService
+	// (HasStorage → StatefulSet + PVC แทน Deployment, IsDatabase → NetworkPolicy เพิ่ม)
 	//
 	// PVC เป็นจุดที่พลาดง่ายที่สุด: k8s ไม่ลบ PVC ที่เกิดจาก volumeClaimTemplates ให้เองตอนลบ
 	// StatefulSet ไม่ตามไปลบแล้วดิสก์จะถูกจองค้างโดยไม่มีแถวใน DB ให้ตามเก็บ
