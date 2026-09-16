@@ -42,3 +42,8 @@ type CreateServiceRequest struct {
 type ScaleServiceRequest struct {
 	Replicas int `json:"replicas" binding:"required,min=1,max=10"`
 }
+
+// DeleteServiceRequest = body ของการลบ/ตั้งเวลาลบ service ฝั่ง admin — reason ส่งไปในอีเมลแจ้งสมาชิก
+type DeleteServiceRequest struct {
+	Reason string `json:"reason" binding:"required,min=1,max=1000"`
+}
