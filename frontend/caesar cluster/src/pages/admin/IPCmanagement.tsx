@@ -404,7 +404,7 @@ export default function IPCmanagement() {
     <div className="min-h-screen bg-transparent text-gray-800 font-sans p-4 md:p-6">
       <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
         {/* --- Top Navbar --- */}
-        <div className="flex flex-col md:flex-row items-center justify-between bg-white border border-gray-200 rounded-2xl shadow-sm p-4 gap-4 sticky top-2 z-30 bg-white/80 backdrop-blur-xl">
+        <div className="flex flex-col md:flex-row items-center justify-between bg-white border border-gray-200 rounded-2xl shadow-sm p-4 gap-4 top-2 z-30 bg-white/80 backdrop-blur-xl">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-50 rounded-lg">
               <Server className="h-6 w-6 text-indigo-600" />
