@@ -730,60 +730,99 @@ func (h *AdminController) ListServices(c *gin.Context) {
 }
 
 func (h *AdminController) DeleteService(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+	id, reason, ok := bindServiceDeletion(c)
+	if !ok {
 		return
 	}
-	if err := h.svc.DeleteByID(c.Request.Context(), id); err != nil {
+	ctx := c.Request.Context()
+
+	// อ่านข้อมูลสำหรับแจ้งเตือนก่อนลบ — หลังลบแถว service หายไปแล้ว
+	notice, err := h.loadServiceNotice(ctx, id)
+	if err != nil {
 		respondServiceError(c, "admin delete service", err)
 		return
 	}
+	if err := h.svc.DeleteByID(ctx, id); err != nil {
+		respondServiceError(c, "admin delete service", err)
+		return
+	}
+	go h.notifyServiceDeletion(context.WithoutCancel(ctx), notice, reason, nil)
 	utils.OK(c, http.StatusOK, gin.H{"deleted": id})
 }
 
 // ตั้งเวลาลบ service ใน 24 ชม.
 func (h *AdminController) ScheduleServiceDelete(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+	id, reason, ok := bindServiceDeletion(c)
+	if !ok {
 		return
 	}
-	deleteAt, err := h.svc.ScheduleDelete(c.Request.Context(), id)
+	ctx := c.Request.Context()
+
+	deleteAt, err := h.svc.ScheduleDelete(ctx, id)
 	if err != nil {
 		respondServiceError(c, "schedule service delete", err)
 		return
 	}
-	go h.notifyServiceDeleteScheduled(context.WithoutCancel(c.Request.Context()), id, deleteAt)
+	if notice, err := h.loadServiceNotice(ctx, id); err != nil {
+		log.Printf("schedule service delete id=%d: อ่านข้อมูลสำหรับแจ้งเตือนไม่สำเร็จ: %v", id, err)
+	} else {
+		go h.notifyServiceDeletion(context.WithoutCancel(ctx), notice, reason, &deleteAt)
+	}
 	utils.OK(c, http.StatusOK, gin.H{"id": id, "delete_at": deleteAt})
 }
 
-// แจ้งสมาชิกทุกคนใน namespace ว่า service ถูกตั้งเวลาลบ
-func (h *AdminController) notifyServiceDeleteScheduled(ctx context.Context, serviceID int, deleteAt time.Time) {
-	if !h.mailer.Configured() {
-		log.Printf("schedule service delete id=%d: ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก", serviceID)
-		return
+func bindServiceDeletion(c *gin.Context) (int, string, bool) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
+		return 0, "", false
 	}
+	var body dto.DeleteServiceRequest
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Reason) == "" {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", "กรุณาระบุเหตุผลในการลบ service")
+		return 0, "", false
+	}
+	return id, strings.TrimSpace(body.Reason), true
+}
 
+// serviceNotice = ข้อมูลที่ใช้แจ้งสมาชิกเรื่องการลบ service
+type serviceNotice struct {
+	serviceName   string
+	namespaceName string
+	members       []entity.User
+}
+
+func (h *AdminController) loadServiceNotice(ctx context.Context, serviceID int) (serviceNotice, error) {
 	var svc entity.Service
 	if err := h.db.WithContext(ctx).First(&svc, serviceID).Error; err != nil {
-		log.Printf("notify service delete id=%d: อ่าน service ไม่สำเร็จ: %v", serviceID, err)
-		return
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return serviceNotice{}, services.ErrServiceNotFound
+		}
+		return serviceNotice{}, err
 	}
 	var ns entity.Namespace
 	if err := h.db.WithContext(ctx).First(&ns, svc.NamespaceID).Error; err != nil {
-		log.Printf("notify service delete id=%d: อ่าน namespace ไม่สำเร็จ: %v", serviceID, err)
-		return
+		return serviceNotice{}, err
 	}
 	var members []entity.User
 	if err := h.db.WithContext(ctx).Where("namespace_id = ?", svc.NamespaceID).Find(&members).Error; err != nil {
-		log.Printf("notify service delete id=%d: อ่านสมาชิกไม่สำเร็จ: %v", serviceID, err)
+		return serviceNotice{}, err
+	}
+	return serviceNotice{serviceName: svc.Name, namespaceName: ns.Name, members: members}, nil
+}
+
+// แจ้งสมาชิกทุกคนใน namespace ว่า service ถูกลบ (deleteAt = nil) หรือถูกตั้งเวลาลบ
+func (h *AdminController) notifyServiceDeletion(ctx context.Context, n serviceNotice, reason string, deleteAt *time.Time) {
+	if len(n.members) == 0 {
 		return
 	}
-
+	if !h.mailer.Configured() {
+		log.Printf("service '%s': ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก %d คน", n.serviceName, len(n.members))
+		return
+	}
 	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/"
-	for _, u := range members {
-		_ = h.mailer.SendServiceDeleteScheduledEmail(ctx, u.ID, u.Gmail, u.RealName, svc.Name, ns.Name, deleteAt, appLink)
+	for _, u := range n.members {
+		_ = h.mailer.SendServiceDeletionEmail(ctx, u.ID, u.Gmail, u.RealName, n.serviceName, n.namespaceName, reason, deleteAt, appLink)
 	}
 }
 

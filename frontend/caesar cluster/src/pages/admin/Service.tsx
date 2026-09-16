@@ -145,17 +145,17 @@ export default function Service() {
   const patchService = (id: number, patch: Partial<AdminService>) =>
     setServices((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
 
-  const handleDelete = async (svc: AdminService, mode: DeleteMode) => {
+  const handleDelete = async (svc: AdminService, mode: DeleteMode, reason: string) => {
     setActioningId(svc.id);
     try {
       if (mode === "now") {
-        await adminServiceApi.remove(svc.id);
+        await adminServiceApi.remove(svc.id, reason);
         setServices((prev) => prev.filter((s) => s.id !== svc.id));
-        notify.success("ลบ service สำเร็จ", `${svc.name} ถูกถอนออกจากคลัสเตอร์แล้ว`);
+        notify.success("ลบ service สำเร็จ", `${svc.name} ถูกถอนออกจากคลัสเตอร์แล้ว · แจ้งเหตุผลทางอีเมลถึงสมาชิกแล้ว`);
       } else {
-        const { delete_at } = await adminServiceApi.scheduleDelete(svc.id);
+        const { delete_at } = await adminServiceApi.scheduleDelete(svc.id, reason);
         patchService(svc.id, { delete_at });
-        notify.success("ตั้งเวลาลบแล้ว", `${svc.name} จะถูกลบภายใน 24 ชั่วโมง`);
+        notify.success("ตั้งเวลาลบแล้ว", `${svc.name} จะถูกลบภายใน 24 ชั่วโมง · แจ้งเหตุผลทางอีเมลถึงสมาชิกแล้ว`);
       }
       setDeleteId(null);
     } catch (err) {
@@ -462,7 +462,7 @@ export default function Service() {
           service={deleteTarget}
           isDeleting={actioningId === deleteTarget.id}
           onClose={() => setDeleteId(null)}
-          onConfirm={(mode) => handleDelete(deleteTarget, mode)}
+          onConfirm={(mode, reason) => handleDelete(deleteTarget, mode, reason)}
         />
       )}
     </div>
@@ -494,12 +494,14 @@ interface DeleteServiceModalProps {
   service: AdminService;
   isDeleting: boolean;
   onClose: () => void;
-  onConfirm: (mode: DeleteMode) => void;
+  onConfirm: (mode: DeleteMode, reason: string) => void;
 }
 
 function DeleteServiceModal({ service, isDeleting, onClose, onConfirm }: DeleteServiceModalProps) {
   const alreadyScheduled = service.delete_at !== null;
   const [mode, setMode] = useState<DeleteMode>(alreadyScheduled ? "now" : "later");
+  const [reason, setReason] = useState("");
+  const trimmedReason = reason.trim();
 
   const options: { id: DeleteMode; title: string; description: string; hidden?: boolean }[] = [
     {
@@ -524,7 +526,7 @@ function DeleteServiceModal({ service, isDeleting, onClose, onConfirm }: DeleteS
       subtitle={`${service.namespace_name} · ${service.creator_name || "ไม่ทราบผู้สร้าง"}`}
       onSubmit={(e) => {
         e.preventDefault();
-        onConfirm(mode);
+        if (trimmedReason) onConfirm(mode, trimmedReason);
       }}
       footer={(close) => (
         <>
@@ -538,7 +540,7 @@ function DeleteServiceModal({ service, isDeleting, onClose, onConfirm }: DeleteS
           </button>
           <button
             type="submit"
-            disabled={isDeleting}
+            disabled={isDeleting || trimmedReason.length === 0}
             className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
           >
             {isDeleting ? (
@@ -583,6 +585,25 @@ function DeleteServiceModal({ service, isDeleting, onClose, onConfirm }: DeleteS
               </span>
             </label>
           ))}
+
+        <div className="mt-2">
+          <label
+            htmlFor="delete-service-reason"
+            className="mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]"
+          >
+            เหตุผลในการลบ
+          </label>
+          <textarea
+            id="delete-service-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={isDeleting}
+            rows={3}
+            maxLength={1000}
+            placeholder="เช่น ใช้ทรัพยากรเกินจำเป็น / ไม่มีการใช้งานนาน — ข้อความนี้จะถูกส่งทางอีเมลถึงสมาชิก"
+            className="w-full resize-none rounded-2xl border border-black/10 bg-white px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none transition-colors focus:border-[#BB6653] focus:ring-2 focus:ring-[#BB6653]/10 disabled:opacity-60"
+          />
+        </div>
 
         {alreadyScheduled && service.delete_at && (
           <p className="rounded-xl bg-[#FFF8E8] px-4 py-3 text-sm text-[#211a14]/60">

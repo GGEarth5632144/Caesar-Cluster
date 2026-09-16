@@ -59,3 +59,7 @@ type UpdateServiceRequest struct {
     DataPath      string `json:"data_path" binding:"omitempty,max=200"`
     StorageMB     int    `json:"storage_mb" binding:"omitempty,min=1024,max=20480"`
 }
+// DeleteServiceRequest = body ของการลบ/ตั้งเวลาลบ service ฝั่ง admin — reason ส่งไปในอีเมลแจ้งสมาชิก
+type DeleteServiceRequest struct {
+	Reason string `json:"reason" binding:"required,min=1,max=1000"`
+}

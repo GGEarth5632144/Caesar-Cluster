@@ -41,6 +41,7 @@ const (
 	PurposePasswordReset          = "password_reset"
 	PurposeNamespaceDeleted       = "namespace_deleted"
 	PurposeServiceDeleteScheduled = "service_delete_scheduled"
+	PurposeServiceDeleted         = "service_deleted"
 )
 
 // Config = ค่าที่ Mailer ต้องใช้ต่อกับ SMTP server — map ตรงกับ env SMTP_*/MAIL_* ใน config.Config
@@ -182,22 +183,33 @@ func (m *Mailer) SendNamespaceDeletedEmail(ctx context.Context, userID int, toEm
 // thaiTime = เวลาไทย (UTC+7) — FixedZone เพราะบางเครื่อง/คอนเทนเนอร์ไม่มี tzdata
 var thaiTime = time.FixedZone("ICT", 7*60*60)
 
-// SendServiceDeleteScheduledEmail แจ้งสมาชิกว่า service ในกลุ่มถูกแอดมินตั้งเวลาลบ
-func (m *Mailer) SendServiceDeleteScheduledEmail(ctx context.Context, userID int, toEmail, toName, serviceName, namespaceName string, deleteAt time.Time, appLink string) error {
+// SendServiceDeletionEmail แจ้งสมาชิกว่า service ในกลุ่มถูกแอดมินลบแล้ว (deleteAt = nil) หรือถูกตั้งเวลาลบ
+func (m *Mailer) SendServiceDeletionEmail(ctx context.Context, userID int, toEmail, toName, serviceName, namespaceName, reason string, deleteAt *time.Time, appLink string) error {
 	content := actionEmail{
-		preheader: "service ในกลุ่มของคุณจะถูกลบภายใน 24 ชั่วโมง",
-		intro: fmt.Sprintf("ผู้ดูแลระบบได้ตั้งเวลาลบ service \"%s\" ใน namespace \"%s\" "+
-			"ระบบจะลบอัตโนมัติวันที่ %s หากต้องการเก็บข้อมูล กรุณาสำรองไว้ก่อนถึงเวลา",
-			serviceName, namespaceName, deleteAt.In(thaiTime).Format("02/01/2006 เวลา 15:04 น.")),
+		preheader: "service ในกลุ่มของคุณถูกลบโดยผู้ดูแลระบบ",
+		intro: fmt.Sprintf("ผู้ดูแลระบบได้ลบ service \"%s\" ใน namespace \"%s\" แล้ว "+
+			"ข้อมูลของ service นี้ไม่สามารถกู้คืนได้", serviceName, namespaceName),
+		quote:    reason,
 		button:   "เข้าสู่ Caesar Cluster",
 		link:     appLink,
-		footnote: "หากมีข้อสงสัยหรือต้องการให้ยกเลิกการลบ กรุณาติดต่อผู้ดูแลระบบก่อนถึงเวลาที่กำหนด",
+		footnote: "หากมีข้อสงสัยเกี่ยวกับการลบครั้งนี้ กรุณาติดต่อผู้ดูแลระบบ",
 	}
+	purpose, subject := PurposeServiceDeleted, "service ของคุณถูกลบ — Caesar Cluster"
+
+	if deleteAt != nil {
+		content.preheader = "service ในกลุ่มของคุณจะถูกลบภายใน 24 ชั่วโมง"
+		content.intro = fmt.Sprintf("ผู้ดูแลระบบได้ตั้งเวลาลบ service \"%s\" ใน namespace \"%s\" "+
+			"ระบบจะลบอัตโนมัติวันที่ %s หากต้องการเก็บข้อมูล กรุณาสำรองไว้ก่อนถึงเวลา",
+			serviceName, namespaceName, deleteAt.In(thaiTime).Format("02/01/2006 เวลา 15:04 น."))
+		content.footnote = "หากมีข้อสงสัยหรือต้องการให้ยกเลิกการลบ กรุณาติดต่อผู้ดูแลระบบก่อนถึงเวลาที่กำหนด"
+		purpose, subject = PurposeServiceDeleteScheduled, "service ของคุณจะถูกลบใน 24 ชั่วโมง — Caesar Cluster"
+	}
+
 	return m.send(ctx, outgoing{
-		purpose: PurposeServiceDeleteScheduled,
+		purpose: purpose,
 		userID:  &userID,
 		to:      toEmail,
-		subject: "service ของคุณจะถูกลบใน 24 ชั่วโมง — Caesar Cluster",
+		subject: subject,
 		text:    content.text(toName),
 		html:    content.html(toName),
 	})
