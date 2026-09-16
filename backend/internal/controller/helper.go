@@ -20,6 +20,21 @@ import (
 // เราตั้งชื่อ namespace บน cluster ตามชื่อที่ user กรอกตรงๆ เลยต้องกันชื่อผิดกฎตั้งแต่ที่ API
 var dns1123 = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
+// serviceNamePattern = ชื่อ service ต้องขึ้นต้นด้วยตัวอักษร (DNS-1035) เข้มกว่า dns1123 โดยตั้งใจ
+//
+// k8s 1.36 รับชื่อ Service ที่ขึ้นต้นด้วยตัวเลขได้แล้ว (RelaxedServiceNameValidation) แต่ชื่อ service
+// กลายเป็น host ใน connection URL — ชื่อตัวเลขล้วน/0x<hex> ถูก client ตีความเป็น IP ("123" → 0.0.0.123)
+// แล้วต่อไม่ติดแบบเดาไม่ออก และ k8s รุ่นที่ปิด feature นี้จะไม่รับชื่อพวกนี้เลย (docs 029)
+var serviceNamePattern = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
+
+// serviceNameMessage = ข้อความเดียวกันทุกจุดที่ตรวจชื่อ service
+const serviceNameMessage = "ชื่อต้องขึ้นต้นด้วยตัวอักษร a-z ตามด้วยตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และลงท้ายด้วยตัวอักษรหรือตัวเลข"
+
+// isValidServiceName เช็คชื่อ service (ใช้เป็นชื่อ object บน k8s และเป็น host ใน URL)
+func isValidServiceName(name string) bool {
+	return serviceNamePattern.MatchString(name)
+}
+
 // isValidK8sName เช็คว่าชื่อที่ user กรอกเอาไปตั้งเป็นชื่อ resource บน k8s ได้ไหม
 // data flow: ถูกเรียกจาก NamespaceController.Create และ ServiceController.Create ก่อนส่งต่อให้ service layer
 func isValidK8sName(name string) bool {

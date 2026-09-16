@@ -231,8 +231,8 @@ func TestHealthMonitorReportsCrashLoopEndToEnd(t *testing.T) {
 	monitor := NewServiceHealthMonitor(db, prov)
 
 	svc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
-		Name: "will-crash", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-		ContainerPort: 5432, IsDatabase: true, DataPath: "/var/lib/postgresql/data",
+		Name: "will-crash", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
+		ContainerPort: 80, StorageMB: 2048, DataPath: "/var/www/html",
 	})
 	if err != nil {
 		t.Fatalf("สร้าง service ไม่สำเร็จ: %v", err)

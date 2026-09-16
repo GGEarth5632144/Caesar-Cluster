@@ -45,9 +45,8 @@ func (h *AIReviewRequestController) Create(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
-	if !isValidK8sName(req.ServiceName) {
-		utils.Error(c, http.StatusBadRequest, "INVALID_NAME",
-			"ชื่อต้องเป็นตัวพิมพ์เล็ก/ตัวเลข/ขีดกลาง และขึ้นต้น-ลงท้ายด้วยตัวอักษรหรือตัวเลข")
+	if !isValidServiceName(req.ServiceName) {
+		utils.Error(c, http.StatusBadRequest, "INVALID_NAME", serviceNameMessage)
 		return
 	}
 	if !isValidEnvVars(req.EnvVars) {

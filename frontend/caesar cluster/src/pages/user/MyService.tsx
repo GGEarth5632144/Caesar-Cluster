@@ -32,6 +32,7 @@ import {
   serviceApi,
   isSettled,
   hasStorage,
+  isTemplateDatabase,
   type AppService,
   type UpdateServiceDTO,
 } from "@/api/services";
@@ -51,6 +52,11 @@ import {
   UNIT_FACTOR,
   type StorageUnit,
 } from "@/config/database";
+import {
+  DeployDatabaseModal,
+  EditDatabaseModal,
+  DatabaseConnectionPanel,
+} from "./DatabaseModals";
 
 type EnvPair = { key: string; value: string };
 
@@ -214,6 +220,8 @@ export default function MyService() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  // database สร้างจาก template แยกฟอร์ม (docs 029) — ไม่มีสวิตช์ "ใช้เป็นฐานข้อมูล" ในฟอร์ม service แล้ว
+  const [showCreateDatabase, setShowCreateDatabase] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   // service ที่รอผล scale อยู่ — ล็อก dropdown ไม่ให้กดรัวจนคำสั่งซ้อนกัน
@@ -277,7 +285,7 @@ export default function MyService() {
   const brokenCount = services.filter(
     (s) => s.status === "crashloop" || s.status === "failed",
   ).length;
-  const [editingService, setEditingService] = useState<any>(null);
+  const [editingService, setEditingService] = useState<AppService | null>(null);
   // ช่องค้นหาบน Topbar กรองการ์ดด้านล่าง — ตัวเลขสรุปบรรทัดบนยังนับจาก services ทั้งหมด
   // เพราะเป็นภาพรวมของเนมสเปซ ไม่ใช่ผลของคำค้น
   const {
@@ -333,6 +341,13 @@ export default function MyService() {
           {services.length > 0 && <SearchStatus />}
           <button
             type="button"
+            onClick={() => setShowCreateDatabase(true)}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] px-5 py-2.5 text-base font-bold text-[#BB6653] transition-colors hover:bg-[#FBDFDA]"
+          >
+            <Database size={18} /> New Database
+          </button>
+          <button
+            type="button"
             onClick={() => setShowCreate(true)}
             className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-3 text-base font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
           >
@@ -381,7 +396,9 @@ export default function MyService() {
                         <Highlight text={svc.name} terms={highlightTerms} />
                         {svc.is_database && (
                           <span className="shrink-0 rounded-md bg-[#FBDFDA] px-1.5 py-0.5 text-xs font-bold text-[#BB6653]">
-                            database
+                            {isTemplateDatabase(svc)
+                              ? `${svc.database_engine} ${svc.database_version}`
+                              : "database"}
                           </span>
                         )}
                       </p>
@@ -778,6 +795,13 @@ export default function MyService() {
                       </p>
                     </div>
                   </div>
+                  {isTemplateDatabase(selectedServiceDetail) ? (
+                    <DatabaseConnectionPanel
+                      key={selectedServiceDetail.id}
+                      service={selectedServiceDetail}
+                    />
+                  ) : (
+                  <>
                   <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-2">
                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">
                       Environment Variables
@@ -828,6 +852,8 @@ export default function MyService() {
                       )}
                     </div>
                   </div>
+                  </>
+                  )}
                 </div>
                 <div className="mt-2 flex items-center gap-3 w-full">
                   <button
@@ -860,6 +886,18 @@ export default function MyService() {
         />
       )}
 
+      {showCreateDatabase && (
+        <DeployDatabaseModal
+          namespace={namespace}
+          onClose={() => setShowCreateDatabase(false)}
+          onCreated={(svc) => {
+            setServices((prev) => [svc, ...prev]);
+            fetchNamespace();
+            setShowCreateDatabase(false);
+          }}
+        />
+      )}
+
       {showCreate && (
         <CreateServiceModal
           namespace={namespace}
@@ -872,7 +910,23 @@ export default function MyService() {
         />
       )}
 
-      {editingService && (
+      {editingService && isTemplateDatabase(editingService) && (
+        <EditDatabaseModal
+          service={editingService}
+          namespace={namespace}
+          onClose={() => setEditingService(null)}
+          onUpdated={(updatedSvc) => {
+            setServices((prev) =>
+              prev.map((s) => (s.id === updatedSvc.id ? updatedSvc : s)),
+            );
+            fetchNamespace();
+            setEditingService(null);
+            setSelectedServiceId(updatedSvc.id);
+          }}
+        />
+      )}
+
+      {editingService && !isTemplateDatabase(editingService) && (
         <EditServiceModal
           service={editingService}
           namespace={namespace}
@@ -917,15 +971,10 @@ function CreateServiceModal({
   const [envNotice, setEnvNotice] = useState<string | null>(null);
   const envFileRef = useRef<HTMLInputElement>(null);
 
-  // ── เครือข่าย + ดิสก์: สองสวิตช์อิสระกัน (docs 022) ─────────────────────────────
-  // isDatabase = เข้าได้เฉพาะในกลุ่ม (ไม่มี node port) · withStorage = ดิสก์ถาวร (PVC + 1 pod)
-  // เคยรวมเป็นสวิตช์เดียว แต่แอปอย่าง Nextcloud ต้องการดิสก์ถาวร "และ" ให้คนนอกเข้าได้
-  //
-  // ฐานข้อมูลต้องมีดิสก์เสมอ (backend บังคับ) จึงคิด storageOn จากทั้งสองตัว แทนการไปแก้ค่า withStorage ให้
-  // — ปิดสวิตช์ฐานข้อมูลแล้ว สวิตช์ดิสก์กลับไปเป็นค่าที่ผู้ใช้เลือกไว้เอง ไม่ต้องจำแยก
-  const [isDatabase, setIsDatabase] = useState(false);
+  // ── ดิสก์ถาวร (PVC + 1 pod) สำหรับ web ที่เก็บไฟล์ เช่น Nextcloud (docs 022) ────────────
+  // สวิตช์ "ใช้เป็นฐานข้อมูล" ถูกถอดแล้ว — database สร้างจากปุ่ม New Database (template, docs 029)
   const [withStorage, setWithStorage] = useState(false);
-  const storageOn = isDatabase || withStorage;
+  const storageOn = withStorage;
   // เก็บเป็น MB เสมอ ส่วนหน่วยที่โชว์เป็นเรื่องของหน้าจอล้วนๆ ไม่เคยส่งขึ้น API
   const [storageMb, setStorageMb] = useState<number>(STORAGE_BOUNDS.defaultMB);
   const [storageUnit, setStorageUnit] = useState<StorageUnit>("GB");
@@ -951,7 +1000,7 @@ function CreateServiceModal({
   const ramAvailable = Math.max(ramLimit - ramUsed, 0);
   const storageAvailable = Math.max(storageLimit - storageUsed, 0);
 
-  // มีดิสก์ (รวม database) ตรึงที่ 1 pod เสมอ — ค่าที่ใช้คิดโควตาต้องตามนั้น ไม่ใช่ค่าใน dropdown ที่ซ่อนไปแล้ว
+  // มีดิสก์ตรึงที่ 1 pod เสมอ — ค่าที่ใช้คิดโควตาต้องตามนั้น ไม่ใช่ค่าใน dropdown ที่ซ่อนไปแล้ว
   const effectiveReplicas = storageOn ? 1 : replicas;
 
   // ที่กินจริง = สเปกต่อ Pod x จำนวน Pod (0.5 core x 3 = 1.5 core) ตรงกับที่ backend คิดใน QuotaService
@@ -1001,8 +1050,9 @@ function CreateServiceModal({
     return env;
   };
 
-  // K8s-safe name: lowercase letters, numbers, hyphens — must start/end alphanumeric
-  const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+  // ต้องตรงกับ serviceNamePattern ฝั่ง backend: ขึ้นต้นด้วยตัวอักษร — ชื่อ service เป็น host ใน URL
+  // ชื่อตัวเลขล้วน (เช่น 123) ถูก client ตีความเป็น IP แล้วต่อไม่ติด (docs 029)
+  const NAME_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
   const nameHasError =
     name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
 
@@ -1107,7 +1157,6 @@ function CreateServiceModal({
         ram_mb: ramMb,
         container_port: portNumber,
         replicas: effectiveReplicas,
-        is_database: isDatabase,
         // ส่งเฉพาะตอนมีดิสก์ — backend ถือว่าส่ง storage_mb หรือ data_path มาเมื่อไหร่คือขอดิสก์ทันที
         ...(storageOn
           ? { storage_mb: storageMb, data_path: dataPath.trim() }
@@ -1193,8 +1242,8 @@ function CreateServiceModal({
               )}
             >
               {nameHasError
-                ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
-                : "lowercase letters, numbers and hyphens only"}
+                ? "Lowercase letters, numbers and hyphens only — start with a letter, end with a letter or number"
+                : "lowercase letters, numbers and hyphens only — start with a letter"}
             </p>
           </div>
 
@@ -1233,71 +1282,30 @@ function CreateServiceModal({
             >
               {containerPort.trim() !== "" && !portIsValid
                 ? `พอร์ตต้องเป็นตัวเลข ${MIN_CONTAINER_PORT}-${MAX_CONTAINER_PORT}`
-                : isDatabase
-                  ? "พอร์ตที่ฐานข้อมูลเปิดรอรับอยู่ (เช่น 5432 ของ PostgreSQL, 3306 ของ MySQL) ดูได้จากเอกสารของ image"
-                  : "พอร์ตที่แอปของคุณเปิดรอรับอยู่ข้างใน container (ดูได้จาก EXPOSE ใน Dockerfile) ส่วนพอร์ตที่ใช้เข้าจากข้างนอก ระบบจะจ่ายให้เองหลัง deploy เสร็จ"}
+                : "พอร์ตที่แอปของคุณเปิดรอรับอยู่ข้างใน container (ดูได้จาก EXPOSE ใน Dockerfile) ส่วนพอร์ตที่ใช้เข้าจากข้างนอก ระบบจะจ่ายให้เองหลัง deploy เสร็จ"}
             </p>
           </div>
 
-          {/* ── ตัวเลือก "เป็นฐานข้อมูล" ──────────────────────────────────────────
-              อยู่ใต้พอร์ตเพราะสามช่องบนคือ "จะ deploy อะไร ชื่ออะไร ฟังพอร์ตไหน" ตอบจบเป็นชุดเดียว
-              แล้วค่อยมาถามว่าเป็นฐานข้อมูลไหม ซึ่งเป็นตัวกำหนดว่าด้านล่างจะขอทรัพยากรแบบไหน
-              ปิดอยู่ = ฟอร์มเหมือนเดิมทุกประการ ไม่มีช่องจางๆ ค้างไว้ */}
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isDatabase}
-            disabled={submitting}
-            onClick={() => setIsDatabase((v) => !v)}
-            className={cn(
-              "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-colors disabled:opacity-60",
-              isDatabase
-                ? "border-[#BB6653] bg-[#FBDFDA]"
-                : "border-black/10 bg-white hover:border-[#BB6653]/30",
-            )}
-          >
-            <Database
-              size={20}
-              className={cn(
-                "shrink-0",
-                isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30",
-              )}
-            />
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span
-                className={cn(
-                  "text-base font-bold",
-                  isDatabase ? "text-[#BB6653]" : "text-[#211a14]",
-                )}
-              >
-                ใช้ service นี้เป็นฐานข้อมูล
-              </span>
-              <span className="text-sm text-[#211a14]/50">
-                {isDatabase
-                  ? "เปิดให้เฉพาะ service ในกลุ่มของคุณ ไม่มีพอร์ตให้คนนอกเข้า และมีดิสก์ถาวรเสมอ"
-                  : "ปิดอยู่ — เข้าถึงได้จากนอกระบบผ่านพอร์ตที่ระบบจ่ายให้"}
-              </span>
-            </span>
-            <SwitchKnob on={isDatabase} />
-          </button>
+          {/* database ไม่ได้สร้างจากฟอร์มนี้แล้ว — ชี้ทางไปปุ่ม New Database ให้คนที่มองหาสวิตช์เดิม */}
+          <p className="flex items-center gap-2 rounded-xl border border-black/8 bg-white/60 px-4 py-3 text-sm text-[#211a14]/55">
+            <Database size={16} className="shrink-0 text-[#BB6653]" />
+            ต้องการฐานข้อมูล PostgreSQL / MySQL / MariaDB? ปิดหน้านี้แล้วกดปุ่ม New Database
+          </p>
 
           {/* ── สวิตช์ดิสก์ถาวร ─────────────────────────────────────────────────
-              แยกจากสวิตช์ฐานข้อมูลเพราะแอปอย่าง Nextcloud/WordPress ต้องเก็บไฟล์ผู้ใช้ถาวร แต่ต้องเปิด
-              ให้คนนอกเข้าได้ (docs 022) · ฐานข้อมูลมีดิสก์เสมอ จึงล็อกเปิดพร้อมบอกเหตุผล ไม่ซ่อนทิ้ง
-              — ผู้ใช้ต้องเห็นว่ามีดิสก์อยู่ ถึงจะเข้าใจว่าทำไมต้องกรอกตำแหน่งเก็บข้อมูลด้านล่าง
+              แอปอย่าง Nextcloud/WordPress ต้องเก็บไฟล์ผู้ใช้ถาวรและเปิดให้คนนอกเข้าได้ (docs 022)
               ข้อความตอนปิดเตือนเรื่องที่เจอจริง: image ที่มี VOLUME ดูเหมือนเก็บไฟล์ได้ แต่หายเมื่อ pod ถูกสร้างใหม่ */}
           <button
             type="button"
             role="switch"
             aria-checked={storageOn}
-            disabled={submitting || isDatabase}
+            disabled={submitting}
             onClick={() => setWithStorage((v) => !v)}
             className={cn(
               "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-colors",
               storageOn
                 ? "border-[#BB6653] bg-[#FBDFDA]"
                 : "border-black/10 bg-white hover:border-[#BB6653]/30",
-              isDatabase && "cursor-not-allowed",
               submitting && "opacity-60",
             )}
           >
@@ -1318,23 +1326,18 @@ function CreateServiceModal({
                 ดิสก์ถาวร
               </span>
               <span className="text-sm text-[#211a14]/50">
-                {isDatabase
-                  ? "ฐานข้อมูลมีดิสก์ถาวรเสมอ — ปิดสวิตช์นี้ไม่ได้"
-                  : storageOn
-                    ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
-                    : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ (Nextcloud, WordPress) จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+                {storageOn
+                  ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
+                  : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ (Nextcloud, WordPress) จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
               </span>
             </span>
-            {isDatabase && (
-              <Lock size={16} className="shrink-0 text-[#BB6653]" />
-            )}
             <SwitchKnob on={storageOn} />
           </button>
 
           {/* ── ตำแหน่งเก็บข้อมูล ────────────────────────────────────────────────
               กรอกผิดคือเคสที่อันตรายที่สุดของฟีเจอร์นี้: deploy สำเร็จและดิสก์ถูกจอง แต่ image
               เขียนลงที่อื่น ข้อมูลหายตอน restart แบบไม่มีสัญญาณเตือน คำอธิบายใต้ช่องจึงต้องพูดตรงๆ
-              ตัวอย่างเปลี่ยนตามสวิตช์ฐานข้อมูล — คนทำ Nextcloud ไม่ได้มองหา path ของ PostgreSQL */}
+              */}
           {storageOn && (
             <div className="flex flex-col gap-2">
               <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
@@ -1353,7 +1356,7 @@ function CreateServiceModal({
                   value={dataPath}
                   onChange={(e) => setDataPath(e.target.value)}
                   disabled={submitting}
-                  placeholder={isDatabase ? "/var/lib/mydb" : "/var/www/html"}
+                  placeholder="/var/www/html"
                   spellCheck={false}
                   className="w-full bg-transparent font-mono text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
                 />
@@ -1368,9 +1371,7 @@ function CreateServiceModal({
               >
                 {dataPath.trim() !== "" && dataPathError
                   ? dataPathError
-                  : isDatabase
-                    ? "ดูได้จากเอกสารของ image เช่น PostgreSQL ใช้ /var/lib/postgresql/data, MySQL ใช้ /var/lib/mysql — ถ้ากรอกผิด ระบบจะ deploy สำเร็จแต่ข้อมูลจะไม่ถูกเก็บและหายเมื่อ restart"
-                    : "ดูได้จากเอกสารของ image เช่น Nextcloud ใช้ /var/www/html, WordPress ใช้ /var/www/html/wp-content — ถ้ากรอกผิด ระบบจะ deploy สำเร็จแต่ไฟล์จะไม่ถูกเก็บและหายเมื่อ restart"}
+                  : "ดูได้จากเอกสารของ image เช่น Nextcloud ใช้ /var/www/html, WordPress ใช้ /var/www/html/wp-content — ถ้ากรอกผิด ระบบจะ deploy สำเร็จแต่ไฟล์จะไม่ถูกเก็บและหายเมื่อ restart"}
               </p>
             </div>
           )}
@@ -1530,8 +1531,8 @@ function CreateServiceModal({
                   )}
                 >
                   {storageFull
-                    ? "พื้นที่เก็บข้อมูลของกลุ่มเหลือไม่พอสร้างฐานข้อมูลใหม่"
-                    : "พื้นที่เก็บข้อมูลของฐานข้อมูลนี้ เพิ่มทีหลังได้แต่ลดไม่ได้"}
+                    ? "พื้นที่เก็บข้อมูลของกลุ่มเหลือไม่พอ"
+                    : "พื้นที่ดิสก์ถาวรของ service นี้ เปลี่ยนขนาดหลัง deploy ไม่ได้"}
                 </p>
               </div>
             )}
@@ -1548,9 +1549,7 @@ function CreateServiceModal({
                 <span className="text-right text-sm text-[#211a14]/45">
                   <span className="font-bold text-[#211a14]/70">1 pod</span>
                   <br />
-                  {isDatabase
-                    ? "ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย"
-                    : "ดิสก์ถาวรใช้ได้ทีละ pod — สอง pod เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง"}
+                  ดิสก์ถาวรใช้ได้ทีละ pod — สอง pod เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง
                 </span>
               ) : (
                 <select
@@ -1774,10 +1773,7 @@ function CreateServiceModal({
             <p className="text-xs text-[#211a14]/35">
               วางข้อความ key=value หลายบรรทัดลงในช่อง key
               แล้วระบบจะแตกเป็นแถวให้เอง หรือกด Upload .env เพื่อดึงทั้งไฟล์ —
-              ค่าเหล่านี้จะถูกใส่ให้ service ตอน deploy
-              {isDatabase
-                ? " ฐานข้อมูลส่วนใหญ่ต้องตั้งรหัสผ่านผ่านตรงนี้ ดูชื่อตัวแปรที่ต้องใช้จากเอกสารของ image"
-                : " (ชื่อ key จะเป็นตัวเล็กหรือตัวใหญ่ก็ได้)"}
+              ค่าเหล่านี้จะถูกใส่ให้ service ตอน deploy (ชื่อ key จะเป็นตัวเล็กหรือตัวใหญ่ก็ได้)
             </p>
           </div>
 
@@ -1787,23 +1783,6 @@ function CreateServiceModal({
             <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
               การเข้าถึง
             </label>
-            {isDatabase ? (
-              <div className="flex flex-col gap-1.5 rounded-xl border border-green-600/20 bg-green-50 p-4">
-                <span className="flex items-center gap-1.5 text-sm font-bold text-green-700">
-                  <Lock size={14} /> เฉพาะภายในกลุ่มของคุณ
-                </span>
-                {/* บอก host กับพอร์ต ส่วนโปรโตคอลกับชื่อผู้ใช้ผู้ใช้รู้อยู่แล้วว่าใช้อะไร
-                    เพราะเป็นคนเลือก image เอง — namespace บนคลัสเตอร์ชื่อ ns-<id> ไม่ใช่ชื่อกลุ่ม
-                    (ดู K8sNamespaceName ฝั่ง backend) */}
-                <span className="overflow-x-auto whitespace-nowrap font-mono text-sm text-[#211a14]/70">
-                  {`${name.trim() || "ชื่อ-service"}.ns-${namespace?.id ?? "<id>"}.svc.cluster.local:${containerPort || "8080"}`}
-                </span>
-                <span className="text-sm text-[#211a14]/45">
-                  ใช้ที่อยู่นี้เชื่อมต่อจาก service อื่นในกลุ่มเดียวกัน
-                  คนนอกกลุ่มและคนนอกระบบเข้าไม่ได้
-                </span>
-              </div>
-            ) : (
               <div className="flex flex-col gap-1.5 rounded-xl border border-black/8 bg-white/60 p-4">
                 <span className="flex items-center gap-1.5 text-sm font-bold text-[#211a14]/60">
                   <Network size={14} className="text-[#BB6653]" />{" "}
@@ -1818,7 +1797,6 @@ function CreateServiceModal({
                   ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
                 </span>
               </div>
-            )}
           </div>
         </div>
 
@@ -1852,11 +1830,7 @@ function CreateServiceModal({
               )}
             >
               {submitting && <Loader2 size={16} className="animate-spin" />}
-              {submitting
-                ? "Deploying..."
-                : isDatabase
-                  ? "Deploy database"
-                  : "Deploy"}
+              {submitting ? "Deploying..." : "Deploy"}
             </button>
           </div>
         </div>
@@ -1902,7 +1876,8 @@ export function EditServiceModal({
   const [envNotice, setEnvNotice] = useState<string | null>(null);
   const envFileRef = useRef<HTMLInputElement>(null);
 
-  const [isDatabase, setIsDatabase] = useState(service.is_database || false);
+  // database ยุคก่อน template คงสถานะเดิม — สลับเป็น/ไม่เป็น database จากฟอร์มนี้ไม่ได้แล้ว (docs 029)
+  const isDatabase = service.is_database;
   const [withStorage, setWithStorage] = useState(
     !service.is_database && service.storage_mb > 0,
   );
@@ -1997,7 +1972,7 @@ export function EditServiceModal({
     return env;
   };
 
-  const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+  const NAME_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
   const nameHasError =
     name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
 
@@ -2201,8 +2176,8 @@ export function EditServiceModal({
                 )}
               >
                 {nameHasError
-                  ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
-                  : "lowercase letters, numbers and hyphens only"}
+                  ? "Lowercase letters, numbers and hyphens only — start with a letter, end with a letter or number"
+                  : "lowercase letters, numbers and hyphens only — start with a letter"}
               </p>
             </div>
 
@@ -2246,44 +2221,6 @@ export function EditServiceModal({
                     : "พอร์ตที่แอปของคุณเปิดรอรับอยู่ข้างใน container"}
               </p>
             </div>
-
-            <button
-              type="button"
-              role="switch"
-              aria-checked={isDatabase}
-              disabled={submitting}
-              onClick={() => setIsDatabase((v) => !v)}
-              className={cn(
-                "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-colors disabled:opacity-60",
-                isDatabase
-                  ? "border-[#BB6653] bg-[#FBDFDA]"
-                  : "border-black/10 bg-white hover:border-[#BB6653]/30",
-              )}
-            >
-              <Database
-                size={20}
-                className={cn(
-                  "shrink-0",
-                  isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30",
-                )}
-              />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span
-                  className={cn(
-                    "text-base font-bold",
-                    isDatabase ? "text-[#BB6653]" : "text-[#211a14]",
-                  )}
-                >
-                  ใช้ service นี้เป็นฐานข้อมูล
-                </span>
-                <span className="text-sm text-[#211a14]/50">
-                  {isDatabase
-                    ? "เปิดให้เฉพาะ service ในกลุ่มของคุณ ไม่มีพอร์ตให้คนนอกเข้า และมีดิสก์ถาวรเสมอ"
-                    : "ปิดอยู่ — เข้าถึงได้จากนอกระบบผ่านพอร์ตที่ระบบจ่ายให้"}
-                </span>
-              </span>
-              <SwitchKnob on={isDatabase} />
-            </button>
 
             <button
               type="button"

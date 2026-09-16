@@ -53,10 +53,9 @@ type CreateServiceParams struct {
 	Replicas      int
 	EnvVars       map[string]string
 
-	// IsDatabase = สวิตช์ "เข้าได้เฉพาะใน namespace" จากหน้าเว็บ — database ต้องมีดิสก์เสมอ
-	// Create จึงบังคับกติกาดิสก์ถาวรให้ด้วย (ดู entity.Service.IsDatabase)
-	IsDatabase bool
-	// StorageMB > 0 หรือส่ง DataPath มา = ขอดิสก์ถาวร (ได้ทั้ง database และ web)
+	// database ไม่ได้สร้างผ่านทางนี้แล้ว — ใช้ CreateDatabase (template) แทน (docs 029)
+
+	// StorageMB > 0 หรือส่ง DataPath มา = ขอดิสก์ถาวร (web ที่เก็บไฟล์ เช่น Nextcloud)
 	// ขอดิสก์แต่ StorageMB เป็น 0 = ใช้ entity.DefaultStorageMBPerService
 	StorageMB int
 	// DataPath = จุดที่ image เก็บข้อมูล — บังคับกรอกทุกครั้งที่ขอดิสก์
@@ -106,20 +105,10 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 //
 // เรียก provisioner นอก transaction เพราะการ deploy ช้า/พลาดได้ ไม่ควรถือ lock ของ namespace ค้างไว้ตอนรอ
 func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p CreateServiceParams) (*entity.Service, error) {
-	cpuMilli, ramMB := p.CPUMilli, p.RAMMB
-
 	// เลือกจาก choice ที่ admin สร้างไว้ → ใช้สเปกของ template เป็นหลัก
-	if p.RequestTemplateID != nil {
-		var tmpl entity.RequestTemplate
-		err := m.db.WithContext(ctx).
-			Where("id = ? AND is_active = true", *p.RequestTemplateID).First(&tmpl).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, ErrRequestTemplateNotFound
-			}
-			return nil, err
-		}
-		cpuMilli, ramMB = tmpl.CPULimitMilli, tmpl.RAMLimitMB
+	cpuMilli, ramMB, err := m.resolveSpec(ctx, p.RequestTemplateID, p.CPUMilli, p.RAMMB)
+	if err != nil {
+		return nil, err
 	}
 
 	containerPort := p.ContainerPort
@@ -136,13 +125,12 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 
 	// ── ดิสก์ถาวร: แปลงคำขอเป็นกติกาทั้งชุด (StatefulSet + PVC + 1 pod) ─────────────────
 	//
-	// ขอดิสก์ได้สองทาง: เปิดสวิตช์ database (database ต้องมีดิสก์เสมอ) หรือเป็น web ที่ส่ง
-	// storage_mb/data_path มา เช่น Nextcloud ที่เก็บไฟล์ผู้ใช้ไว้ใน /var/www/html
+	// web ขอดิสก์ด้วยการส่ง storage_mb/data_path มา เช่น Nextcloud ที่เก็บไฟล์ผู้ใช้ไว้ใน /var/www/html
 	// ส่งมาช่องใดช่องหนึ่งก็ถือว่าขอดิสก์ แล้วบังคับให้ครบ (ขนาดมี default ส่วน path ไม่เดาให้)
 	// ไม่ใช่ทิ้ง data_path ที่ส่งมาเงียบๆ — ผู้ใช้จะคิดว่าข้อมูลถาวรทั้งที่ไม่ใช่
 	//
 	// ตรวจให้จบก่อนแตะ DB เพราะเป็นการตรวจคำขอล้วนๆ ไม่ต้องถือ lock ระหว่างทำ
-	wantsStorage := p.IsDatabase || p.StorageMB > 0 || strings.TrimSpace(p.DataPath) != ""
+	wantsStorage := p.StorageMB > 0 || strings.TrimSpace(p.DataPath) != ""
 	if wantsStorage {
 		if p.Replicas > entity.StorageReplicas {
 			return nil, ErrStorageReplicas
@@ -158,7 +146,7 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		dataPath = strings.TrimRight(strings.TrimSpace(p.DataPath), "/")
 	}
 
-	svc := &entity.Service{
+	return m.reserveAndDeploy(ctx, namespaceID, &entity.Service{
 		NamespaceID:       namespaceID,
 		Name:              p.Name,
 		CreatedBy:         userID,
@@ -170,18 +158,36 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		Replicas:          replicas,
 		Status:            entity.ServiceCreating,
 		EnvVars:           entity.EnvVarMap(envVars),
-		IsDatabase:        p.IsDatabase,
 		StorageMB:         storageMB,
 		DataPath:          dataPath,
-	}
+	})
+}
 
+// resolveSpec คืน cpu/ram ที่จะใช้จริง — เลือก template มา = ใช้สเปกของ template (ค่าที่กรอกเองถูกข้าม)
+func (m *ServiceManager) resolveSpec(ctx context.Context, templateID *int, cpuMilli, ramMB int) (int, int, error) {
+	if templateID == nil {
+		return cpuMilli, ramMB, nil
+	}
+	var tmpl entity.RequestTemplate
+	err := m.db.WithContext(ctx).Where("id = ? AND is_active = true", *templateID).First(&tmpl).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, ErrRequestTemplateNotFound
+		}
+		return 0, 0, err
+	}
+	return tmpl.CPULimitMilli, tmpl.RAMLimitMB, nil
+}
+
+// reserveAndDeploy = ครึ่งหลังที่ Create กับ CreateDatabase ใช้ร่วมกัน: จองโควตา + INSERT → deploy → บันทึก NodePort
+func (m *ServiceManager) reserveAndDeploy(ctx context.Context, namespaceID int, svc *entity.Service) (*entity.Service, error) {
 	// เช็คโควตาของ namespace แล้ว INSERT ภายใน transaction เดียวกับที่ล็อก namespace ไว้
 	// (โควตาที่หักคือ cpu/ram/ดิสก์ × replicas — ดู ReserveAndInsert)
 	err := m.quota.ReserveAndInsert(ctx, namespaceID, ResourceRequest{
-		CPUMilli:  cpuMilli,
-		RAMMB:     ramMB,
-		StorageMB: storageMB,
-		Replicas:  replicas,
+		CPUMilli:  svc.CPUMilli,
+		RAMMB:     svc.RAMMB,
+		StorageMB: svc.StorageMB,
+		Replicas:  svc.Replicas,
 	}, func(tx *gorm.DB) error {
 		return tx.Create(svc).Error
 	})
@@ -544,6 +550,15 @@ func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespac
 		return nil, err
 	}
 
+	// database template แก้ได้แค่ CPU/RAM — แยกทางเพื่อไม่ให้กติกาของ web (env, image, ขอดิสก์) มาปน
+	if svc.IsTemplateDatabase() {
+		return m.updateTemplateDatabase(ctx, svc, p)
+	}
+	// เปลี่ยน service ธรรมดาให้เป็น database ไม่ได้แล้ว (ส่วน database ยุคก่อน template คงสถานะเดิมได้)
+	if p.IsDatabase && !svc.IsDatabase {
+		return nil, ErrDatabaseUseTemplate
+	}
+
 	containerPort := p.ContainerPort
 	if containerPort == 0 {
 		containerPort = entity.DefaultContainerPort
@@ -646,6 +661,8 @@ func storageChange(oldSvc, svc *entity.Service) string {
 		return fmt.Sprintf("เปลี่ยน data_path จาก %q เป็น %q", oldSvc.DataPath, svc.DataPath)
 	case svc.IsDatabase != oldSvc.IsDatabase:
 		return "สลับสวิตช์ database"
+	case svc.DatabaseEngine != oldSvc.DatabaseEngine || svc.DatabaseVersion != oldSvc.DatabaseVersion:
+		return "เปลี่ยน database engine/version"
 	}
 	return ""
 }

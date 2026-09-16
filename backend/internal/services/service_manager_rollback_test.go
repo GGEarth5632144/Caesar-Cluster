@@ -54,6 +54,9 @@ func (p *disconnectingProv) Logs(context.Context, string, string, LogOptions) (i
 func (p *disconnectingProv) Status(context.Context, string, *entity.Service) (WorkloadStatus, error) {
 	return WorkloadStatus{Phase: PhaseRunning}, nil
 }
+func (p *disconnectingProv) DatabaseCredentials(context.Context, string, *entity.Service) (DatabaseCredentials, error) {
+	return DatabaseCredentials{}, nil
+}
 func (p *disconnectingProv) DeployService(ctx context.Context, _ string, _ *entity.Service) error {
 	p.cancel()
 	return ctx.Err()

@@ -38,56 +38,69 @@ func dbTestNamespace(t *testing.T, db *gorm.DB, name string) *entity.Namespace {
 	return ns
 }
 
-// TestCreateDatabaseAppliesRules — สวิตช์เดียวต้องเปลี่ยนครบทั้งชุด
+// TestCreateDatabaseAppliesRules — database จาก template ต้องได้กติกาครบทั้งชุดจาก catalog
 //
 // ถ้าข้อใดข้อหนึ่งหลุด อาการจะต่างกันคนละแบบและทุกแบบ "ดูเหมือนสำเร็จ":
 // ไม่มี storage = ข้อมูลหาย, ได้ NodePort = เปิด database ออกทั้งเครือข่าย,
-// replicas ไม่ตรึง = สอง Pod เขียนดิสก์ก้อนเดียวกัน
-//
-// ใช้ image อะไรก็ได้ ระบบไม่แยกชนิดของ database — ทุกอย่างมาจากที่ผู้ใช้กรอก
+// replicas ไม่ตรึง = สอง Pod เขียนดิสก์ก้อนเดียวกัน, รหัสลง DB = รหัสรั่วไปกับ backup ของ backend
 func TestCreateDatabaseAppliesRules(t *testing.T) {
 	db := testDB(t)
 	ns := dbTestNamespace(t, db, "db-rules-test-ns")
 	ctx := context.Background()
 
-	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
-	svc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
-		Name:          "my-pg",
-		Image:         "postgres:16",
-		CPUMilli:      500,
-		RAMMB:         512,
-		ContainerPort: 5432,
-		IsDatabase:    true,
-		DataPath:      "/var/lib/postgresql/data",
-		EnvVars:       map[string]string{"POSTGRES_PASSWORD": "s3cret", "POSTGRES_DB": "app"},
+	prov := NewMockProvisioner()
+	mgr := NewServiceManager(db, NewQuotaService(db), prov)
+	svc, err := mgr.CreateDatabase(ctx, 1, ns.ID, CreateDatabaseParams{
+		Engine: EnginePostgreSQL, Version: "17",
+		Name: "my-pg", Username: "appuser", Password: "p@ss:w/rd#1", Database: "appdb",
+		CPUMilli: 500, RAMMB: 512,
 	})
 	if err != nil {
 		t.Fatalf("สร้าง database ไม่สำเร็จ: %v", err)
 	}
 
-	if svc.ContainerPort != 5432 {
-		t.Errorf("ContainerPort = %d ต้องใช้ค่าที่ผู้ใช้กรอก 5432", svc.ContainerPort)
+	if svc.Image != "postgres:17" || svc.ContainerPort != 5432 || svc.DataPath != "/var/lib/postgresql/data" {
+		t.Errorf("image/port/data_path ต้องมาจาก catalog ได้ %q %d %q", svc.Image, svc.ContainerPort, svc.DataPath)
 	}
-	if svc.DataPath != "/var/lib/postgresql/data" {
-		t.Errorf("DataPath = %q ไม่ตรงกับที่กรอกมา", svc.DataPath)
+	if !svc.IsDatabase || svc.DatabaseEngine != EnginePostgreSQL || svc.DatabaseVersion != "17" {
+		t.Errorf("ต้องเป็น database template postgresql 17 ได้ is_database=%v engine=%q version=%q",
+			svc.IsDatabase, svc.DatabaseEngine, svc.DatabaseVersion)
 	}
 	if svc.Replicas != entity.StorageReplicas {
 		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.StorageReplicas)
 	}
 	if svc.StorageMB != entity.DefaultStorageMBPerService {
-		t.Errorf("StorageMB = %d ไม่ได้ระบุมาต้องได้ default %d",
-			svc.StorageMB, entity.DefaultStorageMBPerService)
+		t.Errorf("StorageMB = %d ไม่ได้ระบุมาต้องได้ default %d", svc.StorageMB, entity.DefaultStorageMBPerService)
 	}
 	// ข้อสำคัญที่สุด — NodePort ที่ถูกจ่ายไปคือประตูที่เปิดให้ทั้งเครือข่ายมหาวิทยาลัยเข้าถึง database
 	if svc.NodePort != nil {
 		t.Errorf("database ต้องไม่มี NodePort แต่ได้ %d", *svc.NodePort)
 	}
-	// env ต้องถูกส่งต่อตามที่กรอกมาเป๊ะๆ ระบบไม่เติมและไม่ตัดอะไรทั้งนั้น
-	if svc.EnvVars["POSTGRES_PASSWORD"] != "s3cret" || len(svc.EnvVars) != 2 {
-		t.Errorf("env ต้องเป็นตามที่ผู้ใช้กรอกเท่านั้น ได้ %v", svc.EnvVars)
+	if len(svc.EnvVars) != 0 {
+		t.Errorf("database template ต้องไม่มี env ที่เป็นค่าจริง (อ่านจาก Secret) ได้ %v", svc.EnvVars)
+	}
+	// PostgreSQL ไม่ต้องใช้ root password — ห้ามสุ่มมาเก็บเปล่าๆ
+	if svc.DBRootPassword != "" {
+		t.Error("PostgreSQL ต้องไม่มี root password")
 	}
 
-	// โควตาดิสก์ต้องถูกหักจริง ไม่ใช่แค่เก็บตัวเลขไว้เฉยๆ
+	var row entity.Service
+	if err := db.WithContext(ctx).First(&row, svc.ID).Error; err != nil {
+		t.Fatalf("อ่านแถวไม่สำเร็จ: %v", err)
+	}
+	if row.DBUsername != "appuser" || row.DBName != "appdb" || row.DBPassword != "" {
+		t.Errorf("DB ต้องเก็บ username/db แต่ไม่เก็บรหัส ได้ user=%q db=%q", row.DBUsername, row.DBName)
+	}
+
+	conn, err := mgr.Connection(ctx, svc.ID, ns.ID)
+	if err != nil {
+		t.Fatalf("อ่านข้อมูลการเชื่อมต่อไม่สำเร็จ: %v", err)
+	}
+	want := "postgresql://appuser:p%40ss%3Aw%2Frd%231@my-pg:5432/appdb?sslmode=disable"
+	if conn.URL != want || conn.Password != "p@ss:w/rd#1" || conn.Host != "my-pg" {
+		t.Errorf("connection ไม่ตรง ได้ url=%q host=%q", conn.URL, conn.Host)
+	}
+
 	usage, err := NewQuotaService(db).Usage(ctx, nil, ns.ID)
 	if err != nil {
 		t.Fatalf("อ่านยอดใช้งานไม่สำเร็จ: %v", err)
@@ -97,42 +110,181 @@ func TestCreateDatabaseAppliesRules(t *testing.T) {
 	}
 }
 
-// TestCreateDatabaseAcceptsAnyImage — image อะไรก็ใช้เป็น database ได้
-//
-// ของที่สวิตช์ database ให้จริงๆ (ClusterIP + NetworkPolicy + PVC + 1 pod) ไม่มีข้อไหน
-// ต้องรู้ว่าเป็น database ชนิดไหน คนที่ build image เองจึงต้องไม่ถูกกันออก
-func TestCreateDatabaseAcceptsAnyImage(t *testing.T) {
+// TestCreateDatabaseMySQLGetsRootPassword — MySQL/MariaDB image บังคับ root password: ระบบต้องสุ่มให้เอง
+func TestCreateDatabaseMySQLGetsRootPassword(t *testing.T) {
 	db := testDB(t)
-	ns := dbTestNamespace(t, db, "db-custom-test-ns")
+	ns := dbTestNamespace(t, db, "db-mysql-test-ns")
 	ctx := context.Background()
 	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
 
-	svc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
-		Name: "my-custom-db", Image: "ghcr.io/lab/custom-db:1",
-		CPUMilli: 300, RAMMB: 256, ContainerPort: 9042,
-		IsDatabase: true, DataPath: "/var/lib/customdb/",
-		EnvVars: map[string]string{"ANYTHING": "goes"},
+	svc, err := mgr.CreateDatabase(ctx, 1, ns.ID, CreateDatabaseParams{
+		Engine: EngineMariaDB, Name: "maria", Username: "appuser", Password: "secret123", Database: "appdb",
+		CPUMilli: 300, RAMMB: 256, StorageMB: 2048,
 	})
 	if err != nil {
-		t.Fatalf("image ที่ระบบไม่เคยเห็นต้อง deploy เป็น database ได้: %v", err)
+		t.Fatalf("สร้าง MariaDB ไม่สำเร็จ: %v", err)
+	}
+	if svc.DatabaseVersion != "11.8" || svc.Image != "mariadb:11.8" {
+		t.Errorf("ไม่ระบุ version ต้องได้ default 11.8 ได้ %q (%s)", svc.DatabaseVersion, svc.Image)
+	}
+	if len(svc.DBRootPassword) < 32 {
+		t.Errorf("root password ต้องถูกสุ่มให้ ได้ความยาว %d", len(svc.DBRootPassword))
+	}
+	if svc.StorageMB != 2048 {
+		t.Errorf("StorageMB = %d ต้องเป็น 2048 ตามที่ขอ", svc.StorageMB)
+	}
+}
+
+// TestCreateDatabaseRejectsBadRequests — ทุกเคสต้องคืน error ที่ระบุสาเหตุได้และไม่ทิ้งแถวกินโควตา
+func TestCreateDatabaseRejectsBadRequests(t *testing.T) {
+	db := testDB(t)
+	ns := dbTestNamespace(t, db, "db-reject-test-ns")
+	ctx := context.Background()
+	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
+
+	ok := CreateDatabaseParams{
+		Engine: EnginePostgreSQL, Name: "pg", Username: "appuser", Password: "secret123", Database: "appdb",
+		CPUMilli: 300, RAMMB: 256,
+	}
+	with := func(f func(*CreateDatabaseParams)) CreateDatabaseParams { p := ok; f(&p); return p }
+
+	cases := []struct {
+		name   string
+		params CreateDatabaseParams
+		want   error
+	}{
+		{"engine ที่ไม่มีใน catalog", with(func(p *CreateDatabaseParams) { p.Engine = "mongodb" }), ErrDatabaseEngineNotFound},
+		{"version หมด support/ไม่มี", with(func(p *CreateDatabaseParams) { p.Version = "13" }), ErrDatabaseVersionNotFound},
+		{"username เป็น root", with(func(p *CreateDatabaseParams) { p.Username = "root" }), ErrDatabaseInvalidInput},
+		{"username ขึ้นต้น pg_", with(func(p *CreateDatabaseParams) { p.Username = "pg_app" }), ErrDatabaseInvalidInput},
+		{"username ตัวพิมพ์ใหญ่", with(func(p *CreateDatabaseParams) { p.Username = "AppUser" }), ErrDatabaseInvalidInput},
+		{"password สั้น", with(func(p *CreateDatabaseParams) { p.Password = "short" }), ErrDatabaseInvalidInput},
+		{"password มีช่องว่าง", with(func(p *CreateDatabaseParams) { p.Password = "has space1" }), ErrDatabaseInvalidInput},
+		{"password มี quote", with(func(p *CreateDatabaseParams) { p.Password = "it's-secret" }), ErrDatabaseInvalidInput},
+		{"ชื่อ database ขึ้นต้นตัวเลข", with(func(p *CreateDatabaseParams) { p.Database = "1db" }), ErrDatabaseInvalidInput},
+		{"ชื่อ database ของระบบ", with(func(p *CreateDatabaseParams) { p.Database = "template1" }), ErrDatabaseInvalidInput},
+		{"MySQL RAM ต่ำกว่าขั้นต่ำ", with(func(p *CreateDatabaseParams) { p.Engine = EngineMySQL; p.RAMMB = 512 }), ErrDatabaseRAMTooLow},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := mgr.CreateDatabase(ctx, 1, ns.ID, tc.params); !errors.Is(err, tc.want) {
+				t.Errorf("ได้ error %v ต้องเป็น %v", err, tc.want)
+			}
+		})
 	}
 
-	// ตัด / ท้ายทิ้งให้ เพื่อไม่ให้ "/var/lib/db" กับ "/var/lib/db/" กลายเป็นคนละค่าใน DB
-	if svc.DataPath != "/var/lib/customdb" {
-		t.Errorf("DataPath = %q ต้องเป็น /var/lib/customdb (ตัด / ท้ายออก)", svc.DataPath)
+	usage, err := NewQuotaService(db).Usage(ctx, nil, ns.ID)
+	if err != nil {
+		t.Fatalf("อ่านยอดใช้งานไม่สำเร็จ: %v", err)
 	}
-	if svc.Replicas != entity.StorageReplicas {
-		t.Errorf("Replicas = %d ต้องถูกตรึงที่ %d", svc.Replicas, entity.StorageReplicas)
+	if usage.ServiceCount != 0 {
+		t.Errorf("คำขอที่ถูกปฏิเสธต้องไม่ทิ้งแถวไว้ แต่เหลือ %d service", usage.ServiceCount)
 	}
-	if svc.NodePort != nil {
-		t.Errorf("ต้องไม่ได้ NodePort แต่ได้ %d — เท่ากับเปิดออกนอกคลัสเตอร์", *svc.NodePort)
+}
+
+// TestUpdateTemplateDatabaseOnlyResources — database template แก้ได้แค่ CPU/RAM
+func TestUpdateTemplateDatabaseOnlyResources(t *testing.T) {
+	db := testDB(t)
+	ns := dbTestNamespace(t, db, "db-update-test-ns")
+	ctx := context.Background()
+	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
+
+	svc, err := mgr.CreateDatabase(ctx, 1, ns.ID, CreateDatabaseParams{
+		Engine: EnginePostgreSQL, Name: "pg-upd", Username: "appuser", Password: "secret123", Database: "appdb",
+		CPUMilli: 300, RAMMB: 256,
+	})
+	if err != nil {
+		t.Fatalf("สร้าง database ไม่สำเร็จ: %v", err)
 	}
-	if svc.ContainerPort != 9042 {
-		t.Errorf("ContainerPort = %d ต้องใช้ค่าที่ผู้ใช้กรอก 9042", svc.ContainerPort)
+	same := UpdateServiceParams{
+		Name: svc.Name, Image: svc.Image, CPUMilli: 500, RAMMB: 512, ContainerPort: svc.ContainerPort,
+		Replicas: 1, IsDatabase: true, StorageMB: svc.StorageMB, DataPath: svc.DataPath,
 	}
-	// ไม่ตรวจ env ให้เลย ผู้ใช้ใส่อะไรมาก็ผ่าน (ถ้ากรอกไม่ครบไปรู้ผลที่หน้า Logs แทน)
-	if svc.EnvVars["ANYTHING"] != "goes" {
-		t.Error("env ที่ผู้ใช้กรอกต้องถูกส่งต่อไปตามเดิม")
+	updated, err := mgr.Update(ctx, svc.ID, 1, ns.ID, same)
+	if err != nil {
+		t.Fatalf("แก้ CPU/RAM ต้องผ่าน: %v", err)
+	}
+	if updated.CPUMilli != 500 || updated.RAMMB != 512 || updated.DatabaseEngine != EnginePostgreSQL {
+		t.Errorf("ค่าหลังแก้ไม่ตรง: %+v", updated)
+	}
+
+	for name, f := range map[string]func(*UpdateServiceParams){
+		"เปลี่ยน image": func(p *UpdateServiceParams) { p.Image = "postgres:16" },
+		"ใส่ env":       func(p *UpdateServiceParams) { p.EnvVars = map[string]string{"A": "b"} },
+		"เปลี่ยนชื่อ":   func(p *UpdateServiceParams) { p.Name = "pg-new" },
+	} {
+		p := same
+		f(&p)
+		if _, err := mgr.Update(ctx, svc.ID, 1, ns.ID, p); !errors.Is(err, ErrDatabaseImmutable) {
+			t.Errorf("%s ต้องได้ ErrDatabaseImmutable ได้ %v", name, err)
+		}
+	}
+	low := same
+	low.RAMMB = 128
+	if _, err := mgr.Update(ctx, svc.ID, 1, ns.ID, low); !errors.Is(err, ErrDatabaseRAMTooLow) {
+		t.Errorf("ลด RAM ต่ำกว่าขั้นต่ำต้องได้ ErrDatabaseRAMTooLow ได้ %v", err)
+	}
+
+	// service ธรรมดาเปลี่ยนเป็น database ผ่าน Update ไม่ได้แล้ว
+	web, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{Name: "web", Image: "nginx", CPUMilli: 100, RAMMB: 128})
+	if err != nil {
+		t.Fatalf("สร้าง web ไม่สำเร็จ: %v", err)
+	}
+	if _, err := mgr.Update(ctx, web.ID, 1, ns.ID, UpdateServiceParams{
+		Name: "web", Image: "nginx", CPUMilli: 100, RAMMB: 128, ContainerPort: 8080, Replicas: 1, IsDatabase: true,
+	}); !errors.Is(err, ErrDatabaseUseTemplate) {
+		t.Errorf("สลับ web เป็น database ต้องได้ ErrDatabaseUseTemplate ได้ %v", err)
+	}
+	if _, err := mgr.Connection(ctx, web.ID, ns.ID); !errors.Is(err, ErrNotTemplateDatabase) {
+		t.Errorf("connection ของ web ต้องได้ ErrNotTemplateDatabase ได้ %v", err)
+	}
+}
+
+// TestCreateWebStorageRejectsBadRequests — web ที่ขอดิสก์ต้องผ่านกติกาจุด mount/replica
+func TestCreateWebStorageRejectsBadRequests(t *testing.T) {
+	db := testDB(t)
+	ns := dbTestNamespace(t, db, "web-reject-test-ns")
+	ctx := context.Background()
+	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
+
+	cases := []struct {
+		name   string
+		params CreateServiceParams
+		want   error
+	}{
+		{
+			name: "web ขอดิสก์แต่ไม่บอกจุดเก็บข้อมูล",
+			params: CreateServiceParams{
+				Name: "web-disk", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
+				StorageMB: 4096,
+			},
+			want: ErrDataPathRequired,
+		},
+		{
+			name: "web ที่มีดิสก์ขอหลาย replica",
+			params: CreateServiceParams{
+				Name: "web-disk-many", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
+				StorageMB: 4096, DataPath: "/var/www/html", Replicas: 3,
+			},
+			want: ErrStorageReplicas,
+		},
+		{
+			name: "web ส่งแค่ data_path ก็ถือว่าขอดิสก์ ต้องผ่านกติกา path",
+			params: CreateServiceParams{
+				Name: "web-badpath", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
+				DataPath: "/etc/nextcloud",
+			},
+			want: ErrDataPathRequired,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mgr.Create(ctx, 1, ns.ID, tc.params)
+			if !errors.Is(err, tc.want) {
+				t.Errorf("ได้ error %v ต้องเป็น %v", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -181,97 +333,6 @@ func TestCreateWebWithStorage(t *testing.T) {
 	}
 }
 
-// TestCreateDatabaseRejectsBadRequests — ทุกเคสต้องคืน error ที่ระบุสาเหตุได้
-// เพราะ controller แปลงเป็น error code คนละตัวให้หน้าเว็บจัดการต่างกัน
-func TestCreateDatabaseRejectsBadRequests(t *testing.T) {
-	db := testDB(t)
-	ns := dbTestNamespace(t, db, "db-reject-test-ns")
-	ctx := context.Background()
-	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
-
-	cases := []struct {
-		name   string
-		params CreateServiceParams
-		want   error
-	}{
-		{
-			name: "ไม่บอกจุดเก็บข้อมูล",
-			params: CreateServiceParams{
-				Name: "nopath", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-				IsDatabase: true,
-			},
-			want: ErrDataPathRequired,
-		},
-		{
-			name: "จุดเก็บข้อมูลไม่ใช่ absolute path",
-			params: CreateServiceParams{
-				Name: "badpath", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-				IsDatabase: true, DataPath: "data/mydb",
-			},
-			want: ErrDataPathRequired,
-		},
-		{
-			name: "mount ทับโฟลเดอร์ระบบ",
-			params: CreateServiceParams{
-				Name: "syspath", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-				IsDatabase: true, DataPath: "/usr/local/data",
-			},
-			want: ErrDataPathRequired,
-		},
-		{
-			name: "ขอหลาย replica ให้ database",
-			params: CreateServiceParams{
-				Name: "pg-many", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-				IsDatabase: true, DataPath: "/var/lib/postgresql/data", Replicas: 3,
-			},
-			want: ErrStorageReplicas,
-		},
-		// web ขอดิสก์ได้แล้ว (docs 022) แต่ต้องผ่านกติกาเดียวกับ database ทุกข้อ
-		{
-			name: "web ขอดิสก์แต่ไม่บอกจุดเก็บข้อมูล",
-			params: CreateServiceParams{
-				Name: "web-disk", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
-				StorageMB: 4096,
-			},
-			want: ErrDataPathRequired,
-		},
-		{
-			name: "web ที่มีดิสก์ขอหลาย replica",
-			params: CreateServiceParams{
-				Name: "web-disk-many", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
-				StorageMB: 4096, DataPath: "/var/www/html", Replicas: 3,
-			},
-			want: ErrStorageReplicas,
-		},
-		{
-			name: "web ส่งแค่ data_path ก็ถือว่าขอดิสก์ ต้องผ่านกติกา path",
-			params: CreateServiceParams{
-				Name: "web-badpath", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256,
-				DataPath: "/etc/nextcloud",
-			},
-			want: ErrDataPathRequired,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := mgr.Create(ctx, 1, ns.ID, tc.params)
-			if !errors.Is(err, tc.want) {
-				t.Errorf("ได้ error %v ต้องเป็น %v", err, tc.want)
-			}
-		})
-	}
-
-	// ไม่มีคำขอไหนผ่านเลย = ต้องไม่มีแถวค้างกินโควตาอยู่
-	usage, err := NewQuotaService(db).Usage(ctx, nil, ns.ID)
-	if err != nil {
-		t.Fatalf("อ่านยอดใช้งานไม่สำเร็จ: %v", err)
-	}
-	if usage.ServiceCount != 0 {
-		t.Errorf("คำขอที่ถูกปฏิเสธต้องไม่ทิ้งแถวไว้ แต่เหลือ %d service", usage.ServiceCount)
-	}
-}
-
 // TestScaleWithStorageIsRejected — หน้าเว็บซ่อน dropdown ให้แล้ว แต่เส้น PATCH เรียกตรงได้
 // ด่านจริงต้องอยู่ที่ service layer ไม่ใช่ที่ UI — กันทุก service ที่มีดิสก์ ไม่ใช่แค่ database
 func TestScaleWithStorageIsRejected(t *testing.T) {
@@ -280,18 +341,21 @@ func TestScaleWithStorageIsRejected(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
 
-	for _, p := range []CreateServiceParams{
-		{Name: "pg-scale", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-			IsDatabase: true, DataPath: "/var/lib/postgresql/data"},
-		{Name: "nc-scale", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256, ContainerPort: 80,
-			StorageMB: 2048, DataPath: "/var/www/html"},
-	} {
-		svc, err := mgr.Create(ctx, 1, ns.ID, p)
-		if err != nil {
-			t.Fatalf("สร้าง %s ไม่สำเร็จ: %v", p.Name, err)
-		}
+	pg, err := mgr.CreateDatabase(ctx, 1, ns.ID, CreateDatabaseParams{
+		Engine: EnginePostgreSQL, Name: "pg-scale", Username: "appuser", Password: "secret123", Database: "appdb",
+		CPUMilli: 300, RAMMB: 256,
+	})
+	if err != nil {
+		t.Fatalf("สร้าง pg-scale ไม่สำเร็จ: %v", err)
+	}
+	nc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{Name: "nc-scale", Image: "nextcloud:apache",
+		CPUMilli: 300, RAMMB: 256, ContainerPort: 80, StorageMB: 2048, DataPath: "/var/www/html"})
+	if err != nil {
+		t.Fatalf("สร้าง nc-scale ไม่สำเร็จ: %v", err)
+	}
+	for _, svc := range []*entity.Service{pg, nc} {
 		if _, err := mgr.Scale(ctx, svc.ID, ns.ID, 3); !errors.Is(err, ErrStorageReplicas) {
-			t.Errorf("scale %s ต้องถูกปฏิเสธด้วย ErrStorageReplicas ได้ %v", p.Name, err)
+			t.Errorf("scale %s ต้องถูกปฏิเสธด้วย ErrStorageReplicas ได้ %v", svc.Name, err)
 		}
 	}
 }
@@ -305,19 +369,19 @@ func TestDeleteWithStorageReleasesStorage(t *testing.T) {
 	quota := NewQuotaService(db)
 	mgr := NewServiceManager(db, quota, NewMockProvisioner())
 
-	var created []*entity.Service
-	for _, p := range []CreateServiceParams{
-		{Name: "pg-del", Image: "postgres:16", CPUMilli: 300, RAMMB: 256,
-			IsDatabase: true, StorageMB: 2048, DataPath: "/var/lib/postgresql/data"},
-		{Name: "nc-del", Image: "nextcloud:apache", CPUMilli: 300, RAMMB: 256, ContainerPort: 80,
-			StorageMB: 3072, DataPath: "/var/www/html"},
-	} {
-		svc, err := mgr.Create(ctx, 1, ns.ID, p)
-		if err != nil {
-			t.Fatalf("สร้าง %s ไม่สำเร็จ: %v", p.Name, err)
-		}
-		created = append(created, svc)
+	pg, err := mgr.CreateDatabase(ctx, 1, ns.ID, CreateDatabaseParams{
+		Engine: EnginePostgreSQL, Name: "pg-del", Username: "appuser", Password: "secret123", Database: "appdb",
+		CPUMilli: 300, RAMMB: 256, StorageMB: 2048,
+	})
+	if err != nil {
+		t.Fatalf("สร้าง pg-del ไม่สำเร็จ: %v", err)
 	}
+	nc, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{Name: "nc-del", Image: "nextcloud:apache",
+		CPUMilli: 300, RAMMB: 256, ContainerPort: 80, StorageMB: 3072, DataPath: "/var/www/html"})
+	if err != nil {
+		t.Fatalf("สร้าง nc-del ไม่สำเร็จ: %v", err)
+	}
+	created := []*entity.Service{pg, nc}
 
 	usage, err := quota.Usage(ctx, nil, ns.ID)
 	if err != nil {
