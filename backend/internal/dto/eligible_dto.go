@@ -10,10 +10,11 @@ type AddEligibleStudentRequest struct {
 	Students []EligibleStudentItem `json:"students" binding:"required,min=1,dive"`
 }
 
-// AddSingleEligibleStudentRequest = body ของ POST /api/admin/eligible-students/single — แอดมินเพิ่มทีละคนเอง
+// SingleEligibleStudentRequest = body ของ POST /api/admin/eligible-students/single (เพิ่มทีละคน)
+// และ PATCH /api/admin/eligible-students/:studentId (แก้ไขทีละคน)
 // ต่างจาก import ตรงที่กำหนด role ได้ ชื่อไม่บังคับ (เว้นว่าง = คงชื่อเดิม) และ admin ไม่ต้องมีสถานภาพ
 // data flow: JSON จาก client → AdminController.AddEligibleStudent → UPSERT eligible_students (+ users.role_id)
-type AddSingleEligibleStudentRequest struct {
+type SingleEligibleStudentRequest struct {
 	StudentID        string `json:"student_id" binding:"required,max=20"`
 	RealName         string `json:"real_name" binding:"max=150"`
 	Major            string `json:"major" binding:"required,min=2,max=100"`

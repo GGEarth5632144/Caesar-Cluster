@@ -76,14 +76,14 @@ func (h *AdminController) ListEligibleStudents(c *gin.Context) {
 
 // AddEligibleStudent เพิ่ม/อัปเดตผู้มีสิทธิ์ทีละคนจากหน้า User Management พร้อมกำหนด role
 //
-// data flow: JSON body → bind AddSingleEligibleStudentRequest → ใน transaction เดียว:
+// data flow: JSON body → bind SingleEligibleStudentRequest → ใน transaction เดียว:
 // UPSERT eligible_students (real_name เขียนทับเฉพาะเมื่อกรอกมา) → ถ้ารหัสนี้สมัครเป็นผู้ใช้แล้ว
 // UPDATE users.role_id ให้ตรงกับ role ที่เลือก → ตอบแถวล่าสุด + บอกว่าเปลี่ยน role ของบัญชีที่มีอยู่หรือไม่
 //
 // ต้องอัปเดตบัญชีด้วย ไม่งั้นการเลือก role ให้คนที่สมัครไปแล้วจะไม่มีผลอะไร (Register อ่าน role จาก
 // ตารางนี้ครั้งเดียวตอนสมัคร) ส่วนคนที่ยังไม่สมัครจะได้ role นี้ตอนสมัคร
 func (h *AdminController) AddEligibleStudent(c *gin.Context) {
-	var req dto.AddSingleEligibleStudentRequest
+	var req dto.SingleEligibleStudentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
@@ -96,19 +96,8 @@ func (h *AdminController) AddEligibleStudent(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// กันแอดมินลดสิทธิ์ตัวเองจากฟอร์มนี้ — กดพลาดครั้งเดียวคือหลุดจากหน้าแอดมินทันทีและแก้คืนเองไม่ได้
-	if req.Role != entity.RoleAdmin {
-		var me entity.User
-		if err := h.db.WithContext(ctx).First(&me, c.GetInt("userID")).Error; err == nil && me.StudentID == studentID {
-			utils.Error(c, http.StatusBadRequest, "CANNOT_DEMOTE_SELF", "ไม่สามารถลดสิทธิ์ผู้ดูแลระบบของตัวเองได้")
-			return
-		}
-	}
-
-	var role entity.Role
-	if err := h.db.WithContext(ctx).Where("name = ?", req.Role).First(&role).Error; err != nil {
-		log.Printf("add eligible student: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", req.Role, err)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ระบบยังตั้งค่าไม่ครบ")
+	role, ok := h.resolveEligibleRole(c, studentID, req.Role)
+	if !ok {
 		return
 	}
 
@@ -138,14 +127,9 @@ func (h *AdminController) AddEligibleStudent(c *gin.Context) {
 				return err
 			}
 		}
-		res := tx.Model(&entity.User{}).
-			Where("student_id = ? AND role_id <> ?", studentID, role.ID).
-			Update("role_id", role.ID)
-		if res.Error != nil {
-			return res.Error
-		}
-		userRoleUpdated = res.RowsAffected > 0
-		return nil
+		var err error
+		userRoleUpdated, err = syncUserRole(tx, studentID, role.ID)
+		return err
 	})
 	if err != nil {
 		log.Printf("add eligible student %q error: %v", studentID, err)
@@ -162,6 +146,186 @@ func (h *AdminController) AddEligibleStudent(c *gin.Context) {
 		"student":           saved,
 		"user_role_updated": userRoleUpdated,
 	})
+}
+
+func (h *AdminController) UpdateEligibleStudent(c *gin.Context) {
+	oldID := c.Param("studentId")
+	var req dto.SingleEligibleStudentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+	newID := strings.TrimSpace(req.StudentID)
+	if newID == "" {
+		utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID", "กรุณากรอกรหัสประจำตัว")
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var current entity.EligibleStudent
+	if err := h.db.WithContext(ctx).Where("student_id = ?", oldID).First(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบรายชื่อนี้")
+			return
+		}
+		log.Printf("update eligible student %q: load error: %v", oldID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "แก้ไขผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	role, ok := h.resolveEligibleRole(c, oldID, req.Role)
+	if !ok {
+		return
+	}
+
+	if newID != oldID {
+		var taken int64
+		if err := h.db.WithContext(ctx).Model(&entity.EligibleStudent{}).
+			Where("LOWER(student_id) = LOWER(?) AND student_id <> ?", newID, oldID).
+			Count(&taken).Error; err != nil {
+			log.Printf("update eligible student %q: check duplicate error: %v", oldID, err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "แก้ไขผู้มีสิทธิ์ไม่สำเร็จ")
+			return
+		}
+		if taken > 0 {
+			utils.Error(c, http.StatusConflict, "STUDENT_ID_TAKEN", "รหัสประจำตัวนี้มีในรายชื่ออยู่แล้ว")
+			return
+		}
+	}
+
+	status := req.EnrollmentStatus
+	if req.Role == entity.RoleAdmin {
+		status = 0
+	}
+
+	var userUpdated bool
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if newID != oldID {
+			moved := current
+			moved.StudentID = newID
+			if err := tx.Create(&moved).Error; err != nil {
+				return err
+			}
+			res := tx.Model(&entity.User{}).Where("student_id = ?", oldID).Update("student_id", newID)
+			if res.Error != nil {
+				return res.Error
+			}
+			userUpdated = res.RowsAffected > 0
+			if err := tx.Model(&entity.NamespaceInvite{}).Where("invited_student_id = ?", oldID).
+				Update("invited_student_id", newID).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("student_id = ?", oldID).Delete(&entity.EligibleStudent{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&entity.EligibleStudent{}).Where("student_id = ?", newID).Updates(map[string]any{
+			"real_name":         strings.TrimSpace(req.RealName),
+			"major":             strings.TrimSpace(req.Major),
+			"enrollment_status": status,
+			"role":              req.Role,
+		}).Error; err != nil {
+			return err
+		}
+		roleUpdated, err := syncUserRole(tx, newID, role.ID)
+		userUpdated = userUpdated || roleUpdated
+		return err
+	})
+	if err != nil {
+		log.Printf("update eligible student %q error: %v", oldID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "แก้ไขผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	var saved entity.EligibleStudent
+	if err := h.db.WithContext(ctx).Where("student_id = ?", newID).First(&saved).Error; err != nil {
+		log.Printf("update eligible student: re-read %q error: %v", newID, err)
+	}
+	utils.OK(c, http.StatusOK, gin.H{
+		"student":      saved,
+		"user_updated": userUpdated,
+	})
+}
+
+func (h *AdminController) DeleteEligibleStudent(c *gin.Context) {
+	studentID := c.Param("studentId")
+	ctx := c.Request.Context()
+
+	if h.isSelf(c, studentID) {
+		utils.Error(c, http.StatusBadRequest, "CANNOT_DELETE_SELF", "ไม่สามารถลบรายชื่อของตัวเองได้")
+		return
+	}
+
+	var row entity.EligibleStudent
+	if err := h.db.WithContext(ctx).Where("student_id = ?", studentID).First(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Error(c, http.StatusNotFound, "NOT_FOUND", "ไม่พบรายชื่อนี้")
+			return
+		}
+		log.Printf("delete eligible student %q: load error: %v", studentID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	var user entity.User
+	userDeleted := false
+	err := h.db.WithContext(ctx).Where("student_id = ?", studentID).First(&user).Error
+	switch {
+	case err == nil:
+		if msg, err := h.deleteUserAccount(ctx, user.ID); err != nil {
+			log.Printf("delete eligible student %q: delete user %d: %v", studentID, user.ID, err)
+			utils.Error(c, http.StatusInternalServerError, "INTERNAL", msg)
+			return
+		}
+		userDeleted = true
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		log.Printf("delete eligible student %q: load user error: %v", studentID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("invited_student_id = ?", studentID).Delete(&entity.NamespaceInvite{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("student_id = ?", studentID).Delete(&entity.EligibleStudent{}).Error
+	})
+	if err != nil {
+		log.Printf("delete eligible student %q error: %v", studentID, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้มีสิทธิ์ไม่สำเร็จ")
+		return
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"student_id": studentID, "user_deleted": userDeleted})
+}
+
+func (h *AdminController) resolveEligibleRole(c *gin.Context, studentID, roleName string) (entity.Role, bool) {
+	var role entity.Role
+	// กันแอดมินลดสิทธิ์ตัวเองจากฟอร์มนี้ — กดพลาดครั้งเดียวคือหลุดจากหน้าแอดมินทันทีและแก้คืนเองไม่ได้
+	if roleName != entity.RoleAdmin && h.isSelf(c, studentID) {
+		utils.Error(c, http.StatusBadRequest, "CANNOT_CHANGE_OWN_ROLE", "ไม่สามารถแก้ไข Role ของตัวเองได้")
+		return role, false
+	}
+	if err := h.db.WithContext(c.Request.Context()).Where("name = ?", roleName).First(&role).Error; err != nil {
+		log.Printf("eligible student: role '%s' หายไปจาก DB (ลืมรัน seed?): %v", roleName, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ระบบยังตั้งค่าไม่ครบ")
+		return role, false
+	}
+	return role, true
+}
+
+func (h *AdminController) isSelf(c *gin.Context, studentID string) bool {
+	var me entity.User
+	err := h.db.WithContext(c.Request.Context()).First(&me, c.GetInt("userID")).Error
+	return err == nil && me.StudentID == studentID
+}
+
+func syncUserRole(tx *gorm.DB, studentID string, roleID int) (bool, error) {
+	res := tx.Model(&entity.User{}).
+		Where("student_id = ? AND role_id <> ?", studentID, roleID).
+		Update("role_id", roleID)
+	return res.RowsAffected > 0, res.Error
 }
 
 // AddEligibleStudents = ขั้น "confirm" ของการ import รายชื่อ นศ. ที่มีสิทธิ์สมัครใช้งาน
@@ -1123,6 +1287,11 @@ func (h *AdminController) UpdateUser(c *gin.Context) {
 		return
 	}
 
+	if req.RoleID != nil && *req.RoleID != user.RoleID && id == c.GetInt("userID") {
+		utils.Error(c, http.StatusBadRequest, "CANNOT_CHANGE_OWN_ROLE", "ไม่สามารถแก้ไข Role ของตัวเองได้")
+		return
+	}
+
 	updates := make(map[string]interface{})
 
 	if req.StudentID != nil {
@@ -1204,46 +1373,46 @@ func (h *AdminController) DeleteUser(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, "INVALID_ID", "id ต้องเป็นตัวเลข")
 		return
 	}
-	ctx := c.Request.Context()
+
+	if msg, err := h.deleteUserAccount(c.Request.Context(), id); err != nil {
+		log.Printf("delete user %d: %v", id, err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", msg)
+		return
+	}
+
+	utils.OK(c, http.StatusOK, gin.H{"message": "ลบผู้ใช้งานสำเร็จ"})
+}
+
+func (h *AdminController) deleteUserAccount(ctx context.Context, id int) (string, error) {
+	const failed = "ลบผู้ใช้งานไม่สำเร็จ"
 
 	// 1) space ที่ user เป็นเจ้าของ — ลบทั้งก้อน (service/ใบเสร็จ AI/แถว monitoring ข้างในหายตาม
 	//    ด้วย FK ส่วนสมาชิกคนอื่นแค่หลุดออกจาก space ไม่ถูกลบบัญชี)
 	var owned []entity.Namespace
 	if err := h.db.WithContext(ctx).Where("contributor_id = ?", id).Find(&owned).Error; err != nil {
-		log.Printf("delete user %d: list owned namespaces error: %v", id, err)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
-		return
+		return failed, fmt.Errorf("list owned namespaces: %w", err)
 	}
 	for _, ns := range owned {
 		if err := h.ns.Delete(ctx, ns.ID); err != nil && !errors.Is(err, services.ErrNamespaceNotFound) {
-			log.Printf("delete user %d: delete namespace %d error: %v", id, ns.ID, err)
-			utils.Error(c, http.StatusInternalServerError, "INTERNAL",
-				"ลบ namespace ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)")
-			return
+			return "ลบ namespace ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)",
+				fmt.Errorf("delete namespace %d: %w", ns.ID, err)
 		}
 	}
 
 	// 2) service ที่ user ไปสร้างค้างไว้ใน space ของคนอื่น — ถอนทีละตัวให้โควตาของกลุ่มนั้นคืนจริง
 	var leftovers []entity.Service
 	if err := h.db.WithContext(ctx).Where("created_by = ?", id).Order("id").Find(&leftovers).Error; err != nil {
-		log.Printf("delete user %d: list leftover services error: %v", id, err)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
-		return
+		return failed, fmt.Errorf("list leftover services: %w", err)
 	}
 	for _, svc := range leftovers {
 		if err := h.svc.Delete(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, services.ErrServiceNotFound) {
-			log.Printf("delete user %d: delete service %d error: %v", id, svc.ID, err)
-			utils.Error(c, http.StatusInternalServerError, "INTERNAL",
-				"ลบ service ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)")
-			return
+			return "ลบ service ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)",
+				fmt.Errorf("delete service %d: %w", svc.ID, err)
 		}
 	}
 
 	if err := h.db.WithContext(ctx).Delete(&entity.User{}, id).Error; err != nil {
-		log.Printf("delete user %d error: %v", id, err)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ลบผู้ใช้งานไม่สำเร็จ")
-		return
+		return failed, fmt.Errorf("delete user row: %w", err)
 	}
-
-	utils.OK(c, http.StatusOK, gin.H{"message": "ลบผู้ใช้งานสำเร็จ"})
+	return "", nil
 }
