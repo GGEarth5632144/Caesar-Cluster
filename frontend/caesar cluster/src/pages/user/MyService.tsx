@@ -22,7 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { ServiceCardsSkeleton } from "@/components/ui/PageSkeletons";
 import GroupMembers from "@/components/GroupMembers";
-import { serviceApi, isSettled, hasStorage, type AppService } from "@/api/services";
+import { serviceApi, isSettled, hasStorage, type AppService , type UpdateServiceDTO } from "@/api/services";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
@@ -242,6 +242,7 @@ export default function MyService() {
     (s) => s.status === "crashloop" || s.status === "failed",
   ).length;
   const [selectedServiceDetail, setSelectedServiceDetail] = useState<any>(null);
+  const [editingService, setEditingService] = useState<any>(null);
   // ช่องค้นหาบน Topbar กรองการ์ดด้านล่าง — ตัวเลขสรุปบรรทัดบนยังนับจาก services ทั้งหมด
   // เพราะเป็นภาพรวมของเนมสเปซ ไม่ใช่ผลของคำค้น
   const {
@@ -368,11 +369,8 @@ export default function MyService() {
                   title="ดูข้อมูลฉบับเต็ม"
                 >
                   <Eye size={16} />
-                  ตรวจสอบข้อมูล
+                  ตรวจสอบข้อมูล และ แก้ไข
                 </button>
-                {/* ── ทำไมถึงไม่ขึ้น ────────────────────────────────────────────────
-                    ไม่ซ่อนไว้หลังปุ่ม Logs เพราะ log ตัวจริงหายไปกับ pod ที่ถูกสร้างใหม่
-                    backend จึงเก็บ snapshot ไว้ให้ตั้งแต่ตอนตรวจเจอ */}
                 {(svc.status === "crashloop" ||
                   svc.status === "pending" ||
                   svc.status === "failed") && (
@@ -605,6 +603,48 @@ export default function MyService() {
                     <p className="font-mono text-sm break-all text-[#BB6653]">{selectedServiceDetail.image}</p>
                   </div>
 
+                  {(selectedServiceDetail.status === "crashloop" ||
+                    selectedServiceDetail.status === "pending" ||
+                    selectedServiceDetail.status === "failed") && (
+                    <div
+                      className={cn(
+                        "flex flex-col gap-2 rounded-2xl border p-4",
+                        selectedServiceDetail.status === "pending"
+                          ? "border-[#A96A15]/20 bg-[#FBEFD9]"
+                          : "border-red-100 bg-red-50"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex items-center gap-1.5 text-sm font-bold",
+                          selectedServiceDetail.status === "pending"
+                            ? "text-[#A96A15]"
+                            : "text-red-600"
+                        )}
+                      >
+                        <AlertTriangle size={16} className="shrink-0" />
+                        {selectedServiceDetail.status_reason || "ไม่ทราบสาเหตุ"}
+                        {selectedServiceDetail.restart_count > 0 && (
+                          <span className="font-normal opacity-70">
+                            · restart {selectedServiceDetail.restart_count} ครั้ง
+                          </span>
+                        )}
+                      </span>
+
+                      {statusAdvice(selectedServiceDetail) && (
+                        <span className="text-sm leading-relaxed text-[#211a14]/70">
+                          {statusAdvice(selectedServiceDetail)}
+                        </span>
+                      )}
+
+                      {selectedServiceDetail.status_message && (
+                        <pre className="mt-1 max-h-32 overflow-auto rounded-lg bg-white/60 p-3 text-xs leading-relaxed text-[#211a14]/70 custom-scrollbar">
+                          {selectedServiceDetail.status_message}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
                       <Cpu size={18} className="text-[#BB6653]" />
@@ -624,7 +664,22 @@ export default function MyService() {
                       <p className="font-bold">{selectedServiceDetail.container_port}</p>
                     </div>
                   </div>
-
+                  <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-2">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Environment Variables</p>
+                    {selectedServiceDetail.env_vars && Object.keys(selectedServiceDetail.env_vars).length > 0 ? (
+                      <div className="flex flex-col gap-1.5 rounded-xl bg-black/[0.02] border border-black/5 p-3">
+                        {Object.entries(selectedServiceDetail.env_vars).map(([key, value]) => (
+                          <div key={key} className="font-mono text-sm break-all flex gap-1.5">
+                            <span className="font-bold text-[#BB6653] shrink-0">{key}</span>
+                            <span className="text-[#211a14]/30">=</span>
+                            <span className="text-[#211a14]/70">{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[#211a14]/40">No environment variables</p>
+                    )}
+                  </div>
                   <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-2">
                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Network & Routing</p>
                     <div className="flex items-center gap-2">
@@ -639,13 +694,20 @@ export default function MyService() {
                     </div>
                   </div>
                 </div>
-
-                <button 
-                  onClick={() => setSelectedServiceDetail(null)} 
-                  className="mt-2 w-full py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#211a14] font-bold transition-colors"
-                >
-                  Close
-                </button>
+                <div className="mt-2 flex items-center gap-3 w-full">
+                  <button 
+                    onClick={() => setSelectedServiceDetail(null)} 
+                    className="flex-1 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#211a14] font-bold transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button 
+                    onClick={() => {setEditingService(selectedServiceDetail); setSelectedServiceDetail(null);}} 
+                    className="flex-1 py-3 rounded-xl bg-[#FBEFD9] hover:bg-[#f2e0c2] text-[#A96A15] font-bold transition-colors"
+                  >
+                    Update and Re-deploy
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -665,6 +727,21 @@ export default function MyService() {
             setServices((prev) => [svc, ...prev]);
             fetchNamespace();
             setShowCreate(false);
+          }}
+        />
+      )}
+
+      {editingService && (
+        <EditServiceModal
+          service={editingService}
+          namespace={namespace}
+          onClose={() => setEditingService(null)}
+          onUpdated={(updatedSvc) => {
+            // อัปเดตรายการลงใน State ทันที
+            setServices((prev) => prev.map((s) => s.id === updatedSvc.id ? updatedSvc : s));
+            fetchNamespace();
+            setEditingService(null);
+            setSelectedServiceDetail(updatedSvc); // ให้ Modal ข้อมูลรีเฟรชข้อมูลล่าสุดด้วย (ถ้าเปิดไว้)
           }}
         />
       )}
@@ -1508,6 +1585,827 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
 
       </div>
     </div>
+  );
+}
+// ─── Edit Modal ────────────────────────────────────────────────────────────────
+interface EditServiceModalProps {
+  service: AppService; 
+  namespace: NamespaceDetail | null;
+  onClose: () => void;
+  onUpdated: (svc: AppService) => void;
+}
+
+export function EditServiceModal({ service, namespace, onClose, onUpdated }: EditServiceModalProps) {
+  // ดึงค่าเดิมจาก service มาใส่เป็นค่าเริ่มต้นทั้งหมด
+  const [image, setImage] = useState(service.image || "");
+  const [name, setName] = useState(service.name || "");
+  const [cpuMilli, setCpuMilli] = useState(service.cpu_milli || 500);
+  const [ramMb, setRamMb] = useState(service.ram_mb || 512);
+  const [containerPort, setContainerPort] = useState(String(service.container_port || "8080"));
+  const [replicas, setReplicas] = useState(service.replicas || 1);
+  
+  // แปลง JSON Object กลับมาเป็น Array ของ EnvPair เพื่อแสดงในตาราง
+  const [envVars, setEnvVars] = useState<EnvPair[]>(() => {
+    if (!service.env_vars || Object.keys(service.env_vars).length === 0) {
+      return [{ key: "", value: "" }];
+    }
+    return Object.entries(service.env_vars).map(([key, value]) => ({
+      key,
+      value: String(value)
+    }));
+  });
+
+  const [envNotice, setEnvNotice] = useState<string | null>(null);
+  const envFileRef = useRef<HTMLInputElement>(null);
+
+  const [isDatabase, setIsDatabase] = useState(service.is_database || false);
+  const [withStorage, setWithStorage] = useState(!service.is_database && (service.storage_mb > 0));
+  const storageOn = isDatabase || withStorage;
+  
+  const [storageMb, setStorageMb] = useState<number>(service.storage_mb || STORAGE_BOUNDS.defaultMB);
+  const [storageUnit, setStorageUnit] = useState<StorageUnit>("GB");
+  const [dataPath, setDataPath] = useState(service.data_path || "");
+
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  
+  // State สำหรับควบคุม 2-Step Verification
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const dataPathError = storageOn ? validateDataPath(dataPath) : "";
+
+  // โควตา: โหมดแก้ไข ต้องเอาที่ service เดิมใช้อยู่ "บวกกลับ" เข้าไปให้ available ก่อน
+  const cpuLimit = namespace?.cpu_limit_milli ?? 0;
+  const ramLimit = namespace?.ram_limit_mb ?? 0;
+  const cpuUsed = namespace?.usage.used_cpu_milli ?? 0;
+  const ramUsed = namespace?.usage.used_ram_mb ?? 0;
+  const storageLimit = namespace?.storage_limit_mb ?? 0;
+  const storageUsed = namespace?.usage.used_storage_mb ?? 0;
+
+  // คืนโควตาที่ service นี้ถืออยู่ ณ ปัจจุบัน
+  const originalReplicas = (service.is_database || service.storage_mb > 0) ? 1 : service.replicas;
+  const originalCpuTotal = service.cpu_milli * originalReplicas;
+  const originalRamTotal = service.ram_mb * originalReplicas;
+  const originalStorageTotal = service.storage_mb || 0;
+
+  // เอาโควตาที่เหลือจริง + โควตาที่ service นี้กอดไว้ = โควตาที่สามารถแก้ไขไปถึงได้
+  const cpuAvailable = Math.max(cpuLimit - cpuUsed + originalCpuTotal, 0);
+  const ramAvailable = Math.max(ramLimit - ramUsed + originalRamTotal, 0);
+  const storageAvailable = Math.max(storageLimit - storageUsed + originalStorageTotal, 0);
+
+  const effectiveReplicas = storageOn ? 1 : replicas;
+
+  const cpuTotal = cpuMilli * effectiveReplicas;
+  const ramTotal = ramMb * effectiveReplicas;
+  const storageTotal = storageOn ? storageMb : 0;
+
+  const cpuRemaining = cpuAvailable - cpuTotal;
+  const ramRemaining = ramAvailable - ramTotal;
+  const storageRemaining = storageAvailable - storageTotal;
+
+  const overCpu = namespace !== null && cpuRemaining < 0;
+  const overRam = namespace !== null && ramRemaining < 0;
+  const overStorage = namespace !== null && storageOn && storageRemaining < 0;
+
+  const cpuFit = namespace ? floorTo(cpuAvailable / effectiveReplicas, 100) : MAX_CPU_MILLI;
+  const ramFit = namespace ? floorTo(ramAvailable / effectiveReplicas, 128) : MAX_RAM_MB;
+  const storageFit = namespace ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB) : STORAGE_BOUNDS.maxMB;
+  const cpuFull = cpuFit < MIN_CPU_MILLI;
+  const ramFull = ramFit < MIN_RAM_MB;
+  const storageFull = storageFit < STORAGE_BOUNDS.minMB;
+  const cpuMax = clamp(cpuFit, MIN_CPU_MILLI, MAX_CPU_MILLI);
+  const ramMax = clamp(ramFit, MIN_RAM_MB, MAX_RAM_MB);
+  const storageMax = clamp(storageFit, STORAGE_BOUNDS.minMB, STORAGE_BOUNDS.maxMB);
+
+  useEffect(() => setCpuMilli((v) => Math.min(v, cpuMax)), [cpuMax]);
+  useEffect(() => setRamMb((v) => Math.min(v, ramMax)), [ramMax]);
+  useEffect(() => setStorageMb((v) => Math.min(v, storageMax)), [storageMax]);
+
+  const buildEnvMap = () => {
+    const env: Record<string, string> = {};
+    envVars.forEach(({ key, value }) => { if (key.trim()) env[key.trim()] = value; });
+    return env;
+  };
+
+  const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+  const nameHasError = name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
+
+  const portNumber = Number(containerPort);
+  const portIsValid =
+    containerPort.trim() !== "" &&
+    Number.isInteger(portNumber) &&
+    portNumber >= MIN_CONTAINER_PORT &&
+    portNumber <= MAX_CONTAINER_PORT;
+
+  const canSubmit =
+    image.trim().length >= 3 &&
+    name.trim().length >= 3 &&
+    NAME_PATTERN.test(name.trim()) &&
+    portIsValid &&
+    !overCpu &&
+    !overRam &&
+    !overStorage &&
+    (!storageOn || dataPathError === "");
+
+  const blockedReason = !storageOn
+    ? null
+    : dataPathError
+      ? dataPathError
+      : overStorage
+        ? "พื้นที่เก็บข้อมูลที่ขอเกินโควตาที่กลุ่มเหลืออยู่"
+        : null;
+
+  const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const removeEnvRow = (i: number) => setEnvVars((p) => p.filter((_, idx) => idx !== i));
+  const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
+    setEnvVars((p) => { const n = [...p]; n[i] = { ...n[i], [field]: val }; return n; });
+
+  const applyParsedEnv = (base: EnvPair[], parsed: EnvPair[], source: string) => {
+    const merged = mergeEnv(base, parsed);
+    setEnvVars(merged.slice(0, MAX_ENV_VARS));
+    setEnvNotice(
+      merged.length > MAX_ENV_VARS
+        ? `เพิ่มตัวแปรจาก${source}แล้ว — เก็บได้สูงสุด ${MAX_ENV_VARS} ตัว ส่วนที่เกินถูกตัดออก`
+        : `เพิ่ม ${parsed.length} ตัวแปรจาก${source}`,
+    );
+  };
+
+  const handleEnvPaste = (i: number, e: ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (!/[\n=]/.test(text)) return;
+    const parsed = parseEnvText(text);
+    if (parsed.length === 0) return;
+    e.preventDefault();
+    applyParsedEnv(envVars.filter((_, idx) => idx !== i), parsed, "ที่วางมา");
+  };
+
+  const handleEnvFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; 
+    if (!file) return;
+    const parsed = parseEnvText(await file.text());
+    if (parsed.length === 0) {
+      setEnvNotice(`อ่านค่าจาก ${file.name} ไม่ได้ — ไฟล์ต้องอยู่ในรูปแบบ KEY=value`);
+      return;
+    }
+    applyParsedEnv(envVars, parsed, ` ${file.name}`);
+  };
+
+  // ขั้นตอนที่ 1: ตรวจสอบความถูกต้องและเปิด Modal ยืนยัน
+  const handleUpdateClick = () => {
+    if (!canSubmit || submitting) return;
+    setShowConfirm(true);
+  };
+
+  // ขั้นตอนที่ 2: ดำเนินการยิง API เมื่อกดยืนยันแล้ว
+  const executeUpdate = async () => {
+    setShowConfirm(false);
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload: UpdateServiceDTO = {
+        name: name.trim(),
+        image: image.trim(),
+        env_vars: buildEnvMap(),
+        cpu_milli: cpuMilli,
+        ram_mb: ramMb,
+        container_port: portNumber,
+        replicas: effectiveReplicas,
+        is_database: isDatabase,
+        ...(storageOn ? { storage_mb: storageMb, data_path: dataPath.trim() } : {}),
+      };
+      
+      const updatedSvc = await serviceApi.update(service.id, payload);
+      onUpdated(updatedSvc);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "Update ไม่สำเร็จ"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 font-mono">
+        <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl custom-scrollbar animate-in fade-in zoom-in duration-200">
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-8 py-6 border-b border-black/5">
+            <div>
+              <h2 className="text-2xl font-bold text-[#211a14]">Edit Service</h2>
+              <p className="text-base text-[#211a14]/50 mt-0.5">Update configuration for <span className="font-bold text-[#BB6653]">{service.name}</span>.</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="p-2.5 rounded-xl text-[#211a14]/50 hover:bg-black/5 transition-colors disabled:opacity-30"
+            >
+              <X size={22} />
+            </button>
+          </div>
+
+          {/* Form body */}
+          <div className="px-8 py-6 flex flex-col gap-6">
+            {/* ส่วนแสดง Error จาก Backend */}
+            {error && (
+              <div className="flex items-start gap-2 p-3.5 rounded-xl bg-red-50 text-red-600 text-sm border border-red-100">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5" /> {error}
+              </div>
+            )}
+
+            {/* Container Image */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                Container Image
+              </label>
+              <div className="flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-3">
+                <Box size={18} className="text-[#211a14]/30 shrink-0" />
+                <input
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  disabled={submitting}
+                  placeholder="nginx:latest, ghcr.io/you/app:tag"
+                  className="w-full bg-transparent text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
+                />
+              </div>
+            </div>
+
+            {/* Service Name */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                Service Name
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={submitting}
+                placeholder="my-web-app"
+                className={cn(
+                  "w-full rounded-xl border bg-white px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60",
+                  nameHasError ? "border-red-300 focus:border-red-400" : "border-black/10",
+                )}
+              />
+              <p className={cn("text-sm", nameHasError ? "text-red-500" : "text-[#211a14]/40")}>
+                {nameHasError
+                  ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
+                  : "lowercase letters, numbers and hyphens only"}
+              </p>
+            </div>
+
+            {/* Container Port */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                Container Port
+              </label>
+              <div
+                className={cn(
+                  "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
+                  containerPort.trim() !== "" && !portIsValid ? "border-red-300" : "border-black/10",
+                )}
+              >
+                <Network size={18} className="text-[#211a14]/30 shrink-0" />
+                <input
+                  type="number"
+                  min={MIN_CONTAINER_PORT}
+                  max={MAX_CONTAINER_PORT}
+                  value={containerPort}
+                  onChange={(e) => setContainerPort(e.target.value)}
+                  disabled={submitting}
+                  placeholder="8080"
+                  className="w-full bg-transparent text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
+                />
+              </div>
+              <p
+                className={cn(
+                  "text-sm",
+                  containerPort.trim() !== "" && !portIsValid ? "text-red-500" : "text-[#211a14]/40",
+                )}
+              >
+                {containerPort.trim() !== "" && !portIsValid
+                  ? `พอร์ตต้องเป็นตัวเลข ${MIN_CONTAINER_PORT}-${MAX_CONTAINER_PORT}`
+                  : isDatabase
+                    ? "พอร์ตที่ฐานข้อมูลเปิดรอรับอยู่ (เช่น 5432 ของ PostgreSQL, 3306 ของ MySQL)"
+                    : "พอร์ตที่แอปของคุณเปิดรอรับอยู่ข้างใน container"}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isDatabase}
+              disabled={submitting}
+              onClick={() => setIsDatabase((v) => !v)}
+              className={cn(
+                "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-colors disabled:opacity-60",
+                isDatabase
+                  ? "border-[#BB6653] bg-[#FBDFDA]"
+                  : "border-black/10 bg-white hover:border-[#BB6653]/30",
+              )}
+            >
+              <Database
+                size={20}
+                className={cn("shrink-0", isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30")}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span
+                  className={cn(
+                    "text-base font-bold",
+                    isDatabase ? "text-[#BB6653]" : "text-[#211a14]",
+                  )}
+                >
+                  ใช้ service นี้เป็นฐานข้อมูล
+                </span>
+                <span className="text-sm text-[#211a14]/50">
+                  {isDatabase
+                    ? "เปิดให้เฉพาะ service ในกลุ่มของคุณ ไม่มีพอร์ตให้คนนอกเข้า และมีดิสก์ถาวรเสมอ"
+                    : "ปิดอยู่ — เข้าถึงได้จากนอกระบบผ่านพอร์ตที่ระบบจ่ายให้"}
+                </span>
+              </span>
+              <SwitchKnob on={isDatabase} />
+            </button>
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={storageOn}
+              disabled={submitting || isDatabase}
+              onClick={() => setWithStorage((v) => !v)}
+              className={cn(
+                "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-colors",
+                storageOn
+                  ? "border-[#BB6653] bg-[#FBDFDA]"
+                  : "border-black/10 bg-white hover:border-[#BB6653]/30",
+                isDatabase && "cursor-not-allowed",
+                submitting && "opacity-60",
+              )}
+            >
+              <HardDrive
+                size={20}
+                className={cn("shrink-0", storageOn ? "text-[#BB6653]" : "text-[#211a14]/30")}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span
+                  className={cn("text-base font-bold", storageOn ? "text-[#BB6653]" : "text-[#211a14]")}
+                >
+                  ดิสก์ถาวร
+                </span>
+                <span className="text-sm text-[#211a14]/50">
+                  {isDatabase
+                    ? "ฐานข้อมูลมีดิสก์ถาวรเสมอ — ปิดสวิตช์นี้ไม่ได้"
+                    : storageOn
+                      ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
+                      : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+                </span>
+              </span>
+              {isDatabase && <Lock size={16} className="shrink-0 text-[#BB6653]" />}
+              <SwitchKnob on={storageOn} />
+            </button>
+
+            {storageOn && (
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                  ตำแหน่งที่ image นี้เก็บข้อมูล
+                </label>
+                <div
+                  className={cn(
+                    "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
+                    dataPath.trim() !== "" && dataPathError ? "border-red-300" : "border-black/10",
+                  )}
+                >
+                  <HardDrive size={18} className="text-[#211a14]/30 shrink-0" />
+                  <input
+                    value={dataPath}
+                    onChange={(e) => setDataPath(e.target.value)}
+                    disabled={submitting}
+                    placeholder={isDatabase ? "/var/lib/mydb" : "/var/www/html"}
+                    spellCheck={false}
+                    className="w-full bg-transparent font-mono text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60"
+                  />
+                </div>
+                <p
+                  className={cn(
+                    "text-sm",
+                    dataPath.trim() !== "" && dataPathError ? "text-red-500" : "text-[#211a14]/40",
+                  )}
+                >
+                  {dataPath.trim() !== "" && dataPathError
+                    ? dataPathError
+                    : isDatabase
+                      ? "ดูได้จากเอกสารของ image เช่น PostgreSQL ใช้ /var/lib/postgresql/data, MySQL ใช้ /var/lib/mysql"
+                      : "ดูได้จากเอกสารของ image เช่น Nextcloud ใช้ /var/www/html"}
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                  Resource for this service
+                </label>
+                {namespace && (
+                  <span className="text-sm text-[#211a14]/40">
+                    group quota {formatCores(cpuLimit)} · {formatRam(ramLimit)}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
+                    <Cpu size={14} className="text-[#BB6653]" /> CPU
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={MIN_CPU_MILLI / 1000}
+                      max={cpuMax / 1000}
+                      value={(cpuMilli / 1000).toFixed(1)}
+                      disabled={submitting || cpuFull}
+                      onChange={(e) => {
+                        const cores = Number(e.target.value);
+                        if (!Number.isFinite(cores)) return;
+                        setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, cpuMax));
+                      }}
+                      className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
+                    />
+                    <span className="text-sm text-[#211a14]/40">cores</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min={MIN_CPU_MILLI}
+                  max={cpuMax}
+                  step={100}
+                  value={cpuMilli}
+                  disabled={submitting || cpuFull}
+                  onChange={(e) => setCpuMilli(Number(e.target.value))}
+                  className="w-full accent-[#BB6653] disabled:opacity-50"
+                />
+                {cpuFull && <p className="text-sm text-red-500">CPU ของกลุ่มถูกใช้เต็มแล้ว</p>}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
+                    <Layers size={14} className="text-[#BB6653]" /> Memory
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="128"
+                      min={MIN_RAM_MB}
+                      max={ramMax}
+                      value={ramMb}
+                      disabled={submitting || ramFull}
+                      onChange={(e) => {
+                        const mb = Number(e.target.value);
+                        if (!Number.isFinite(mb)) return;
+                        setRamMb(clamp(Math.round(mb), MIN_RAM_MB, ramMax));
+                      }}
+                      className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
+                    />
+                    <span className="text-sm text-[#211a14]/40">MB</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min={MIN_RAM_MB}
+                  max={ramMax}
+                  step={128}
+                  value={ramMb}
+                  disabled={submitting || ramFull}
+                  onChange={(e) => setRamMb(Number(e.target.value))}
+                  className="w-full accent-[#BB6653] disabled:opacity-50"
+                />
+                {ramFull && <p className="text-sm text-red-500">Memory ของกลุ่มถูกใช้เต็มแล้ว</p>}
+              </div>
+
+              {storageOn && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
+                      <HardDrive size={14} className="text-[#BB6653]" /> Storage
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={STORAGE_BOUNDS.minMB / UNIT_FACTOR[storageUnit]}
+                        max={storageMax / UNIT_FACTOR[storageUnit]}
+                        step={storageUnit === "GB" ? 1 : STORAGE_BOUNDS.stepMB}
+                        value={storageMb / UNIT_FACTOR[storageUnit]}
+                        disabled={submitting || storageFull}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (!Number.isFinite(n)) return;
+                          setStorageMb(
+                            clamp(Math.round(n * UNIT_FACTOR[storageUnit]), STORAGE_BOUNDS.minMB, storageMax),
+                          );
+                        }}
+                        className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
+                      />
+                      <select
+                        value={storageUnit}
+                        disabled={submitting}
+                        onChange={(e) => setStorageUnit(e.target.value as StorageUnit)}
+                        className="rounded-lg border border-black/10 bg-white px-2 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
+                      >
+                        <option value="GB">GB</option>
+                        <option value="MB">MB</option>
+                      </select>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min={STORAGE_BOUNDS.minMB}
+                    max={storageMax}
+                    step={STORAGE_BOUNDS.stepMB}
+                    value={storageMb}
+                    disabled={submitting || storageFull}
+                    onChange={(e) => setStorageMb(Number(e.target.value))}
+                    className="w-full accent-[#BB6653] disabled:opacity-50"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-1.5 text-sm text-[#211a14]/50">
+                  <Copy size={14} className="text-[#BB6653]" /> Replicas
+                </label>
+                {storageOn ? (
+                  <span className="text-right text-sm text-[#211a14]/45">
+                    <span className="font-bold text-[#211a14]/70">1 pod</span>
+                  </span>
+                ) : (
+                  <select
+                    value={replicas}
+                    disabled={submitting}
+                    onChange={(e) => setReplicas(Number(e.target.value))}
+                    className="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
+                  >
+                    {REPLICA_CHOICES.map((n) => (
+                      <option
+                        key={n}
+                        value={n}
+                        disabled={
+                          namespace !== null &&
+                          (n * MIN_CPU_MILLI > cpuAvailable || n * MIN_RAM_MB > ramAvailable)
+                        }
+                      >
+                        {n} {n === 1 ? "pod" : "pods"}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-black/8 bg-white/60 p-4">
+                {namespace ? (
+                  <div
+                    className={cn(
+                      "grid gap-x-5 gap-y-2 text-sm",
+                      storageOn
+                        ? "grid-cols-[1fr_auto_auto_auto]"
+                        : "grid-cols-[1fr_auto_auto]",
+                    )}
+                  >
+                    <span className="font-bold uppercase tracking-wider text-[#211a14]/35">Summary</span>
+                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">CPU</span>
+                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Memory</span>
+                    {storageOn && (
+                      <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Disk</span>
+                    )}
+
+                    <span className="text-[#211a14]/55">Group quota</span>
+                    <span className="text-right text-[#211a14]/70">{formatCores(cpuLimit)}</span>
+                    <span className="text-right text-[#211a14]/70">{formatRam(ramLimit)}</span>
+                    {storageOn && (
+                      <span className="text-right text-[#211a14]/70">{formatStorage(storageLimit)}</span>
+                    )}
+
+                    <span className="text-[#211a14]/55">
+                      In use (excluding this)
+                    </span>
+                    <span className="text-right text-[#211a14]/70">- {formatCores(cpuUsed - originalCpuTotal)}</span>
+                    <span className="text-right text-[#211a14]/70">- {formatRam(ramUsed - originalRamTotal)}</span>
+                    {storageOn && (
+                      <span className="text-right text-[#211a14]/70">- {formatStorage(storageUsed - originalStorageTotal)}</span>
+                    )}
+
+                    <span className="text-[#211a14]/55">
+                      This service (Editing)
+                    </span>
+                    <span className="text-right text-[#BB6653]">- {formatCores(cpuTotal)}</span>
+                    <span className="text-right text-[#BB6653]">- {formatRam(ramTotal)}</span>
+                    {storageOn && (
+                      <span className="text-right text-[#BB6653]">- {formatStorage(storageTotal)}</span>
+                    )}
+
+                    <span className="border-t border-black/5 pt-2 font-bold text-[#211a14]">
+                      Remaining
+                    </span>
+                    <span
+                      className={cn(
+                        "border-t border-black/5 pt-2 text-right font-bold",
+                        overCpu ? "text-red-600" : "text-green-700",
+                      )}
+                    >
+                      {formatCores(cpuRemaining)}
+                    </span>
+                    <span
+                      className={cn(
+                        "border-t border-black/5 pt-2 text-right font-bold",
+                        overRam ? "text-red-600" : "text-green-700",
+                      )}
+                    >
+                      {formatRam(ramRemaining)}
+                    </span>
+                    {storageOn && (
+                      <span
+                        className={cn(
+                          "border-t border-black/5 pt-2 text-right font-bold",
+                          overStorage ? "text-red-600" : "text-green-700",
+                        )}
+                      >
+                        {formatStorage(storageRemaining)}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[#211a14]/40">กำลังโหลดโควตาของกลุ่ม...</p>
+                )}
+              </div>
+
+              {(overCpu || overRam || overStorage) && (
+                <p className="flex items-start gap-1.5 text-sm text-red-600">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  เกินโควตาที่กลุ่มเหลืออยู่ — ลดขนาดลง หรือลบ service ที่ไม่ได้ใช้ออกก่อน
+                </p>
+              )}
+            </div>
+
+            {/* Environment Variables */}
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                  Environment Variables
+                </label>
+                <div className="flex items-center gap-4">
+                  <button
+                    type="button" onClick={() => envFileRef.current?.click()} disabled={submitting}
+                    className="inline-flex items-center gap-1.5 text-sm text-[#211a14]/50 hover:text-[#211a14] transition-colors disabled:opacity-40"
+                  >
+                    <Upload size={14} /> Upload .env
+                  </button>
+                  <button
+                    type="button" onClick={addEnvRow} disabled={submitting}
+                    className="inline-flex items-center gap-1.5 text-sm text-[#211a14]/50 hover:text-[#211a14] transition-colors disabled:opacity-40"
+                  >
+                    <Plus size={14} /> Add variable
+                  </button>
+                </div>
+                <input
+                  ref={envFileRef}
+                  type="file"
+                  accept=".env,.txt,text/plain"
+                  className="hidden"
+                  onChange={handleEnvFile}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3">
+                {envVars.map((pair, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      placeholder="key"
+                      value={pair.key}
+                      onChange={(e) => updateEnvRow(i, "key", e.target.value)}
+                      onPaste={(e) => handleEnvPaste(i, e)}
+                      disabled={submitting}
+                      className="flex-1 rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
+                    />
+                    <span className="text-[#211a14]/25 text-sm select-none">=</span>
+                    <input
+                      placeholder="value"
+                      type={looksSecret(pair.key) ? "password" : "text"}
+                      value={pair.value}
+                      onChange={(e) => updateEnvRow(i, "value", e.target.value)}
+                      disabled={submitting}
+                      className="flex-[2] rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeEnvRow(i)}
+                      disabled={submitting || envVars.length === 1}
+                      className="p-1 rounded-lg text-[#211a14]/25 hover:text-red-500 transition-colors disabled:opacity-30"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {envNotice && <p className="text-sm text-[#BB6653]">{envNotice}</p>}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-bold uppercase tracking-wider text-[#BB6653]">
+                การเข้าถึง
+              </label>
+              {isDatabase ? (
+                <div className="flex flex-col gap-1.5 rounded-xl border border-green-600/20 bg-green-50 p-4">
+                  <span className="flex items-center gap-1.5 text-sm font-bold text-green-700">
+                    <Lock size={14} /> เฉพาะภายในกลุ่มของคุณ
+                  </span>
+                  <span className="overflow-x-auto whitespace-nowrap font-mono text-sm text-[#211a14]/70">
+                    {`${name.trim() || "ชื่อ-service"}.ns-${namespace?.id ?? "<id>"}.svc.cluster.local:${containerPort || "8080"}`}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5 rounded-xl border border-black/8 bg-white/60 p-4">
+                  <span className="flex items-center gap-1.5 text-sm font-bold text-[#211a14]/60">
+                    <Network size={14} className="text-[#BB6653]" /> เข้าถึงได้จากนอกระบบ
+                  </span>
+                  <span className="font-mono text-sm text-[#211a14]/70">
+                    &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :{containerPort || "8080"}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between gap-2 px-8 py-5 border-t border-black/5 bg-[#FFF8E8] sticky bottom-0 rounded-b-3xl">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="rounded-xl px-5 py-3 text-base font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+
+            <div className="flex items-center gap-3">
+              {blockedReason && !submitting && (
+                <span className="max-w-[16rem] text-right text-sm text-red-600">{blockedReason}</span>
+              )}
+              <button
+                type="button"
+                disabled={!canSubmit || submitting}
+                onClick={handleUpdateClick}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl px-6 py-3 text-base font-bold text-white shadow-md transition-all",
+                  canSubmit && !submitting
+                    ? "bg-[#BB6653] hover:bg-[#F08B51]"
+                    : "bg-[#211a14]/20 cursor-not-allowed shadow-none",
+                )}
+              >
+                {submitting && <Loader2 size={16} className="animate-spin" />}
+                {submitting ? "Re-Deploying..." : "Update and Re-Deploy"}
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* หน้าต่างยืนยันการทำรายการ (2-Step Verification) */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-2 bg-red-50 border border-red-100 rounded-xl">
+                <AlertTriangle size={24} />
+              </div>
+              <h3 className="text-lg font-bold">ยืนยันการดำเนินการ</h3>
+            </div>
+            
+            <p className="text-[#211a14]/70 text-sm leading-relaxed">
+              การแก้ไขข้อมูล จะทำการลบ database เก่าของผู้ใช้งานออกไปทั้งหมด คุณจะดำเนินการต่อหรือไม่
+            </p>
+            
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => setShowConfirm(false)}
+                disabled={submitting}
+                className="flex-1 py-2.5 rounded-xl font-bold text-[#211a14]/60 bg-gray-100 hover:bg-gray-200 transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={() => executeUpdate()}
+                disabled={submitting}
+                className="flex-1 py-2.5 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-md transition-colors"
+              >
+                ดำเนินการต่อ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

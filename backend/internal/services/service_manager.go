@@ -505,3 +505,111 @@ func ValidateDataPath(p string) string {
 	}
 	return ""
 }
+
+type UpdateServiceParams struct {
+	Name          string
+	Image         string
+	CPUMilli      int
+	RAMMB         int
+	ContainerPort int
+	Replicas      int
+	EnvVars       map[string]string
+	IsDatabase    bool
+	StorageMB     int
+	DataPath      string
+}
+
+// Update ขอแก้ไขการตั้งค่า Service โดยใช้กระบวนการ Redeploy
+//
+// data flow: 
+//   - เช็คสิทธิ์และดึง Service เก่า
+//   - ถอน Workload เก่าในคลัสเตอร์ก่อน (แต่ห้ามถอน PVC ถ้ามีดิสก์)
+//   - ล็อกโควตา: คืนโควตาเก่า แล้วบวกโควตาใหม่ ถ้าผ่านให้อัปเดต DB
+//   - สร้าง Workload ใหม่ขึ้นคลัสเตอร์
+func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespaceID int, p UpdateServiceParams) (*entity.Service, error) {
+	var svc entity.Service
+	if err := m.db.WithContext(ctx).Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrServiceNotFound
+		}
+		return nil, err
+	}
+
+	containerPort := p.ContainerPort
+	if containerPort == 0 {
+		containerPort = entity.DefaultContainerPort
+	}
+	replicas := p.Replicas
+	if replicas == 0 {
+		replicas = entity.DefaultReplicas
+	}
+	storageMB := 0
+	dataPath := ""
+
+	wantsStorage := p.IsDatabase || p.StorageMB > 0 || strings.TrimSpace(p.DataPath) != ""
+	if wantsStorage {
+		if p.Replicas > entity.StorageReplicas {
+			return nil, ErrStorageReplicas
+		}
+		replicas = entity.StorageReplicas
+		storageMB = p.StorageMB
+		if storageMB == 0 {
+			storageMB = entity.DefaultStorageMBPerService
+		}
+		if msg := ValidateDataPath(p.DataPath); msg != "" {
+			return nil, fmt.Errorf("%w: %s", ErrDataPathRequired, msg)
+		}
+		dataPath = strings.TrimRight(strings.TrimSpace(p.DataPath), "/")
+	}
+
+	oldSvc := svc
+
+	// 1. เช็คโควตาและบันทึก DB ก่อน (ถ้าโควตาไม่ผ่าน แอปเก่าบน K8s จะยังไม่ถูกลบ)
+	err := m.quota.ReserveScale(ctx, namespaceID, serviceID, ResourceRequest{
+		CPUMilli:  p.CPUMilli,
+		RAMMB:     p.RAMMB,
+		StorageMB: storageMB,
+		Replicas:  replicas,
+	}, func(tx *gorm.DB) error {
+		svc.Name = p.Name
+		svc.Image = p.Image
+		svc.CPUMilli = p.CPUMilli
+		svc.RAMMB = p.RAMMB
+		svc.ContainerPort = containerPort
+		svc.Replicas = replicas
+		svc.EnvVars = entity.EnvVarMap(p.EnvVars)
+		svc.IsDatabase = p.IsDatabase
+		svc.StorageMB = storageMB
+		svc.DataPath = dataPath
+		svc.Status = entity.ServiceCreating
+		svc.NodePort = nil 
+
+		return tx.Save(&svc).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	nsName := K8sNamespaceName(svc.NamespaceID)
+
+	// 2. ถอน workload เดิมออกจากคลัสเตอร์
+	if err := m.prov.DeleteService(ctx, nsName, &oldSvc); err != nil {
+		m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("status", "failed")
+		return nil, fmt.Errorf("ลบ workload เดิมไม่สำเร็จ: %w", err)
+	}
+
+	// 3. Deploy workload ตัวใหม่ขึ้นคลัสเตอร์
+	if err := m.prov.DeployService(ctx, nsName, &svc); err != nil {
+		m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("status", "failed")
+		return nil, err
+	}
+
+	// 4. บันทึก NodePort ใหม่ถ้าได้รับจัดสรร
+	if svc.NodePort != nil {
+		if err := m.db.WithContext(context.WithoutCancel(ctx)).Model(&entity.Service{}).Where("id = ?", svc.ID).Update("node_port", svc.NodePort).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	return &svc, nil
+}

@@ -43,6 +43,22 @@ type ScaleServiceRequest struct {
 	Replicas int `json:"replicas" binding:"required,min=1,max=10"`
 }
 
+
+type UpdateServiceRequest struct {
+    Name          string `json:"name" binding:"required,min=3,max=50"`
+    
+    Image         string `json:"image" binding:"required,min=3,max=200"`
+
+    CPUMilli      int    `json:"cpu_milli" binding:"required,min=100,max=3000"`
+    RAMMB         int    `json:"ram_mb" binding:"required,min=128,max=2048"`
+    
+    ContainerPort int    `json:"container_port" binding:"required,min=1,max=65535"`
+    Replicas      int    `json:"replicas" binding:"required,min=1,max=10"`
+    EnvVars       map[string]string `json:"env_vars"`
+    IsDatabase    bool   `json:"is_database"`
+    DataPath      string `json:"data_path" binding:"omitempty,max=200"`
+    StorageMB     int    `json:"storage_mb" binding:"omitempty,min=1024,max=20480"`
+}
 // DeleteServiceRequest = body ของการลบ/ตั้งเวลาลบ service ฝั่ง admin — reason ส่งไปในอีเมลแจ้งสมาชิก
 type DeleteServiceRequest struct {
 	Reason string `json:"reason" binding:"required,min=1,max=1000"`

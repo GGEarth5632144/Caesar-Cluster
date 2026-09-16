@@ -127,6 +127,7 @@ func Setup(
 			protected.PATCH("/services/:id/scale", svcCtl.Scale)
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)
+			protected.PATCH("/services/:id", svcCtl.Update)
 
 			// "ใบเสร็จ" ของ deploy request ที่ส่งเข้า Cluster-AI — ให้ AIReviewPage.tsx ดึงกลับมาได้ถ้า
 			// router state หาย (refresh/เปิดลิงก์ตรง) เพราะ Cluster-AI เองไม่เก็บ service_name/image/cpu/ram
@@ -154,6 +155,7 @@ func Setup(
 			admin.DELETE("/services/:id", adminCtl.DeleteService)
 			admin.POST("/services/:id/schedule-delete", adminCtl.ScheduleServiceDelete)
 			admin.DELETE("/services/:id/schedule-delete", adminCtl.CancelServiceDelete)
+			
 
 			// ก้อนสรุปของหน้า AdminDashboard — นับทุกอย่างที่ Postgres แล้วส่งกลับแค่ตัวเลข
 			// แทนที่จะยกตาราง users + requests ขึ้นมานับเองในเบราว์เซอร์ทุก 30 วินาที
