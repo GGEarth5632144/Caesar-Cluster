@@ -1,6 +1,8 @@
 package services
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -904,10 +906,23 @@ func (k *KubernetesProvisioner) Status(ctx context.Context, nsName string, svc *
 	return worst, nil
 }
 
-// Logs เปิด stream log จาก pod ของ service นี้ — มีหลาย pod เอาตัวที่ใหม่สุดที่กำลังรันอยู่
+// defaultLogTailLines ใช้เมื่อผู้เรียกไม่ระบุ tail — ไม่ปล่อยให้ k8s ส่ง log ทั้งหมดที่ node เก็บไว้มาทีเดียว
+const defaultLogTailLines = 200
+
+// Logs เปิด stream log ของทุก Pod ที่เป็นของ service นี้ (หา Pod จาก label ที่ deploymentFor แปะไว้)
+//
+// data flow: list Pod ด้วย labelServiceName=svcName → เปิด GetLogs ทีละ Pod
+// → Pod เดียว: คืน stream ของ k8s ตรงๆ / หลาย Pod: รวมทีละบรรทัดผ่าน io.Pipe
+// พร้อมแทรก "[ชื่อ pod] " หลัง timestamp ให้รู้ว่าบรรทัดนี้มาจาก replica ไหน
+// (timestamp ต้องอยู่หน้าสุดเสมอ — หน้าเว็บ parse ตัดที่ช่องว่างตัวแรก)
 //
 // container ที่ติด CrashLoopBackOff ไม่มี log ของรอบปัจจุบันเพราะยังไม่ได้เริ่ม ต้องขอรอบก่อน
 // (Previous) ไม่งั้นผู้ใช้เปิดหน้า Logs แล้วเห็นหน้าว่างทั้งที่ container ตายไปแล้วหลายรอบ
+// Pod ที่ container ยังไม่เริ่ม (ImagePullBackOff / ContainerCreating) เปิด log ไม่ได้ ข้ามไป
+// ถ้าเปิดไม่ได้เลยสักตัวคืน ErrLogsUnavailable พร้อมเหตุผลจาก k8s ให้ผู้ใช้เห็นว่าติดอะไร
+//
+// ponytail: เห็นเฉพาะ Pod ที่มีอยู่ตอนเปิด stream — Pod ใหม่จาก scale/restart ระหว่าง follow
+// ต้องกดเปิดใหม่ ถ้าต้องการให้ตามเองค่อยเปลี่ยนไปใช้ Pods().Watch
 func (k *KubernetesProvisioner) Logs(ctx context.Context, nsName, svcName string, opts LogOptions) (io.ReadCloser, error) {
 	cs, err := k.client()
 	if err != nil {
@@ -916,25 +931,88 @@ func (k *KubernetesProvisioner) Logs(ctx context.Context, nsName, svcName string
 
 	pods, err := cs.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{LabelSelector: podSelector(svcName)})
 	if err != nil {
-		return nil, err
-	}
-	pod := pickLogPod(livePods(pods.Items))
-	if pod == nil {
-		return nil, fmt.Errorf("service '%s' ยังไม่มี pod บนคลัสเตอร์ จึงยังไม่มี log ให้ดู", svcName)
+		return nil, fmt.Errorf("list Pod ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svcName, nsName, err)
 	}
 
-	logOpts := &corev1.PodLogOptions{
-		Follow:     opts.Follow,
-		Timestamps: opts.Timestamps,
-		Previous:   inCrashLoop(pod),
+	tail := opts.TailLines
+	if tail <= 0 {
+		tail = defaultLogTailLines
 	}
-	if opts.TailLines > 0 {
-		logOpts.TailLines = &opts.TailLines
+
+	type podStream struct {
+		pod string
+		rc  io.ReadCloser
 	}
-	if opts.SinceSeconds > 0 {
-		logOpts.SinceSeconds = &opts.SinceSeconds
+	var streams []podStream
+	var firstErr error
+	for _, p := range livePods(pods.Items) {
+		podOpts := &corev1.PodLogOptions{
+			Follow:     opts.Follow,
+			Timestamps: opts.Timestamps,
+			TailLines:  &tail,
+			Previous:   inCrashLoop(&p),
+		}
+		if opts.SinceSeconds > 0 {
+			podOpts.SinceSeconds = &opts.SinceSeconds
+		}
+		rc, err := cs.CoreV1().Pods(nsName).GetLogs(p.Name, podOpts).Stream(ctx)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		streams = append(streams, podStream{p.Name, rc})
 	}
-	return cs.CoreV1().Pods(nsName).GetLogs(pod.Name, logOpts).Stream(ctx)
+
+	switch len(streams) {
+	case 0:
+		if firstErr == nil {
+			return nil, fmt.Errorf("%w (ไม่พบ Pod ของ service นี้)", ErrLogsUnavailable)
+		}
+		return nil, fmt.Errorf("%w (%v)", ErrLogsUnavailable, firstErr)
+	case 1:
+		return streams[0].rc, nil
+	}
+
+	// io.Pipe ยอมให้หลาย goroutine Write พร้อมกันได้ (ต่อคิวให้ทีละครั้ง) และเราเขียนทีละบรรทัดเต็ม
+	// จึงไม่มีบรรทัดไหนถูกตัดปนกัน — ปิด pw เมื่อทุก Pod จบ (non-follow) หรือ ctx ถูก cancel (follow)
+	pr, pw := io.Pipe()
+	var wg sync.WaitGroup
+	for _, s := range streams {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer s.rc.Close()
+			tag := []byte("[" + s.pod + "] ")
+			br := bufio.NewReader(s.rc)
+			for {
+				line, err := br.ReadBytes('\n')
+				if len(line) > 0 {
+					if _, werr := pw.Write(tagLogLine(line, tag)); werr != nil {
+						return // ฝั่งอ่านปิดไปแล้ว
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		pw.Close()
+	}()
+	return pr, nil
+}
+
+// tagLogLine แทรก tag หลัง timestamp (ช่องว่างตัวแรก) และรับประกันว่าบรรทัดจบด้วย '\n'
+func tagLogLine(line, tag []byte) []byte {
+	if line[len(line)-1] != '\n' {
+		line = append(line, '\n')
+	}
+	i := bytes.IndexByte(line, ' ') + 1 // ไม่มีช่องว่าง = 0 = แปะ tag หน้าสุด
+	return slices.Concat(line[:i], tag, line[i:])
 }
 
 // ── ตัวช่วยอ่านสภาพ pod ────────────────────────────────────────────────────────────
@@ -1078,22 +1156,6 @@ func crashLogs(ctx context.Context, cs kubernetes.Interface, nsName, podName str
 		}
 	}
 	return ""
-}
-
-// pickLogPod เลือก pod ที่ใหม่สุดในกลุ่มที่กำลังรัน — ไม่มีตัวรันก็เอาตัวใหม่สุดที่มี
-func pickLogPod(pods []corev1.Pod) *corev1.Pod {
-	if len(pods) == 0 {
-		return nil
-	}
-	slices.SortStableFunc(pods, func(a, b corev1.Pod) int {
-		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
-	})
-	for i := range pods {
-		if pods[i].Status.Phase == corev1.PodRunning {
-			return &pods[i]
-		}
-	}
-	return &pods[0]
 }
 
 // clip ตัดข้อความให้ยาวไม่เกิน max ตัวอักษร โดยนับรวม … ที่ต่อท้ายด้วย
