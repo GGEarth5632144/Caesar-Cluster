@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -341,6 +342,100 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 		return err
 	}
 	return m.db.WithContext(ctx).Delete(&entity.Service{}, svc.ID).Error
+}
+
+// ScheduledDeleteDelay = ระยะเวลาก่อนลบ service ที่แอดมินตั้งเวลาไว้
+const ScheduledDeleteDelay = 24 * time.Hour
+
+const scheduledDeleteCheckInterval = time.Minute
+
+// AdminService = service + ชื่อ namespace และผู้สร้าง สำหรับหน้า admin
+type AdminService struct {
+	entity.Service
+	NamespaceName    string `json:"namespace_name"`
+	CreatorName      string `json:"creator_name"`
+	CreatorStudentID string `json:"creator_student_id"`
+}
+
+// ListAll คืน service ทั้งระบบ เรียงใหม่→เก่า
+func (m *ServiceManager) ListAll(ctx context.Context) ([]AdminService, error) {
+	var list []AdminService
+	err := m.db.WithContext(ctx).Table("services AS s").
+		Select(`s.*, n.name AS namespace_name,
+			COALESCE(u.real_name, '') AS creator_name,
+			COALESCE(u.student_id, '') AS creator_student_id`).
+		Joins("JOIN namespaces n ON n.id = s.namespace_id").
+		Joins("LEFT JOIN users u ON u.id = s.created_by").
+		Order("s.created_at DESC").
+		Scan(&list).Error
+	return list, err
+}
+
+// DeleteByID ลบ service โดยไม่จำกัด namespace — ใช้กับฝั่ง admin
+func (m *ServiceManager) DeleteByID(ctx context.Context, serviceID int) error {
+	var svc entity.Service
+	if err := m.db.WithContext(ctx).Select("id", "namespace_id").First(&svc, serviceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrServiceNotFound
+		}
+		return err
+	}
+	return m.Delete(ctx, svc.ID, svc.NamespaceID)
+}
+
+// ScheduleDelete ตั้งเวลาลบ service ใน ScheduledDeleteDelay (ตั้งซ้ำ = นับใหม่)
+func (m *ServiceManager) ScheduleDelete(ctx context.Context, serviceID int) (time.Time, error) {
+	deleteAt := time.Now().UTC().Add(ScheduledDeleteDelay)
+	return deleteAt, m.setDeleteAt(ctx, serviceID, gorm.Expr("?", deleteAt))
+}
+
+// CancelScheduledDelete ยกเลิกเวลาลบที่ตั้งไว้
+func (m *ServiceManager) CancelScheduledDelete(ctx context.Context, serviceID int) error {
+	return m.setDeleteAt(ctx, serviceID, gorm.Expr("NULL"))
+}
+
+func (m *ServiceManager) setDeleteAt(ctx context.Context, serviceID int, value any) error {
+	res := m.db.WithContext(ctx).Model(&entity.Service{}).Where("id = ?", serviceID).Update("delete_at", value)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrServiceNotFound
+	}
+	return nil
+}
+
+// StartScheduledDeletion เปิด worker ลบ service ที่ถึงเวลาลบ — หยุดเมื่อ ctx ถูก cancel
+func (m *ServiceManager) StartScheduledDeletion(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(scheduledDeleteCheckInterval)
+		defer ticker.Stop()
+		for {
+			m.deleteDue(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (m *ServiceManager) deleteDue(ctx context.Context) {
+	var due []entity.Service
+	if err := m.db.WithContext(ctx).Select("id", "namespace_id", "name").
+		Where("delete_at IS NOT NULL AND delete_at <= ?", time.Now().UTC()).
+		Find(&due).Error; err != nil {
+		log.Printf("scheduled delete: อ่านรายการไม่สำเร็จ: %v", err)
+		return
+	}
+	for _, svc := range due {
+		if err := m.Delete(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, ErrServiceNotFound) {
+			log.Printf("scheduled delete: ลบ service '%s' (id=%d) ไม่สำเร็จ: %v", svc.Name, svc.ID, err)
+			continue
+		}
+		log.Printf("scheduled delete: ลบ service '%s' (id=%d) ตามเวลาที่ตั้งไว้แล้ว", svc.Name, svc.ID)
+	}
 }
 
 // Logs เปิด stream ของ log จาก service หนึ่งตัว — ระบบไม่เก็บสำเนา log ไว้ อ่านสดจากคลัสเตอร์ทุกครั้ง

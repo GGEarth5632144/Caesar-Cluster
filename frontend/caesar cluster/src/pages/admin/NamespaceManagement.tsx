@@ -27,7 +27,7 @@ import {
 } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { cn } from "@/lib/utils";
-import { notify, confirmAction } from "@/lib/modal";
+import { notify } from "@/lib/modal";
 import { TableRowsSkeleton } from "@/components/ui/PageSkeletons";
 import { AdminModal } from "@/components/ui/admin-modal";
 import { usePageSearch } from "@/hooks/usePageSearch";
@@ -75,6 +75,8 @@ export default function NamespaceManagement() {
   // หลังบันทึก/รีเฟรช (ถ้าเก็บ object ค่าที่โชว์จะค้างอยู่ที่ตอนกดเปิด)
   const [managingId, setManagingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // space ที่เปิดกล่องยืนยันลบอยู่ — เก็บ id ด้วยเหตุผลเดียวกับ managingId
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const fetchNamespaces = async (silent = false) => {
     try {
@@ -104,30 +106,22 @@ export default function NamespaceManagement() {
     );
   };
 
-  const handleDelete = async (ns: NamespaceDetail) => {
-    const consequences = [
-      ns.usage.service_count > 0
-        ? `บริการที่รันอยู่ ${ns.usage.service_count} ตัวจะถูกถอนออกจากคลัสเตอร์`
-        : null,
-      ns.member_count > 0
-        ? `สมาชิก ${ns.member_count} คนจะหลุดออกจาก space (บัญชีไม่ถูกลบ)`
-        : null,
-    ].filter(Boolean);
+  const handleDelete = (ns: NamespaceDetail) => {
+    setManagingId(null);
+    setConfirmDeleteId(ns.id);
+  };
 
-    const confirmed = await confirmAction({
-      title: `ลบเนมสเปซ "${ns.name}"?`,
-      description: [...consequences, "การกระทำนี้ย้อนกลับไม่ได้"].join(" · "),
-      confirmText: "ลบเนมสเปซ",
-      destructive: true,
-    });
-    if (!confirmed) return;
-
+  const confirmDelete = async (ns: NamespaceDetail, reason: string) => {
     setDeletingId(ns.id);
     try {
-      await adminNamespaceApi.remove(ns.id);
+      const { notified } = await adminNamespaceApi.remove(ns.id, reason);
+      setConfirmDeleteId(null);
       setNamespaces((prev) => prev.filter((item) => item.id !== ns.id));
-      setManagingId((current) => (current === ns.id ? null : current));
-      notify.success("ลบเนมสเปซสำเร็จ", `${ns.name} ถูกถอนออกจากระบบแล้ว`);
+      notify.success(
+        "ลบเนมสเปซสำเร็จ",
+        `${ns.name} ถูกถอนออกจากระบบแล้ว` +
+          (notified > 0 ? ` · ส่งอีเมลแจ้งเหตุผลถึงสมาชิก ${notified} คน` : ""),
+      );
     } catch (err) {
       console.error("Failed to delete namespace:", err);
       notify.error("ลบเนมสเปซไม่สำเร็จ", getApiErrorMessage(err, "โปรดลองใหม่อีกครั้ง"));
@@ -189,6 +183,7 @@ export default function NamespaceManagement() {
   ];
 
   const managingNamespace = namespaces.find((ns) => ns.id === managingId) ?? null;
+  const confirmDeleteNamespace = namespaces.find((ns) => ns.id === confirmDeleteId) ?? null;
 
   return (
     <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-6 font-mono">
@@ -439,6 +434,15 @@ export default function NamespaceManagement() {
           onDelete={() => handleDelete(managingNamespace)}
         />
       )}
+
+      {confirmDeleteNamespace && (
+        <DeleteNamespaceModal
+          namespace={confirmDeleteNamespace}
+          isDeleting={deletingId === confirmDeleteNamespace.id}
+          onClose={() => setConfirmDeleteId(null)}
+          onConfirm={(reason) => confirmDelete(confirmDeleteNamespace, reason)}
+        />
+      )}
     </div>
   );
 }
@@ -499,6 +503,92 @@ function UsageBar({ icon: Icon, used, limit, percent }: UsageBarProps) {
 }
 
 // ==========================================
+// ยืนยันลบเนมสเปซ — บังคับใส่เหตุผล เพราะข้อความนี้ถูกส่งทางอีเมลถึงสมาชิกทุกคน
+// ==========================================
+interface DeleteNamespaceModalProps {
+  namespace: NamespaceDetail;
+  isDeleting: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}
+
+function DeleteNamespaceModal({ namespace, isDeleting, onClose, onConfirm }: DeleteNamespaceModalProps) {
+  const [reason, setReason] = useState("");
+  const trimmedReason = reason.trim();
+
+  const consequences = [
+    namespace.usage.service_count > 0
+      ? `บริการที่รันอยู่ ${namespace.usage.service_count} ตัวจะถูกถอนออกจากคลัสเตอร์`
+      : null,
+    namespace.member_count > 0
+      ? `สมาชิก ${namespace.member_count} คนจะหลุดออกจาก space (บัญชีไม่ถูกลบ) และได้รับอีเมลแจ้งพร้อมเหตุผลนี้`
+      : null,
+    "การกระทำนี้ย้อนกลับไม่ได้",
+  ].filter((line): line is string => line !== null);
+
+  return (
+    <AdminModal
+      onClose={onClose}
+      busy={isDeleting}
+      size="sm"
+      title={`ลบเนมสเปซ "${namespace.name}"?`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (trimmedReason) onConfirm(trimmedReason);
+      }}
+      footer={(close) => (
+        <>
+          <button
+            type="button"
+            onClick={close}
+            disabled={isDeleting}
+            className="rounded-xl px-5 py-2.5 text-base font-bold text-[#211a14]/60 transition-colors hover:bg-black/5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={isDeleting || trimmedReason.length === 0}
+            className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+          >
+            {isDeleting ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <>
+                <Trash2 size={18} />
+                ลบเนมสเปซ
+              </>
+            )}
+          </button>
+        </>
+      )}
+    >
+      <ul className="mb-5 list-disc space-y-1 rounded-2xl border border-red-100 bg-red-50 py-3 pl-8 pr-4 text-sm text-red-600">
+        {consequences.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <label
+        htmlFor="delete-namespace-reason"
+        className="mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]"
+      >
+        เหตุผลในการลบ
+      </label>
+      <textarea
+        id="delete-namespace-reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        disabled={isDeleting}
+        rows={4}
+        maxLength={1000}
+        placeholder="เช่น หมดภาคการศึกษาแล้ว / ไม่มีการใช้งานเกิน 30 วัน — ข้อความนี้จะถูกส่งทางอีเมลถึงสมาชิก"
+        className="w-full resize-none rounded-2xl border border-black/10 bg-white px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none transition-colors focus:border-[#BB6653] focus:ring-2 focus:ring-[#BB6653]/10 disabled:opacity-60"
+      />
+    </AdminModal>
+  );
+}
+
+// ==========================================
 // แผงจัดการ 1 เนมสเปซ — ปรับโควตา + ดูสมาชิก + ลบทิ้ง
 // ==========================================
 interface ManageNamespaceModalProps {
@@ -531,30 +621,15 @@ function ManageNamespaceModal({
     ramMB !== namespace.ram_limit_mb ||
     storageMB !== namespace.storage_limit_mb;
 
-  // ลดโควตาให้ต่ำกว่ายอดที่ใช้อยู่ได้ (backend ยอม เป็นพฤติกรรมเดียวกับ ResourceQuota ของ k8s)
-  // แต่ service เดิมจะยังรันต่อและ deploy เพิ่มไม่ได้ — ต้องบอกก่อนกดบันทึก
-  // ไม่ใช่ปล่อยให้เจ้าของ space ไปเจอเอาตอน deploy แล้วงงว่าทำไมโดนปฏิเสธ
+  // ห้ามต่ำกว่ายอดที่ service จองไว้ — backend ปฏิเสธด้วย QUOTA_BELOW_USAGE
   const cpuBelowUsage = cpuMilli < namespace.usage.used_cpu_milli;
   const ramBelowUsage = ramMB < namespace.usage.used_ram_mb;
-
-  // เตือนคนละแบบกับ CPU/RAM: ลด CPU/RAM แค่ทำให้ขอเพิ่มไม่ได้ แต่ดิสก์ที่จองไปแล้วเป็นก้อนจริง
-  // บนเครื่อง ลดเพดานไม่ทำให้มันคืนที่ ต้องลบ database ทิ้งเท่านั้น
-  const storageWarning = (() => {
-    if (storageMB < namespace.usage.used_storage_mb) {
-      return (
-        `ต่ำกว่าที่จองไว้แล้ว ${gigabytes(namespace.usage.used_storage_mb)} GB — ` +
-        "ดิสก์ก้อนเดิมไม่คืนที่ให้เองจนกว่าจะลบ database ทิ้ง และกลุ่มนี้จะสร้าง database ใหม่ไม่ได้"
-      );
-    }
-    if (storageMB === 0) {
-      return "ตั้งเป็น 0 = กลุ่มนี้จะสร้าง database ใหม่ไม่ได้เลย (service ธรรมดายังสร้างได้ตามปกติ)";
-    }
-    return null;
-  })();
+  const storageBelowUsage = storageMB < namespace.usage.used_storage_mb;
+  const belowUsage = cpuBelowUsage || ramBelowUsage || storageBelowUsage;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isDirty) return;
+    if (!isDirty || belowUsage) return;
 
     setIsSubmitting(true);
     try {
@@ -574,8 +649,7 @@ function ManageNamespaceModal({
   };
 
   const labelClass = "mb-1.5 block text-sm font-bold uppercase tracking-wider text-[#BB6653]";
-  const belowUsageWarning =
-    "ต่ำกว่ายอดที่ใช้อยู่ — บริการเดิมยังรันต่อ แต่จะ deploy เพิ่มไม่ได้จนกว่าจะลบของเก่าออก";
+  const belowUsageError = "ต่ำกว่ายอดที่ใช้อยู่ — ต้องลบหรือลดขนาด service ก่อนถึงจะลดโควตาได้";
 
   return (
     <AdminModal
@@ -608,7 +682,7 @@ function ManageNamespaceModal({
           </button>
           <button
             type="submit"
-            disabled={isSubmitting || !isDirty}
+            disabled={isSubmitting || !isDirty || belowUsage}
             className="inline-flex min-w-[140px] items-center justify-center rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
           >
             {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "บันทึกโควตา"}
@@ -629,7 +703,7 @@ function ManageNamespaceModal({
           usedDisplay={`ใช้อยู่ ${cores(namespace.usage.used_cpu_milli)} Core`}
           maxDisplay={`สูงสุด ${cores(QUOTA_BOUNDS.cpu.max)} Core`}
           presets={CPU_PRESETS.map((v) => ({ value: v, label: `${cores(v)} Core` }))}
-          warning={cpuBelowUsage ? belowUsageWarning : null}
+          error={cpuBelowUsage ? belowUsageError : null}
           disabled={isSubmitting}
         />
 
@@ -646,7 +720,7 @@ function ManageNamespaceModal({
           usedDisplay={`ใช้อยู่ ${gigabytes(namespace.usage.used_ram_mb)} GB`}
           maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.ram.max)} GB`}
           presets={RAM_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
-          warning={ramBelowUsage ? belowUsageWarning : null}
+          error={ramBelowUsage ? belowUsageError : null}
           disabled={isSubmitting}
         />
 
@@ -663,7 +737,8 @@ function ManageNamespaceModal({
           usedDisplay={`จองแล้ว ${gigabytes(namespace.usage.used_storage_mb)} GB`}
           maxDisplay={`สูงสุด ${gigabytes(QUOTA_BOUNDS.storage.max)} GB`}
           presets={STORAGE_PRESETS.map((v) => ({ value: v, label: `${gigabytes(v)} GB` }))}
-          warning={storageWarning}
+          error={storageBelowUsage ? belowUsageError : null}
+          warning={storageMB === 0 ? "ตั้งเป็น 0 = กลุ่มนี้จะสร้าง database ใหม่ไม่ได้" : null}
           disabled={isSubmitting}
         />
       </div>
@@ -713,7 +788,8 @@ interface QuotaSliderProps {
   usedDisplay: string;
   maxDisplay: string;
   presets: { value: number; label: string }[];
-  warning: string | null;
+  error?: string | null;
+  warning?: string | null;
   disabled: boolean;
 }
 
@@ -728,6 +804,7 @@ function QuotaSlider({
   usedDisplay,
   maxDisplay,
   presets,
+  error,
   warning,
   disabled,
 }: QuotaSliderProps) {
@@ -793,8 +870,12 @@ function QuotaSlider({
         />
       </div>
 
-      {warning && (
-        <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm text-orange-700">{warning}</p>
+      {error ? (
+        <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      ) : (
+        warning && (
+          <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm text-orange-700">{warning}</p>
+        )
       )}
     </div>
   );

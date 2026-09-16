@@ -58,8 +58,16 @@ export interface AppService {
   storage_mb: number;
   // จุดที่ดิสก์ถูก mount เข้าไปใน container ('' = ไม่มีดิสก์ถาวร)
   data_path: string;
+  // null = ไม่ได้ตั้งเวลาลบ
+  delete_at: string | null;
 
   created_at: string;
+}
+
+export interface AdminService extends AppService {
+  namespace_name: string;
+  creator_name: string;
+  creator_student_id: string;
 }
 
 export interface CreateServiceDTO {
@@ -106,6 +114,32 @@ export const serviceApi = {
 
   remove: async (id: number) => {
     const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/services/${id}`);
+    return response.data.data;
+  },
+};
+
+export const adminServiceApi = {
+  listAll: async () => {
+    const response = await axiosClient.get<ApiResponse<AdminService[]>>('/admin/services');
+    return Array.isArray(response.data.data) ? response.data.data : [];
+  },
+
+  remove: async (id: number) => {
+    const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/admin/services/${id}`);
+    return response.data.data;
+  },
+
+  scheduleDelete: async (id: number) => {
+    const response = await axiosClient.post<ApiResponse<{ id: number; delete_at: string }>>(
+      `/admin/services/${id}/schedule-delete`,
+    );
+    return response.data.data;
+  },
+
+  cancelScheduledDelete: async (id: number) => {
+    const response = await axiosClient.delete<ApiResponse<{ id: number; delete_at: null }>>(
+      `/admin/services/${id}/schedule-delete`,
+    );
     return response.data.data;
   },
 };

@@ -63,6 +63,7 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ENV_VARS = 20;
 
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+const floorTo = (v: number, step: number) => Math.floor(v / step) * step;
 
 function formatCores(milli: number) {
   return `${(milli / 1000).toFixed(1)} cores`;
@@ -177,7 +178,7 @@ function statusAdvice(svc: AppService): string | null {
   return null;
 }
 
-export default function RequestQuotar() {
+export default function MyService() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const [services, setServices] = useState<AppService[]>([]);
@@ -742,6 +743,22 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const overRam = namespace !== null && ramRemaining < 0;
   const overStorage = namespace !== null && storageOn && storageRemaining < 0;
 
+  // เพดานแถบเลื่อน = ที่กลุ่มเหลือ ÷ จำนวน pod (ไม่เกินเพดานต่อ service) — ต่ำกว่าค่าขั้นต่ำ = ใช้เต็มแล้ว
+  const cpuFit = namespace ? floorTo(cpuAvailable / effectiveReplicas, 100) : MAX_CPU_MILLI;
+  const ramFit = namespace ? floorTo(ramAvailable / effectiveReplicas, 128) : MAX_RAM_MB;
+  const storageFit = namespace ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB) : STORAGE_BOUNDS.maxMB;
+  const cpuFull = cpuFit < MIN_CPU_MILLI;
+  const ramFull = ramFit < MIN_RAM_MB;
+  const storageFull = storageFit < STORAGE_BOUNDS.minMB;
+  const cpuMax = clamp(cpuFit, MIN_CPU_MILLI, MAX_CPU_MILLI);
+  const ramMax = clamp(ramFit, MIN_RAM_MB, MAX_RAM_MB);
+  const storageMax = clamp(storageFit, STORAGE_BOUNDS.minMB, STORAGE_BOUNDS.maxMB);
+
+  // เพดานลดลง (โหลดโควตาเสร็จ / เพิ่ม replica) ค่าที่เลือกไว้ต้องลดตาม
+  useEffect(() => setCpuMilli((v) => Math.min(v, cpuMax)), [cpuMax]);
+  useEffect(() => setRamMb((v) => Math.min(v, ramMax)), [ramMax]);
+  useEffect(() => setStorageMb((v) => Math.min(v, storageMax)), [storageMax]);
+
   const buildEnvMap = () => {
     const env: Record<string, string> = {};
     envVars.forEach(({ key, value }) => { if (key.trim()) env[key.trim()] = value; });
@@ -1099,13 +1116,13 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     type="number"
                     step="0.1"
                     min={MIN_CPU_MILLI / 1000}
-                    max={MAX_CPU_MILLI / 1000}
+                    max={cpuMax / 1000}
                     value={(cpuMilli / 1000).toFixed(1)}
-                    disabled={submitting}
+                    disabled={submitting || cpuFull}
                     onChange={(e) => {
                       const cores = Number(e.target.value);
                       if (!Number.isFinite(cores)) return;
-                      setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, MAX_CPU_MILLI));
+                      setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, cpuMax));
                     }}
                     className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
@@ -1115,13 +1132,14 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               <input
                 type="range"
                 min={MIN_CPU_MILLI}
-                max={MAX_CPU_MILLI}
+                max={cpuMax}
                 step={100}
                 value={cpuMilli}
-                disabled={submitting}
+                disabled={submitting || cpuFull}
                 onChange={(e) => setCpuMilli(Number(e.target.value))}
                 className="w-full accent-[#BB6653] disabled:opacity-50"
               />
+              {cpuFull && <p className="text-sm text-red-500">CPU ของกลุ่มถูกใช้เต็มแล้ว</p>}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -1134,13 +1152,13 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     type="number"
                     step="128"
                     min={MIN_RAM_MB}
-                    max={MAX_RAM_MB}
+                    max={ramMax}
                     value={ramMb}
-                    disabled={submitting}
+                    disabled={submitting || ramFull}
                     onChange={(e) => {
                       const mb = Number(e.target.value);
                       if (!Number.isFinite(mb)) return;
-                      setRamMb(clamp(Math.round(mb), MIN_RAM_MB, MAX_RAM_MB));
+                      setRamMb(clamp(Math.round(mb), MIN_RAM_MB, ramMax));
                     }}
                     className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
@@ -1150,13 +1168,14 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               <input
                 type="range"
                 min={MIN_RAM_MB}
-                max={MAX_RAM_MB}
+                max={ramMax}
                 step={128}
                 value={ramMb}
-                disabled={submitting}
+                disabled={submitting || ramFull}
                 onChange={(e) => setRamMb(Number(e.target.value))}
                 className="w-full accent-[#BB6653] disabled:opacity-50"
               />
+              {ramFull && <p className="text-sm text-red-500">Memory ของกลุ่มถูกใช้เต็มแล้ว</p>}
             </div>
 
             {/* Storage — อยู่ต่อจาก Memory เพราะหักโควตากลุ่มเหมือนกัน
@@ -1171,19 +1190,15 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     <input
                       type="number"
                       min={STORAGE_BOUNDS.minMB / UNIT_FACTOR[storageUnit]}
-                      max={STORAGE_BOUNDS.maxMB / UNIT_FACTOR[storageUnit]}
+                      max={storageMax / UNIT_FACTOR[storageUnit]}
                       step={storageUnit === "GB" ? 1 : STORAGE_BOUNDS.stepMB}
                       value={storageMb / UNIT_FACTOR[storageUnit]}
-                      disabled={submitting}
+                      disabled={submitting || storageFull}
                       onChange={(e) => {
                         const n = Number(e.target.value);
                         if (!Number.isFinite(n)) return;
                         setStorageMb(
-                          clamp(
-                            Math.round(n * UNIT_FACTOR[storageUnit]),
-                            STORAGE_BOUNDS.minMB,
-                            STORAGE_BOUNDS.maxMB,
-                          ),
+                          clamp(Math.round(n * UNIT_FACTOR[storageUnit]), STORAGE_BOUNDS.minMB, storageMax),
                         );
                       }}
                       className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
@@ -1202,15 +1217,17 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                 <input
                   type="range"
                   min={STORAGE_BOUNDS.minMB}
-                  max={STORAGE_BOUNDS.maxMB}
+                  max={storageMax}
                   step={STORAGE_BOUNDS.stepMB}
                   value={storageMb}
-                  disabled={submitting}
+                  disabled={submitting || storageFull}
                   onChange={(e) => setStorageMb(Number(e.target.value))}
                   className="w-full accent-[#BB6653] disabled:opacity-50"
                 />
-                <p className="text-sm text-[#211a14]/40">
-                  พื้นที่เก็บข้อมูลของ service นี้ — กำหนดได้ตอนสร้างเท่านั้น ยังขยายทีหลังไม่ได้
+                <p className={cn("text-sm", storageFull ? "text-red-500" : "text-[#211a14]/40")}>
+                  {storageFull
+                    ? "พื้นที่เก็บข้อมูลของกลุ่มเหลือไม่พอสร้างฐานข้อมูลใหม่"
+                    : "พื้นที่เก็บข้อมูลของฐานข้อมูลนี้ เพิ่มทีหลังได้แต่ลดไม่ได้"}
                 </p>
               </div>
             )}
@@ -1239,7 +1256,15 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   className="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
                 >
                   {REPLICA_CHOICES.map((n) => (
-                    <option key={n} value={n}>
+                    <option
+                      key={n}
+                      value={n}
+                      // ใช้สเปกต่ำสุดแล้วยังเกินโควตา = เลือกไม่ได้
+                      disabled={
+                        namespace !== null &&
+                        (n * MIN_CPU_MILLI > cpuAvailable || n * MIN_RAM_MB > ramAvailable)
+                      }
+                    >
                       {n} {n === 1 ? "pod" : "pods"}
                     </option>
                   ))}

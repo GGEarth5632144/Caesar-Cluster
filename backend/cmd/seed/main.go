@@ -154,7 +154,7 @@ func seedAdmin(db *gorm.DB, cfg *config.Config) {
 	}
 
 	// admin ก็ต้องอยู่ในรายชื่อผู้มีสิทธิ์เหมือนกัน (ติด FK users.student_id → eligible_students)
-	eligible := entity.EligibleStudent{StudentID: adminStudentID, Major: "System", EnrollmentStatus: 10}
+	eligible := entity.EligibleStudent{StudentID: adminStudentID, Major: "System", EnrollmentStatus: 10, Role: entity.RoleAdmin}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible).Error; err != nil {
 		log.Fatalf("seed eligible admin ไม่สำเร็จ: %v", err)
 	}
@@ -173,7 +173,6 @@ func seedAdmin(db *gorm.DB, cfg *config.Config) {
 		StudentID:       adminStudentID,
 		RoleID:          adminRole.ID,
 		RealName:        "System Admin",
-		NickName:        "admin",
 		Gmail:           "system@gmail.com",
 		EntryYear:       3,
 		Password:        string(hashadmin),
@@ -219,7 +218,6 @@ func seeduser(db *gorm.DB) {
 		StudentID:       StudentID,
 		RoleID:          userRole.ID,
 		RealName:        "Nattanant",
-		NickName:        "Earth",
 		Gmail:           "nattanant563214@gmail.com",
 		EntryYear:       4,
 		Password:        string(hashuser),

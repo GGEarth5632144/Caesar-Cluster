@@ -6,11 +6,11 @@ export interface AuthUser {
   id: number;
   student_id: string;
   real_name: string;
-  nick_name: string;
   gmail: string;
   year_level: number;
   role: string;
   namespace_id: number | null;
+  major?: string;
 }
 
 /** ล็อกอินผ่านครบแล้ว — ได้ token มาใช้งานได้เลย */
@@ -67,6 +67,18 @@ export const authApi = {
     return response.data.data;
   },
 
+  // ตอบรูปร่างเดียวกับ /me
+  updateProfile: async (payload: { real_name: string }) => {
+    const response = await axiosClient.patch<{ data: AuthUser }>('/me', payload);
+    return response.data.data;
+  },
+
+  // รหัสเดิมผิดได้ 400 INVALID_CURRENT_PASSWORD
+  changePassword: async (payload: { current_password: string; new_password: string }) => {
+    const response = await axiosClient.post<{ data: { message: string } }>('/me/password', payload);
+    return response.data.data;
+  },
+
   // ล็อกอิน — บัญชีที่ยังไม่ยืนยันอีเมลจะได้ 403 EMAIL_NOT_VERIFIED กลับมา (ไม่ใช่ 200)
   // หน้า Login จับ code นั้นแล้วเสนอช่องขอลิงก์ยืนยันใหม่ให้
   login: async (payload: { student_id: string; password: string; remember: boolean }) => {
@@ -80,7 +92,6 @@ export const authApi = {
   register: async (payload: {
     student_id: string;
     real_name: string;
-    nick_name: string;
     gmail: string;
     password: string;
   }) => {
