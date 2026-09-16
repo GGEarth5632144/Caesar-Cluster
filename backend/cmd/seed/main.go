@@ -174,7 +174,6 @@ func seedAdmin(db *gorm.DB, cfg *config.Config) {
 		RoleID:          adminRole.ID,
 		RealName:        "System Admin",
 		Gmail:           "system@gmail.com",
-		EntryYear:       3,
 		Password:        string(hashadmin),
 		GmailVerifiedAt: &verifiedAt,
 	}
@@ -200,7 +199,7 @@ func seeduser(db *gorm.DB) {
 		return
 	}
 
-	eligible := entity.EligibleStudent{StudentID: StudentID, Major: entity.MajorCPE, EnrollmentStatus: 10}
+	eligible := entity.EligibleStudent{StudentID: StudentID, Major: "CPE", EnrollmentStatus: 10}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&eligible).Error; err != nil {
 		log.Fatalf("seed eligible user ไม่สำเร็จ: %v", err)
 	}
@@ -219,7 +218,6 @@ func seeduser(db *gorm.DB) {
 		RoleID:          userRole.ID,
 		RealName:        "Nattanant",
 		Gmail:           "nattanant563214@gmail.com",
-		EntryYear:       4,
 		Password:        string(hashuser),
 		GmailVerifiedAt: &verifiedAt,
 	}
@@ -233,19 +231,19 @@ func seeduser(db *gorm.DB) {
 
 // seedTestEligibleStudents ใส่รายชื่อ นศ. ทดสอบ B6600001-B6600011 (ON CONFLICT DO NOTHING รันซ้ำได้)
 //
-// จงใจใส่ major/สถานภาพไม่เหมือนกันเพื่อทดสอบด่านของ Register ได้ครบ: B6600009-B6600010 ไม่ใช่ CPE
-// (NOT_CPE) และ B6600008 เป็น CPE แต่สถานภาพ 40 (NOT_ACTIVE_STUDENT)
+// จงใจใส่ major/สถานภาพไม่เหมือนกันเพื่อทดสอบด่านของ Register ได้ครบ: B6600009-B6600010 เป็นสาขาอื่น
+// (สมัครได้เหมือนกัน) และ B6600008 สถานภาพ 40 (NOT_ACTIVE_STUDENT)
 func seedTestEligibleStudents(db *gorm.DB) {
 	rows := make([]entity.EligibleStudent, 0, 10)
 	for i := 1; i <= 7; i++ {
 		rows = append(rows, entity.EligibleStudent{
 			StudentID:        fmt.Sprintf("B66%05d", i),
-			Major:            entity.MajorCPE,
+			Major:            "CPE",
 			EnrollmentStatus: 10,
 		})
 	}
 	rows = append(rows,
-		entity.EligibleStudent{StudentID: "B6600008", Major: entity.MajorCPE, EnrollmentStatus: 40},
+		entity.EligibleStudent{StudentID: "B6600008", Major: "CPE", EnrollmentStatus: 40},
 		entity.EligibleStudent{StudentID: "B6600009", Major: "Electrical Engineering", EnrollmentStatus: 10},
 		entity.EligibleStudent{StudentID: "B6600010", Major: "Mechanical Engineering", EnrollmentStatus: 10},
 	)
@@ -253,5 +251,5 @@ func seedTestEligibleStudents(db *gorm.DB) {
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
 		log.Fatalf("seed test eligible students ไม่สำเร็จ: %v", err)
 	}
-	log.Println("eligible_students ทดสอบพร้อมแล้ว (B6600001-B6600007 = CPE active, B6600008 = CPE แต่จบแล้ว, B6600009-B6600010 = ไม่ใช่ CPE) ✓")
+	log.Println("eligible_students ทดสอบพร้อมแล้ว (B6600001-B6600007 = CPE active, B6600008 = CPE แต่จบแล้ว, B6600009-B6600010 = สาขาอื่น active) ✓")
 }

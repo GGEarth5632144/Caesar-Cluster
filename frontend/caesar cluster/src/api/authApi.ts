@@ -7,7 +7,6 @@ export interface AuthUser {
   student_id: string;
   real_name: string;
   gmail: string;
-  year_level: number;
   role: string;
   namespace_id: number | null;
   major?: string;

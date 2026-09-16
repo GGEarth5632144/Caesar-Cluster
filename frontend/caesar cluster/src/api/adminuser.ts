@@ -8,8 +8,6 @@ export interface User {
   real_name: string;
   namespace_id: number | null;
   gmail: string;
-  year: number; // ปีที่เข้าศึกษา (พ.ศ. เช่น 2566) — ค่าดิบ ไม่ใช่ชั้นปีปัจจุบัน อย่าเอาไปโชว์ตรงๆ ใช้ year_level แทน
-  year_level: number; // ชั้นปีปัจจุบัน คำนวณสดจาก student_id ทุกครั้งที่เรียก (เช่น 4) — ใช้ตัวนี้โชว์
   namespace_name: string; // ชื่อ space ที่สังกัด ("" ถ้ายังไม่มี) — หน้า User Management โชว์ชื่อนี้
   // โควตาของ namespace ที่ผู้ใช้สังกัด (โควตาผูกกับ namespace ไม่ใช่ user แล้ว)
   // ผู้ใช้ที่ยังไม่มี space จะได้ 0 ทั้งคู่ — cpu เป็น millicore, ram เป็น MB
@@ -25,7 +23,6 @@ export interface UpdateUserDTO {
   student_id?: string;
   real_name?: string;
   gmail?: string;
-  year?: number;
   role_id?: number;
 }
 

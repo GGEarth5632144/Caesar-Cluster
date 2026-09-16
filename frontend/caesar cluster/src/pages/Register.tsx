@@ -14,7 +14,7 @@ import ResendVerification from "@/components/ResendVerification";
 
 const registerSchema = z
   .object({
-    student_id: z.string().min(1, "กรุณากรอกรหัสนักศึกษา"),
+    student_id: z.string().min(1, "กรุณากรอกรหัสประจำตัว"),
     first_name: z.string().min(1, "กรุณากรอกชื่อ"),
     last_name: z.string().min(1, "กรุณากรอกนามสกุล"),
     gmail: z.string().email("อีเมลไม่ถูกต้อง"),
@@ -113,7 +113,7 @@ export default function Register() {
             className="mt-10 flex flex-col gap-5"
           >
             <div>
-              <label className={labelClass}>Student Number</label>
+              <label className={labelClass}>รหัสประจำตัว</label>
               <Input className={`mt-1 ${inputClass}`} {...register("student_id")} />
               {errors.student_id && (
                 <p className="mt-1 text-sm text-white">{errors.student_id.message}</p>

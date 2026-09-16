@@ -43,8 +43,6 @@ func (h *InviteController) Create(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "INVITE_SELF", err.Error())
 		case errors.Is(err, services.ErrStudentNotEligible):
 			utils.Error(c, http.StatusBadRequest, "STUDENT_NOT_FOUND", err.Error())
-		case errors.Is(err, services.ErrStudentNotCPE):
-			utils.Error(c, http.StatusBadRequest, "NOT_CPE", err.Error())
 		case errors.Is(err, services.ErrStudentNotActive):
 			utils.Error(c, http.StatusBadRequest, "NOT_ACTIVE_STUDENT", err.Error())
 		case errors.Is(err, services.ErrInviteeAlreadyInNamespace):

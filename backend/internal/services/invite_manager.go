@@ -12,8 +12,7 @@ import (
 var (
 	ErrNotContributor            = errors.New("เฉพาะเจ้าของ space เท่านั้นที่เชิญสมาชิกใหม่ได้")
 	ErrInviteSelf                = errors.New("เชิญตัวเองไม่ได้")
-	ErrStudentNotEligible        = errors.New("ไม่พบรหัสนักศึกษานี้ในฐานข้อมูล")
-	ErrStudentNotCPE             = errors.New("เชิญได้เฉพาะนักศึกษาสาขาวิศวกรรมคอมพิวเตอร์ (CPE) เท่านั้น")
+	ErrStudentNotEligible        = errors.New("ไม่พบรหัสประจำตัวนี้ในฐานข้อมูล")
 	ErrStudentNotActive          = errors.New("สถานภาพนักศึกษาของรหัสนี้ไม่สามารถเข้าร่วมระบบได้")
 	ErrInviteeAlreadyInNamespace = errors.New("คนที่เชิญมี namespace อยู่แล้ว")
 	ErrInviteAlreadyPending      = errors.New("มีคำเชิญที่รอตอบรับของคนนี้อยู่แล้วใน space นี้")
@@ -47,7 +46,7 @@ func NewInviteManager(db *gorm.DB) *InviteManager {
 // data flow:
 //   - หา namespace ของผู้เชิญ → ต้องเป็น contributor เท่านั้นถึงเชิญได้ (สมาชิกธรรมดาเชิญไม่ได้ —
 //     กันสมาชิกคนหนึ่งชวนคนนอกเข้ามาแชร์โควตาโดยเจ้าของไม่รู้เรื่อง)
-//   - เช็ค student_id ที่เชิญผ่านด่านเดียวกับ AuthController.Register ทุกด่าน (อยู่ในรายชื่อ/เป็น CPE/
+//   - เช็ค student_id ที่เชิญผ่านด่านเดียวกับ AuthController.Register ทุกด่าน (อยู่ในรายชื่อ/
 //     สถานภาพยัง active) เพราะถ้าคนนั้นสมัคร/login ไม่ได้ตั้งแต่ต้น เชิญไปก็ตอบรับไม่ได้อยู่ดี
 //     ดีกว่าปล่อยให้เจ้าของเห็นคำเชิญค้าง "pending" ตลอดไปโดยไม่รู้สาเหตุ
 //   - ถ้าคนที่ถูกเชิญลงทะเบียนแล้ว ต้องยังไม่มี namespace ของตัวเอง (กติกา 1 คน = 1 space)
@@ -80,10 +79,7 @@ func (m *InviteManager) Create(ctx context.Context, userID int, studentID string
 		}
 		return nil, err
 	}
-	if eligible.Major != entity.MajorCPE {
-		return nil, ErrStudentNotCPE
-	}
-	if !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
+	if eligible.Role != entity.RoleAdmin && !entity.ActiveEnrollmentStatuses[eligible.EnrollmentStatus] {
 		return nil, ErrStudentNotActive
 	}
 

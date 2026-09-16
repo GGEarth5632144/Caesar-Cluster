@@ -141,6 +141,8 @@ func Setup(
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
 			admin.POST("/eligible-students/single", adminCtl.AddEligibleStudent)
 			admin.POST("/eligible-students/preview", adminCtl.PreviewEligibleStudents)
+			admin.PATCH("/eligible-students/:studentId", adminCtl.UpdateEligibleStudent)
+			admin.DELETE("/eligible-students/:studentId", adminCtl.DeleteEligibleStudent)
 
 			admin.POST("/request-templates", adminCtl.CreateRequestTemplate)
 			admin.PATCH("/request-templates/:id", adminCtl.UpdateRequestTemplate)

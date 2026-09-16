@@ -39,9 +39,11 @@ export interface ConfirmEligibleStudentsResponse {
 // role ที่บัญชีจะได้ตอนเจ้าตัวสมัคร — ตรงกับ entity.RoleUser / RoleAdmin ฝั่ง backend
 export type EligibleRole = 'user' | 'admin';
 
-// body ของ POST /admin/eligible-students/single — ตรงกับ dto.AddSingleEligibleStudentRequest
-export interface AddEligibleStudentPayload {
+// body ของ POST /admin/eligible-students/single และ PATCH /admin/eligible-students/:studentId
+// — ตรงกับ dto.SingleEligibleStudentRequest
+export interface EligibleStudentPayload {
   student_id: string;
+  real_name?: string;
   major: string;
   enrollment_status: number;
   role: EligibleRole;
@@ -55,7 +57,6 @@ export interface EligibleStudent {
   enrollment_status: number;
   // คนที่สมัครแล้วถูกซิงก์ให้ตรงกับบัญชีจริงเสมอ ส่วนคนที่ยังไม่สมัครคือ role ที่จะได้ตอนสมัคร
   role: EligibleRole;
-  year_level: number;
   imported_at: string;
   created_at: string;
 }
@@ -104,11 +105,25 @@ export const eligibleStudentsApi = {
   },
 
   // เพิ่ม/อัปเดตผู้มีสิทธิ์ทีละคนพร้อม role — ถ้ารหัสนี้สมัครแล้ว backend เปลี่ยน role ของบัญชีให้ด้วย
-  // (user_role_updated = true) ชื่อเดิมที่ import มาจากไฟล์ไม่ถูกแตะ
-  addOne: async (payload: AddEligibleStudentPayload) => {
+  // (user_role_updated = true) ชื่อเขียนทับเฉพาะเมื่อกรอกมา
+  addOne: async (payload: EligibleStudentPayload) => {
     const response = await axiosClient.post<
       ApiResponse<{ student: EligibleStudent; user_role_updated: boolean }>
     >('/admin/eligible-students/single', payload);
+    return response.data.data;
+  },
+
+  update: async (studentId: string, payload: EligibleStudentPayload) => {
+    const response = await axiosClient.patch<
+      ApiResponse<{ student: EligibleStudent; user_updated: boolean }>
+    >(`/admin/eligible-students/${encodeURIComponent(studentId)}`, payload);
+    return response.data.data;
+  },
+
+  remove: async (studentId: string) => {
+    const response = await axiosClient.delete<
+      ApiResponse<{ student_id: string; user_deleted: boolean }>
+    >(`/admin/eligible-students/${encodeURIComponent(studentId)}`);
     return response.data.data;
   },
 

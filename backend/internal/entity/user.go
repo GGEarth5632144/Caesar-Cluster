@@ -18,10 +18,7 @@ type User struct {
 	// เวลาที่กดลิงก์ยืนยันในอีเมล — NULL = ยังไม่ยืนยัน ล็อกอินไม่ได้ (ดู AuthController.Login)
 	// เก็บเป็นเวลาไม่ใช่ bool เพราะ "ยืนยันเมื่อไร" ต้องใช้ตอนสืบย้อนหลัง ส่วน bool คำนวณจากมันได้อยู่แล้ว
 	GmailVerifiedAt *time.Time `gorm:"column:gmail_verified_at;type:timestamp" json:"gmail_verified_at"`
-	// ปีที่เข้าศึกษา (พ.ศ.) แกะจาก prefix ของ student_id ครั้งเดียวตอนสมัคร — คนละเรื่องกับ "ชั้นปี"
-	// ที่ต้องคำนวณสดทุกครั้ง (ดู entity.YearLevel)
-	EntryYear int       `gorm:"column:year;type:integer;not null;default:0" json:"year"`
-	CreatedAt time.Time `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
+	CreatedAt       time.Time  `gorm:"column:created_at;type:timestamp;not null;default:now()" json:"created_at"`
 }
 
 // TableName บอก GORM ให้ map struct นี้กับตาราง "users"
