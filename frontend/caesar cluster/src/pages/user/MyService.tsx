@@ -1,4 +1,10 @@
-import { useState, useEffect, useRef, type ChangeEvent, type ClipboardEvent } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  type ChangeEvent,
+  type ClipboardEvent,
+} from "react";
 import {
   Box,
   Cpu,
@@ -22,7 +28,13 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { ServiceCardsSkeleton } from "@/components/ui/PageSkeletons";
 import GroupMembers from "@/components/GroupMembers";
-import { serviceApi, isSettled, hasStorage, type AppService , type UpdateServiceDTO } from "@/api/services";
+import {
+  serviceApi,
+  isSettled,
+  hasStorage,
+  type AppService,
+  type UpdateServiceDTO,
+} from "@/api/services";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
@@ -62,7 +74,8 @@ const REPLICA_CHOICES = Array.from({ length: MAX_REPLICAS }, (_, i) => i + 1);
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ENV_VARS = 20;
 
-const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+const clamp = (v: number, min: number, max: number) =>
+  Math.min(Math.max(v, min), max);
 const floorTo = (v: number, step: number) => Math.floor(v / step) * step;
 
 function formatCores(milli: number) {
@@ -123,7 +136,12 @@ function initialsOf(name: string) {
 function statusBadge(status: AppService["status"]) {
   switch (status) {
     case "running":
-      return { label: "Running", dot: "bg-green-600", text: "text-green-700", bg: "bg-green-50" };
+      return {
+        label: "Running",
+        dot: "bg-green-600",
+        text: "text-green-700",
+        bg: "bg-green-50",
+      };
     case "creating":
       return {
         label: "Deploying...",
@@ -149,7 +167,12 @@ function statusBadge(status: AppService["status"]) {
       };
     case "failed":
     default:
-      return { label: "Failed", dot: "bg-red-500", text: "text-red-600", bg: "bg-red-50" };
+      return {
+        label: "Failed",
+        dot: "bg-red-500",
+        text: "text-red-600",
+        bg: "bg-red-50",
+      };
   }
 }
 
@@ -168,7 +191,10 @@ function statusAdvice(svc: AppService): string | null {
     return "กำลังเตรียม container อยู่ ถ้าค้างอยู่นานผิดปกติ ให้ตรวจสอบว่าชื่อ image ถูกต้อง";
   }
   if (svc.status === "failed") {
-    if (svc.status_reason === "ImagePullBackOff" || svc.status_reason === "ErrImagePull") {
+    if (
+      svc.status_reason === "ImagePullBackOff" ||
+      svc.status_reason === "ErrImagePull"
+    ) {
       return "ดึง image ไม่ได้ ตรวจสอบว่าชื่อกับ tag ถูกต้อง และ image เป็นแบบสาธารณะ";
     }
     if (svc.status_reason === "NotFound") {
@@ -335,7 +361,11 @@ export default function MyService() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#FBDFDA] text-base font-bold text-[#BB6653]">
-                      {svc.is_database ? <Database size={20} /> : initialsOf(svc.name)}
+                      {svc.is_database ? (
+                        <Database size={20} />
+                      ) : (
+                        initialsOf(svc.name)
+                      )}
                     </div>
                     <div className="min-w-0">
                       <p className="font-semibold text-[#211a14] truncate flex items-center gap-1.5">
@@ -369,7 +399,7 @@ export default function MyService() {
                   title="ดูข้อมูลฉบับเต็ม"
                 >
                   <Eye size={16} />
-                  ตรวจสอบข้อมูล และ แก้ไข
+                  Change and Re-Deploy
                 </button>
                 {(svc.status === "crashloop" ||
                   svc.status === "pending" ||
@@ -385,7 +415,9 @@ export default function MyService() {
                     <span
                       className={cn(
                         "flex items-center gap-1.5 text-sm font-bold",
-                        svc.status === "pending" ? "text-[#A96A15]" : "text-red-600",
+                        svc.status === "pending"
+                          ? "text-[#A96A15]"
+                          : "text-red-600",
                       )}
                     >
                       <AlertTriangle size={14} className="shrink-0" />
@@ -424,12 +456,18 @@ export default function MyService() {
                       : `${svc.ram_mb} MB`}
                   </div>
                   {withDisk ? (
-                    <div className="flex items-center gap-1.5" title="ดิสก์ถาวร">
+                    <div
+                      className="flex items-center gap-1.5"
+                      title="ดิสก์ถาวร"
+                    >
                       <HardDrive size={16} className="text-[#BB6653]" />
                       {formatStorage(svc.storage_mb)}
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5" title="container port">
+                    <div
+                      className="flex items-center gap-1.5"
+                      title="container port"
+                    >
                       <Box size={16} className="text-[#BB6653]" />
                       {svc.container_port}
                     </div>
@@ -445,7 +483,8 @@ export default function MyService() {
                       className="truncate"
                       title={`เชื่อมต่อจาก service อื่นในกลุ่มที่ ${svc.name}:${svc.container_port}`}
                     >
-                      ใช้ได้เฉพาะในกลุ่ม &middot; {svc.name}:{svc.container_port}
+                      ใช้ได้เฉพาะในกลุ่ม &middot; {svc.name}:
+                      {svc.container_port}
                     </span>
                   </div>
                 ) : (
@@ -453,7 +492,8 @@ export default function MyService() {
                     <Network size={16} className="text-[#BB6653] shrink-0" />
                     {svc.node_port ? (
                       <span className="truncate">
-                        &lt;node-ip&gt;:{svc.node_port} &rarr; :{svc.container_port}
+                        &lt;node-ip&gt;:{svc.node_port} &rarr; :
+                        {svc.container_port}
                       </span>
                     ) : (
                       <span>รอคลัสเตอร์จ่ายพอร์ต...</span>
@@ -481,12 +521,21 @@ export default function MyService() {
                     </span>
                   ) : (
                     <div className="flex items-center gap-1.5">
-                      {isScaling && <Loader2 size={14} className="animate-spin text-[#BB6653]" />}
+                      {isScaling && (
+                        <Loader2
+                          size={14}
+                          className="animate-spin text-[#BB6653]"
+                        />
+                      )}
                       <select
                         value={svc.replicas}
                         disabled={isScaling || isDeleting || !canScale}
-                        title={canScale ? undefined : "ปรับได้หลัง deploy เสร็จ"}
-                        onChange={(e) => handleScale(svc.id, Number(e.target.value))}
+                        title={
+                          canScale ? undefined : "ปรับได้หลัง deploy เสร็จ"
+                        }
+                        onChange={(e) =>
+                          handleScale(svc.id, Number(e.target.value))
+                        }
                         className="rounded-lg border border-black/10 bg-white px-2.5 py-1 text-sm text-[#211a14] outline-none disabled:opacity-50"
                       >
                         {REPLICA_CHOICES.map((n) => (
@@ -501,39 +550,46 @@ export default function MyService() {
 
                 {isConfirming ? (
                   <div className="flex flex-col gap-2 pt-1">
-                    {/* ลบ service ที่มีดิสก์ = ลบ PVC ตามไปด้วย ข้อมูลข้างในหายถาวร กู้ไม่ได้ (ไม่มี backup)
-                        ต้องเตือนคนละระดับกับการลบ nginx ที่สร้างใหม่ได้ใน 10 วินาที */}
                     {withDisk && (
                       <p className="flex items-start gap-1.5 text-sm text-red-600">
                         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                        {svc.is_database ? "ข้อมูลทั้งหมดในฐานข้อมูลนี้" : "ไฟล์ทั้งหมดในดิสก์ของ service นี้"}{" "}
-                        ({formatStorage(svc.storage_mb)}) จะถูกลบถาวร กู้คืนไม่ได้
+                        {svc.is_database
+                          ? "ข้อมูลทั้งหมดในฐานข้อมูลนี้"
+                          : "ไฟล์ทั้งหมดในดิสก์ของ service นี้"}{" "}
+                        ({formatStorage(svc.storage_mb)}) จะถูกลบถาวร
+                        กู้คืนไม่ได้
                       </p>
                     )}
                     <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={isDeleting}
-                      onClick={() => handleDelete(svc.id)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-500 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
-                    >
-                      {isDeleting ? <Loader2 size={15} className="animate-spin" /> : "Confirm delete"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isDeleting}
-                      onClick={() => setPendingDeleteId(null)}
-                      className="rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03]"
-                    >
-                      Cancel
-                    </button>
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={() => handleDelete(svc.id)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-500 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
+                      >
+                        {isDeleting ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          "Confirm delete"
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={() => setPendingDeleteId(null)}
+                        className="rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03]"
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => navigate(`/${PATHS.serviceLogs}/${svc.id}`)}
+                      onClick={() =>
+                        navigate(`/${PATHS.serviceLogs}/${svc.id}`)
+                      }
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-[#BB6653]/30 hover:bg-[#FBDFDA]/40 hover:text-[#BB6653]"
                     >
                       <Terminal size={15} /> Logs
@@ -550,8 +606,6 @@ export default function MyService() {
               </div>
             );
           })}
-
-          {/* ระหว่างกรองอยู่ ช่อง "สร้างใหม่" จะทำให้เข้าใจผิดว่าเป็นผลการค้นหา — สลับเป็นข้อความบอกผลแทน */}
           {isFiltering ? (
             visibleServices.length === 0 && (
               <p className="col-span-full rounded-2xl border-2 border-dashed border-black/10 p-10 text-center text-base text-[#211a14]/45">
@@ -565,26 +619,55 @@ export default function MyService() {
               className="rounded-2xl border-2 border-dashed border-black/10 p-6 flex flex-col items-center justify-center gap-2 text-[#211a14]/40 transition-colors hover:border-[#BB6653]/40 hover:text-[#BB6653] min-h-[168px]"
             >
               <Plus size={28} />
-              <span className="text-base font-semibold">Deploy a new service</span>
+              <span className="text-base font-semibold">
+                Deploy a new service
+              </span>
             </button>
           )}
           {selectedServiceDetail && (
+            
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
               <div className="bg-[#FFFDF6] w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl px-7 py-5 shadow-2xl border border-black/5 flex flex-col gap-4 animate-in fade-in zoom-in duration-200 custom-scrollbar">
-                
                 {/* Header Modal */}
                 <div className="flex justify-between items-start border-b border-black/5 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-[#FBDFDA] text-lg font-bold text-[#BB6653]">
-                      {selectedServiceDetail.is_database ? <Database size={24} /> : initialsOf(selectedServiceDetail.name)}
+                  <div className="flex items-center justify-between gap-4">
+                    {/* ส่วนซ้าย: ไอคอน + ชื่อหัวข้อ */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-[#FBDFDA] text-lg font-bold text-[#BB6653]">
+                        {selectedServiceDetail.is_database ? (
+                          <Database size={24} />
+                        ) : (
+                          initialsOf(selectedServiceDetail.name)
+                        )}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-extrabold text-[#211a14]">
+                          Service Info
+                        </h3>
+                        <span className="text-xs font-semibold text-[#BB6653] uppercase tracking-wider">
+                          Detailed View
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-extrabold text-[#211a14]">Service Info</h3>
-                      <span className="text-xs font-semibold text-[#BB6653] uppercase tracking-wider">Detailed View</span>
-                    </div>
+                    <span
+                    
+                      className={cn(
+                        "inline-flex shrink-0 items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold whitespace-nowrap shadow-sm",
+                        statusBadge(selectedServiceDetail.status).bg,
+                        statusBadge(selectedServiceDetail.status).text,
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "size-2 rounded-full animate-pulse",
+                          statusBadge(selectedServiceDetail.status).dot,
+                        )}
+                      />
+                      {statusBadge(selectedServiceDetail.status).label}
+                    </span>
                   </div>
-                  <button 
-                    onClick={() => setSelectedServiceDetail(null)} 
+                  <button
+                    onClick={() => setSelectedServiceDetail(null)}
                     className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
                   >
                     <X size={20} />
@@ -594,13 +677,21 @@ export default function MyService() {
                 {/* Content Modal */}
                 <div className="flex flex-col gap-5 text-sm text-[#211a14]/80">
                   <div className="bg-white p-4 rounded-2xl border border-black/5">
-                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Service Name</p>
-                    <p className="font-semibold text-base break-words">{selectedServiceDetail.name}</p>
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+                      Service Name
+                    </p>
+                    <p className="font-semibold text-base break-words">
+                      {selectedServiceDetail.name}
+                    </p>
                   </div>
 
                   <div className="bg-white p-4 rounded-2xl border border-black/5">
-                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Docker Image</p>
-                    <p className="font-mono text-sm break-all text-[#BB6653]">{selectedServiceDetail.image}</p>
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+                      Docker Image
+                    </p>
+                    <p className="font-mono text-sm break-all text-[#BB6653]">
+                      {selectedServiceDetail.image}
+                    </p>
                   </div>
 
                   {(selectedServiceDetail.status === "crashloop" ||
@@ -611,7 +702,7 @@ export default function MyService() {
                         "flex flex-col gap-2 rounded-2xl border p-4",
                         selectedServiceDetail.status === "pending"
                           ? "border-[#A96A15]/20 bg-[#FBEFD9]"
-                          : "border-red-100 bg-red-50"
+                          : "border-red-100 bg-red-50",
                       )}
                     >
                       <span
@@ -619,14 +710,15 @@ export default function MyService() {
                           "flex items-center gap-1.5 text-sm font-bold",
                           selectedServiceDetail.status === "pending"
                             ? "text-[#A96A15]"
-                            : "text-red-600"
+                            : "text-red-600",
                         )}
                       >
                         <AlertTriangle size={16} className="shrink-0" />
                         {selectedServiceDetail.status_reason || "ไม่ทราบสาเหตุ"}
                         {selectedServiceDetail.restart_count > 0 && (
                           <span className="font-normal opacity-70">
-                            · restart {selectedServiceDetail.restart_count} ครั้ง
+                            · restart {selectedServiceDetail.restart_count}{" "}
+                            ครั้ง
                           </span>
                         )}
                       </span>
@@ -648,61 +740,98 @@ export default function MyService() {
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
                       <Cpu size={18} className="text-[#BB6653]" />
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">CPU</p>
-                      <p className="font-bold">{(selectedServiceDetail.cpu_milli / 1000).toFixed(1)} <span className="text-xs font-normal">cores</span></p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                        CPU
+                      </p>
+                      <p className="font-bold">
+                        {(selectedServiceDetail.cpu_milli / 1000).toFixed(1)}{" "}
+                        <span className="text-xs font-normal">cores</span>
+                      </p>
                     </div>
                     <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
                       <Layers size={18} className="text-[#BB6653]" />
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">RAM</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                        RAM
+                      </p>
                       <p className="font-bold">
-                        {selectedServiceDetail.ram_mb >= 1024 ? `${(selectedServiceDetail.ram_mb / 1024).toFixed(1)} GB` : `${selectedServiceDetail.ram_mb} MB`}
+                        {selectedServiceDetail.ram_mb >= 1024
+                          ? `${(selectedServiceDetail.ram_mb / 1024).toFixed(1)} GB`
+                          : `${selectedServiceDetail.ram_mb} MB`}
                       </p>
                     </div>
                     <div className="bg-white p-3 rounded-2xl border border-black/5 flex flex-col items-center justify-center gap-1">
                       <Box size={18} className="text-[#BB6653]" />
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Port</p>
-                      <p className="font-bold">{selectedServiceDetail.container_port}</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                        Port
+                      </p>
+                      <p className="font-bold">
+                        {selectedServiceDetail.container_port}
+                      </p>
                     </div>
                   </div>
                   <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-2">
-                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Environment Variables</p>
-                    {selectedServiceDetail.env_vars && Object.keys(selectedServiceDetail.env_vars).length > 0 ? (
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+                      Environment Variables
+                    </p>
+                    {selectedServiceDetail.env_vars &&
+                    Object.keys(selectedServiceDetail.env_vars).length > 0 ? (
                       <div className="flex flex-col gap-1.5 rounded-xl bg-black/[0.02] border border-black/5 p-3">
-                        {Object.entries(selectedServiceDetail.env_vars).map(([key, value]) => (
-                          <div key={key} className="font-mono text-sm break-all flex gap-1.5">
-                            <span className="font-bold text-[#BB6653] shrink-0">{key}</span>
-                            <span className="text-[#211a14]/30">=</span>
-                            <span className="text-[#211a14]/70">{String(value)}</span>
-                          </div>
-                        ))}
+                        {Object.entries(selectedServiceDetail.env_vars).map(
+                          ([key, value]) => (
+                            <div
+                              key={key}
+                              className="font-mono text-sm break-all flex gap-1.5"
+                            >
+                              <span className="font-bold text-[#BB6653] shrink-0">
+                                {key}
+                              </span>
+                              <span className="text-[#211a14]/30">=</span>
+                              <span className="text-[#211a14]/70">
+                                {String(value)}
+                              </span>
+                            </div>
+                          ),
+                        )}
                       </div>
                     ) : (
-                      <p className="text-sm text-[#211a14]/40">No environment variables</p>
+                      <p className="text-sm text-[#211a14]/40">
+                        No environment variables
+                      </p>
                     )}
                   </div>
                   <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-2">
-                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Network & Routing</p>
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">
+                      Network & Routing
+                    </p>
                     <div className="flex items-center gap-2">
                       <Network size={16} className="text-[#BB6653] shrink-0" />
                       {selectedServiceDetail.is_database ? (
-                        <span className="break-words text-[#211a14]/60">Internal Only: {selectedServiceDetail.name}:{selectedServiceDetail.container_port}</span>
+                        <span className="break-words text-[#211a14]/60">
+                          Internal Only: {selectedServiceDetail.name}:
+                          {selectedServiceDetail.container_port}
+                        </span>
                       ) : (
                         <span className="break-words font-mono text-[#211a14]/60">
-                          {selectedServiceDetail.node_port ? `<node-ip>:${selectedServiceDetail.node_port} → :${selectedServiceDetail.container_port}` : 'Waiting for cluster port...'}
+                          {selectedServiceDetail.node_port
+                            ? `<node-ip>:${selectedServiceDetail.node_port} → :${selectedServiceDetail.container_port}`
+                            : "Waiting for cluster port..."}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
                 <div className="mt-2 flex items-center gap-3 w-full">
-                  <button 
-                    onClick={() => setSelectedServiceDetail(null)} 
+                  <button
+                    onClick={() => setSelectedServiceDetail(null)}
                     className="flex-1 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#211a14] font-bold transition-colors"
                   >
                     Close
                   </button>
-                  <button 
-                    onClick={() => {setEditingService(selectedServiceDetail); setSelectedServiceDetail(null);}} 
+                  <button
+                    onClick={() => {
+                      setEditingService(selectedServiceDetail);
+                      setSelectedServiceDetail(null);
+                    }}
                     className="flex-1 py-3 rounded-xl bg-[#FBEFD9] hover:bg-[#f2e0c2] text-[#A96A15] font-bold transition-colors"
                   >
                     Update and Re-deploy
@@ -716,7 +845,10 @@ export default function MyService() {
 
       {/* ย้ายมาจากหน้า General Dashboard — สมาชิกกลุ่มคือคนที่แชร์โควตาก้อนเดียวกับ service ด้านบน */}
       {namespace && (
-        <GroupMembers namespace={namespace} isOwner={user?.id === namespace.contributor_id} />
+        <GroupMembers
+          namespace={namespace}
+          isOwner={user?.id === namespace.contributor_id}
+        />
       )}
 
       {showCreate && (
@@ -738,7 +870,9 @@ export default function MyService() {
           onClose={() => setEditingService(null)}
           onUpdated={(updatedSvc) => {
             // อัปเดตรายการลงใน State ทันที
-            setServices((prev) => prev.map((s) => s.id === updatedSvc.id ? updatedSvc : s));
+            setServices((prev) =>
+              prev.map((s) => (s.id === updatedSvc.id ? updatedSvc : s)),
+            );
             fetchNamespace();
             setEditingService(null);
             setSelectedServiceDetail(updatedSvc); // ให้ Modal ข้อมูลรีเฟรชข้อมูลล่าสุดด้วย (ถ้าเปิดไว้)
@@ -757,7 +891,11 @@ interface CreateServiceModalProps {
   onCreated: (svc: AppService) => void;
 }
 
-function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModalProps) {
+function CreateServiceModal({
+  namespace,
+  onClose,
+  onCreated,
+}: CreateServiceModalProps) {
   const [image, setImage] = useState("");
   const [name, setName] = useState("");
   // เลือกระดับที่จะใช้เองได้อิสระ ไม่ผูกกับ preset ตายตัวอีกแล้ว — เก็บเป็นหน่วยเดียวกับที่ backend รับ
@@ -821,15 +959,25 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   const overStorage = namespace !== null && storageOn && storageRemaining < 0;
 
   // เพดานแถบเลื่อน = ที่กลุ่มเหลือ ÷ จำนวน pod (ไม่เกินเพดานต่อ service) — ต่ำกว่าค่าขั้นต่ำ = ใช้เต็มแล้ว
-  const cpuFit = namespace ? floorTo(cpuAvailable / effectiveReplicas, 100) : MAX_CPU_MILLI;
-  const ramFit = namespace ? floorTo(ramAvailable / effectiveReplicas, 128) : MAX_RAM_MB;
-  const storageFit = namespace ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB) : STORAGE_BOUNDS.maxMB;
+  const cpuFit = namespace
+    ? floorTo(cpuAvailable / effectiveReplicas, 100)
+    : MAX_CPU_MILLI;
+  const ramFit = namespace
+    ? floorTo(ramAvailable / effectiveReplicas, 128)
+    : MAX_RAM_MB;
+  const storageFit = namespace
+    ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB)
+    : STORAGE_BOUNDS.maxMB;
   const cpuFull = cpuFit < MIN_CPU_MILLI;
   const ramFull = ramFit < MIN_RAM_MB;
   const storageFull = storageFit < STORAGE_BOUNDS.minMB;
   const cpuMax = clamp(cpuFit, MIN_CPU_MILLI, MAX_CPU_MILLI);
   const ramMax = clamp(ramFit, MIN_RAM_MB, MAX_RAM_MB);
-  const storageMax = clamp(storageFit, STORAGE_BOUNDS.minMB, STORAGE_BOUNDS.maxMB);
+  const storageMax = clamp(
+    storageFit,
+    STORAGE_BOUNDS.minMB,
+    STORAGE_BOUNDS.maxMB,
+  );
 
   // เพดานลดลง (โหลดโควตาเสร็จ / เพิ่ม replica) ค่าที่เลือกไว้ต้องลดตาม
   useEffect(() => setCpuMilli((v) => Math.min(v, cpuMax)), [cpuMax]);
@@ -838,13 +986,16 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
 
   const buildEnvMap = () => {
     const env: Record<string, string> = {};
-    envVars.forEach(({ key, value }) => { if (key.trim()) env[key.trim()] = value; });
+    envVars.forEach(({ key, value }) => {
+      if (key.trim()) env[key.trim()] = value;
+    });
     return env;
   };
 
   // K8s-safe name: lowercase letters, numbers, hyphens — must start/end alphanumeric
   const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-  const nameHasError = name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
+  const nameHasError =
+    name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
 
   // นอกช่วงนี้ backend ตีกลับเป็น 400 ตั้งแต่ binding
   const portNumber = Number(containerPort);
@@ -875,12 +1026,21 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
         : null;
 
   const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
-  const removeEnvRow = (i: number) => setEnvVars((p) => p.filter((_, idx) => idx !== i));
+  const removeEnvRow = (i: number) =>
+    setEnvVars((p) => p.filter((_, idx) => idx !== i));
   const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
-    setEnvVars((p) => { const n = [...p]; n[i] = { ...n[i], [field]: val }; return n; });
+    setEnvVars((p) => {
+      const n = [...p];
+      n[i] = { ...n[i], [field]: val };
+      return n;
+    });
 
   // รวมค่าที่ import เข้ามากับตารางเดิม แล้วรายงานผลให้เห็น — ตัดที่ MAX_ENV_VARS ตั้งแต่ตรงนี้
-  const applyParsedEnv = (base: EnvPair[], parsed: EnvPair[], source: string) => {
+  const applyParsedEnv = (
+    base: EnvPair[],
+    parsed: EnvPair[],
+    source: string,
+  ) => {
     const merged = mergeEnv(base, parsed);
     setEnvVars(merged.slice(0, MAX_ENV_VARS));
     setEnvNotice(
@@ -900,7 +1060,11 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
     if (parsed.length === 0) return;
 
     e.preventDefault();
-    applyParsedEnv(envVars.filter((_, idx) => idx !== i), parsed, "ที่วางมา");
+    applyParsedEnv(
+      envVars.filter((_, idx) => idx !== i),
+      parsed,
+      "ที่วางมา",
+    );
   };
 
   // อีกทางเลือกหนึ่ง: หยิบไฟล์ .env มาทั้งไฟล์เลย — parse ด้วยตัวเดียวกับตอน paste
@@ -911,7 +1075,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
 
     const parsed = parseEnvText(await file.text());
     if (parsed.length === 0) {
-      setEnvNotice(`อ่านค่าจาก ${file.name} ไม่ได้ — ไฟล์ต้องอยู่ในรูปแบบ KEY=value`);
+      setEnvNotice(
+        `อ่านค่าจาก ${file.name} ไม่ได้ — ไฟล์ต้องอยู่ในรูปแบบ KEY=value`,
+      );
       return;
     }
 
@@ -934,7 +1100,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
         replicas: effectiveReplicas,
         is_database: isDatabase,
         // ส่งเฉพาะตอนมีดิสก์ — backend ถือว่าส่ง storage_mb หรือ data_path มาเมื่อไหร่คือขอดิสก์ทันที
-        ...(storageOn ? { storage_mb: storageMb, data_path: dataPath.trim() } : {}),
+        ...(storageOn
+          ? { storage_mb: storageMb, data_path: dataPath.trim() }
+          : {}),
       });
       onCreated(svc);
     } catch (err) {
@@ -947,12 +1115,15 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono">
       <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl">
-
         {/* Header */}
         <div className="flex items-center justify-between px-8 py-6 border-b border-black/5">
           <div>
-            <h2 className="text-2xl font-bold text-[#211a14]">Deploy a new service</h2>
-            <p className="text-base text-[#211a14]/50 mt-0.5">Point us at a container image — we handle the rest.</p>
+            <h2 className="text-2xl font-bold text-[#211a14]">
+              Deploy a new service
+            </h2>
+            <p className="text-base text-[#211a14]/50 mt-0.5">
+              Point us at a container image — we handle the rest.
+            </p>
           </div>
           <button
             type="button"
@@ -1001,10 +1172,17 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               placeholder="my-web-app"
               className={cn(
                 "w-full rounded-xl border bg-white px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60",
-                nameHasError ? "border-red-300 focus:border-red-400" : "border-black/10",
+                nameHasError
+                  ? "border-red-300 focus:border-red-400"
+                  : "border-black/10",
               )}
             />
-            <p className={cn("text-sm", nameHasError ? "text-red-500" : "text-[#211a14]/40")}>
+            <p
+              className={cn(
+                "text-sm",
+                nameHasError ? "text-red-500" : "text-[#211a14]/40",
+              )}
+            >
               {nameHasError
                 ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
                 : "lowercase letters, numbers and hyphens only"}
@@ -1019,7 +1197,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
             <div
               className={cn(
                 "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
-                containerPort.trim() !== "" && !portIsValid ? "border-red-300" : "border-black/10",
+                containerPort.trim() !== "" && !portIsValid
+                  ? "border-red-300"
+                  : "border-black/10",
               )}
             >
               <Network size={18} className="text-[#211a14]/30 shrink-0" />
@@ -1037,7 +1217,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
             <p
               className={cn(
                 "text-sm",
-                containerPort.trim() !== "" && !portIsValid ? "text-red-500" : "text-[#211a14]/40",
+                containerPort.trim() !== "" && !portIsValid
+                  ? "text-red-500"
+                  : "text-[#211a14]/40",
               )}
             >
               {containerPort.trim() !== "" && !portIsValid
@@ -1067,7 +1249,10 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
           >
             <Database
               size={20}
-              className={cn("shrink-0", isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30")}
+              className={cn(
+                "shrink-0",
+                isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30",
+              )}
             />
             <span className="flex min-w-0 flex-1 flex-col">
               <span
@@ -1109,11 +1294,17 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
           >
             <HardDrive
               size={20}
-              className={cn("shrink-0", storageOn ? "text-[#BB6653]" : "text-[#211a14]/30")}
+              className={cn(
+                "shrink-0",
+                storageOn ? "text-[#BB6653]" : "text-[#211a14]/30",
+              )}
             />
             <span className="flex min-w-0 flex-1 flex-col">
               <span
-                className={cn("text-base font-bold", storageOn ? "text-[#BB6653]" : "text-[#211a14]")}
+                className={cn(
+                  "text-base font-bold",
+                  storageOn ? "text-[#BB6653]" : "text-[#211a14]",
+                )}
               >
                 ดิสก์ถาวร
               </span>
@@ -1125,7 +1316,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ (Nextcloud, WordPress) จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
               </span>
             </span>
-            {isDatabase && <Lock size={16} className="shrink-0 text-[#BB6653]" />}
+            {isDatabase && (
+              <Lock size={16} className="shrink-0 text-[#BB6653]" />
+            )}
             <SwitchKnob on={storageOn} />
           </button>
 
@@ -1141,7 +1334,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               <div
                 className={cn(
                   "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
-                  dataPath.trim() !== "" && dataPathError ? "border-red-300" : "border-black/10",
+                  dataPath.trim() !== "" && dataPathError
+                    ? "border-red-300"
+                    : "border-black/10",
                 )}
               >
                 <HardDrive size={18} className="text-[#211a14]/30 shrink-0" />
@@ -1157,7 +1352,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               <p
                 className={cn(
                   "text-sm",
-                  dataPath.trim() !== "" && dataPathError ? "text-red-500" : "text-[#211a14]/40",
+                  dataPath.trim() !== "" && dataPathError
+                    ? "text-red-500"
+                    : "text-[#211a14]/40",
                 )}
               >
                 {dataPath.trim() !== "" && dataPathError
@@ -1199,7 +1396,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     onChange={(e) => {
                       const cores = Number(e.target.value);
                       if (!Number.isFinite(cores)) return;
-                      setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, cpuMax));
+                      setCpuMilli(
+                        clamp(Math.round(cores * 1000), MIN_CPU_MILLI, cpuMax),
+                      );
                     }}
                     className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
                   />
@@ -1216,7 +1415,11 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                 onChange={(e) => setCpuMilli(Number(e.target.value))}
                 className="w-full accent-[#BB6653] disabled:opacity-50"
               />
-              {cpuFull && <p className="text-sm text-red-500">CPU ของกลุ่มถูกใช้เต็มแล้ว</p>}
+              {cpuFull && (
+                <p className="text-sm text-red-500">
+                  CPU ของกลุ่มถูกใช้เต็มแล้ว
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -1252,7 +1455,11 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                 onChange={(e) => setRamMb(Number(e.target.value))}
                 className="w-full accent-[#BB6653] disabled:opacity-50"
               />
-              {ramFull && <p className="text-sm text-red-500">Memory ของกลุ่มถูกใช้เต็มแล้ว</p>}
+              {ramFull && (
+                <p className="text-sm text-red-500">
+                  Memory ของกลุ่มถูกใช้เต็มแล้ว
+                </p>
+              )}
             </div>
 
             {/* Storage — อยู่ต่อจาก Memory เพราะหักโควตากลุ่มเหมือนกัน
@@ -1275,7 +1482,11 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                         const n = Number(e.target.value);
                         if (!Number.isFinite(n)) return;
                         setStorageMb(
-                          clamp(Math.round(n * UNIT_FACTOR[storageUnit]), STORAGE_BOUNDS.minMB, storageMax),
+                          clamp(
+                            Math.round(n * UNIT_FACTOR[storageUnit]),
+                            STORAGE_BOUNDS.minMB,
+                            storageMax,
+                          ),
                         );
                       }}
                       className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
@@ -1283,7 +1494,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     <select
                       value={storageUnit}
                       disabled={submitting}
-                      onChange={(e) => setStorageUnit(e.target.value as StorageUnit)}
+                      onChange={(e) =>
+                        setStorageUnit(e.target.value as StorageUnit)
+                      }
                       className="rounded-lg border border-black/10 bg-white px-2 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
                     >
                       <option value="GB">GB</option>
@@ -1301,7 +1514,12 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   onChange={(e) => setStorageMb(Number(e.target.value))}
                   className="w-full accent-[#BB6653] disabled:opacity-50"
                 />
-                <p className={cn("text-sm", storageFull ? "text-red-500" : "text-[#211a14]/40")}>
+                <p
+                  className={cn(
+                    "text-sm",
+                    storageFull ? "text-red-500" : "text-[#211a14]/40",
+                  )}
+                >
                   {storageFull
                     ? "พื้นที่เก็บข้อมูลของกลุ่มเหลือไม่พอสร้างฐานข้อมูลใหม่"
                     : "พื้นที่เก็บข้อมูลของฐานข้อมูลนี้ เพิ่มทีหลังได้แต่ลดไม่ได้"}
@@ -1339,7 +1557,8 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                       // ใช้สเปกต่ำสุดแล้วยังเกินโควตา = เลือกไม่ได้
                       disabled={
                         namespace !== null &&
-                        (n * MIN_CPU_MILLI > cpuAvailable || n * MIN_RAM_MB > ramAvailable)
+                        (n * MIN_CPU_MILLI > cpuAvailable ||
+                          n * MIN_RAM_MB > ramAvailable)
                       }
                     >
                       {n} {n === 1 ? "pod" : "pods"}
@@ -1359,28 +1578,51 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                       : "grid-cols-[1fr_auto_auto]",
                   )}
                 >
-                  <span className="font-bold uppercase tracking-wider text-[#211a14]/35">Summary</span>
-                  <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">CPU</span>
-                  <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Memory</span>
+                  <span className="font-bold uppercase tracking-wider text-[#211a14]/35">
+                    Summary
+                  </span>
+                  <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">
+                    CPU
+                  </span>
+                  <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">
+                    Memory
+                  </span>
                   {storageOn && (
-                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Disk</span>
+                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">
+                      Disk
+                    </span>
                   )}
 
                   <span className="text-[#211a14]/55">Group quota</span>
-                  <span className="text-right text-[#211a14]/70">{formatCores(cpuLimit)}</span>
-                  <span className="text-right text-[#211a14]/70">{formatRam(ramLimit)}</span>
+                  <span className="text-right text-[#211a14]/70">
+                    {formatCores(cpuLimit)}
+                  </span>
+                  <span className="text-right text-[#211a14]/70">
+                    {formatRam(ramLimit)}
+                  </span>
                   {storageOn && (
-                    <span className="text-right text-[#211a14]/70">{formatStorage(storageLimit)}</span>
+                    <span className="text-right text-[#211a14]/70">
+                      {formatStorage(storageLimit)}
+                    </span>
                   )}
 
                   <span className="text-[#211a14]/55">
                     In use ({namespace.usage.service_count}{" "}
-                    {namespace.usage.service_count === 1 ? "service" : "services"})
+                    {namespace.usage.service_count === 1
+                      ? "service"
+                      : "services"}
+                    )
                   </span>
-                  <span className="text-right text-[#211a14]/70">- {formatCores(cpuUsed)}</span>
-                  <span className="text-right text-[#211a14]/70">- {formatRam(ramUsed)}</span>
+                  <span className="text-right text-[#211a14]/70">
+                    - {formatCores(cpuUsed)}
+                  </span>
+                  <span className="text-right text-[#211a14]/70">
+                    - {formatRam(ramUsed)}
+                  </span>
                   {storageOn && (
-                    <span className="text-right text-[#211a14]/70">- {formatStorage(storageUsed)}</span>
+                    <span className="text-right text-[#211a14]/70">
+                      - {formatStorage(storageUsed)}
+                    </span>
                   )}
 
                   <span className="text-[#211a14]/55">
@@ -1388,14 +1630,21 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     {effectiveReplicas > 1 && (
                       <span className="text-[#211a14]/35">
                         {" "}
-                        ({formatCores(cpuMilli)} / {formatRam(ramMb)} x {effectiveReplicas})
+                        ({formatCores(cpuMilli)} / {formatRam(ramMb)} x{" "}
+                        {effectiveReplicas})
                       </span>
                     )}
                   </span>
-                  <span className="text-right text-[#BB6653]">- {formatCores(cpuTotal)}</span>
-                  <span className="text-right text-[#BB6653]">- {formatRam(ramTotal)}</span>
+                  <span className="text-right text-[#BB6653]">
+                    - {formatCores(cpuTotal)}
+                  </span>
+                  <span className="text-right text-[#BB6653]">
+                    - {formatRam(ramTotal)}
+                  </span>
                   {storageOn && (
-                    <span className="text-right text-[#BB6653]">- {formatStorage(storageTotal)}</span>
+                    <span className="text-right text-[#BB6653]">
+                      - {formatStorage(storageTotal)}
+                    </span>
                   )}
 
                   <span className="border-t border-black/5 pt-2 font-bold text-[#211a14]">
@@ -1429,14 +1678,17 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-[#211a14]/40">กำลังโหลดโควตาของกลุ่ม...</p>
+                <p className="text-sm text-[#211a14]/40">
+                  กำลังโหลดโควตาของกลุ่ม...
+                </p>
               )}
             </div>
 
             {(overCpu || overRam || overStorage) && (
               <p className="flex items-start gap-1.5 text-sm text-red-600">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                เกินโควตาที่กลุ่มเหลืออยู่ — ลดขนาดลง หรือลบ service ที่ไม่ได้ใช้ออกก่อน
+                เกินโควตาที่กลุ่มเหลืออยู่ — ลดขนาดลง หรือลบ service
+                ที่ไม่ได้ใช้ออกก่อน
               </p>
             )}
           </div>
@@ -1449,13 +1701,17 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               </label>
               <div className="flex items-center gap-4">
                 <button
-                  type="button" onClick={() => envFileRef.current?.click()} disabled={submitting}
+                  type="button"
+                  onClick={() => envFileRef.current?.click()}
+                  disabled={submitting}
                   className="inline-flex items-center gap-1.5 text-sm text-[#211a14]/50 hover:text-[#211a14] transition-colors disabled:opacity-40"
                 >
                   <Upload size={14} /> Upload .env
                 </button>
                 <button
-                  type="button" onClick={addEnvRow} disabled={submitting}
+                  type="button"
+                  onClick={addEnvRow}
+                  disabled={submitting}
                   className="inline-flex items-center gap-1.5 text-sm text-[#211a14]/50 hover:text-[#211a14] transition-colors disabled:opacity-40"
                 >
                   <Plus size={14} /> Add variable
@@ -1481,7 +1737,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                     disabled={submitting}
                     className="flex-1 rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                   />
-                  <span className="text-[#211a14]/25 text-sm select-none">=</span>
+                  <span className="text-[#211a14]/25 text-sm select-none">
+                    =
+                  </span>
                   {/* เดาจากชื่อ key ว่าน่าจะเป็นรหัสผ่าน เพื่อไม่ให้ค่าโผล่บนจอให้คนข้างหลังเห็น
                       เดาพลาดไปทางปิดบังเกินดีกว่าเปิดเผยพลาด และไม่กระทบค่าที่ส่งขึ้นระบบ */}
                   <input
@@ -1505,8 +1763,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
             </div>
             {envNotice && <p className="text-sm text-[#BB6653]">{envNotice}</p>}
             <p className="text-xs text-[#211a14]/35">
-              วางข้อความ key=value หลายบรรทัดลงในช่อง key แล้วระบบจะแตกเป็นแถวให้เอง หรือกด Upload .env
-              เพื่อดึงทั้งไฟล์ — ค่าเหล่านี้จะถูกใส่ให้ service ตอน deploy
+              วางข้อความ key=value หลายบรรทัดลงในช่อง key
+              แล้วระบบจะแตกเป็นแถวให้เอง หรือกด Upload .env เพื่อดึงทั้งไฟล์ —
+              ค่าเหล่านี้จะถูกใส่ให้ service ตอน deploy
               {isDatabase
                 ? " ฐานข้อมูลส่วนใหญ่ต้องตั้งรหัสผ่านผ่านตรงนี้ ดูชื่อตัวแปรที่ต้องใช้จากเอกสารของ image"
                 : " (ชื่อ key จะเป็นตัวเล็กหรือตัวใหญ่ก็ได้)"}
@@ -1531,19 +1790,23 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
                   {`${name.trim() || "ชื่อ-service"}.ns-${namespace?.id ?? "<id>"}.svc.cluster.local:${containerPort || "8080"}`}
                 </span>
                 <span className="text-sm text-[#211a14]/45">
-                  ใช้ที่อยู่นี้เชื่อมต่อจาก service อื่นในกลุ่มเดียวกัน คนนอกกลุ่มและคนนอกระบบเข้าไม่ได้
+                  ใช้ที่อยู่นี้เชื่อมต่อจาก service อื่นในกลุ่มเดียวกัน
+                  คนนอกกลุ่มและคนนอกระบบเข้าไม่ได้
                 </span>
               </div>
             ) : (
               <div className="flex flex-col gap-1.5 rounded-xl border border-black/8 bg-white/60 p-4">
                 <span className="flex items-center gap-1.5 text-sm font-bold text-[#211a14]/60">
-                  <Network size={14} className="text-[#BB6653]" /> เข้าถึงได้จากนอกระบบ
+                  <Network size={14} className="text-[#BB6653]" />{" "}
+                  เข้าถึงได้จากนอกระบบ
                 </span>
                 <span className="font-mono text-sm text-[#211a14]/70">
-                  &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :{containerPort || "8080"}
+                  &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :
+                  {containerPort || "8080"}
                 </span>
                 <span className="text-sm text-[#211a14]/45">
-                  ระบบจะจ่ายพอร์ตให้หลัง deploy เสร็จ ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
+                  ระบบจะจ่ายพอร์ตให้หลัง deploy เสร็จ
+                  ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
                 </span>
               </div>
             )}
@@ -1564,7 +1827,9 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
           <div className="flex items-center gap-3">
             {/* บอกเหตุผลข้างปุ่ม ไม่ปล่อยให้ปุ่มเทาเฉยๆ แล้วผู้ใช้ต้องเดาว่าตกอะไร */}
             {blockedReason && !submitting && (
-              <span className="max-w-[16rem] text-right text-sm text-red-600">{blockedReason}</span>
+              <span className="max-w-[16rem] text-right text-sm text-red-600">
+                {blockedReason}
+              </span>
             )}
             <button
               type="button"
@@ -1578,32 +1843,42 @@ function CreateServiceModal({ namespace, onClose, onCreated }: CreateServiceModa
               )}
             >
               {submitting && <Loader2 size={16} className="animate-spin" />}
-              {submitting ? "Deploying..." : isDatabase ? "Deploy database" : "Deploy"}
+              {submitting
+                ? "Deploying..."
+                : isDatabase
+                  ? "Deploy database"
+                  : "Deploy"}
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );
 }
 // ─── Edit Modal ────────────────────────────────────────────────────────────────
 interface EditServiceModalProps {
-  service: AppService; 
+  service: AppService;
   namespace: NamespaceDetail | null;
   onClose: () => void;
   onUpdated: (svc: AppService) => void;
 }
 
-export function EditServiceModal({ service, namespace, onClose, onUpdated }: EditServiceModalProps) {
+export function EditServiceModal({
+  service,
+  namespace,
+  onClose,
+  onUpdated,
+}: EditServiceModalProps) {
   // ดึงค่าเดิมจาก service มาใส่เป็นค่าเริ่มต้นทั้งหมด
   const [image, setImage] = useState(service.image || "");
   const [name, setName] = useState(service.name || "");
   const [cpuMilli, setCpuMilli] = useState(service.cpu_milli || 500);
   const [ramMb, setRamMb] = useState(service.ram_mb || 512);
-  const [containerPort, setContainerPort] = useState(String(service.container_port || "8080"));
+  const [containerPort, setContainerPort] = useState(
+    String(service.container_port || "8080"),
+  );
   const [replicas, setReplicas] = useState(service.replicas || 1);
-  
+
   // แปลง JSON Object กลับมาเป็น Array ของ EnvPair เพื่อแสดงในตาราง
   const [envVars, setEnvVars] = useState<EnvPair[]>(() => {
     if (!service.env_vars || Object.keys(service.env_vars).length === 0) {
@@ -1611,7 +1886,7 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
     }
     return Object.entries(service.env_vars).map(([key, value]) => ({
       key,
-      value: String(value)
+      value: String(value),
     }));
   });
 
@@ -1619,16 +1894,20 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
   const envFileRef = useRef<HTMLInputElement>(null);
 
   const [isDatabase, setIsDatabase] = useState(service.is_database || false);
-  const [withStorage, setWithStorage] = useState(!service.is_database && (service.storage_mb > 0));
+  const [withStorage, setWithStorage] = useState(
+    !service.is_database && service.storage_mb > 0,
+  );
   const storageOn = isDatabase || withStorage;
-  
-  const [storageMb, setStorageMb] = useState<number>(service.storage_mb || STORAGE_BOUNDS.defaultMB);
+
+  const [storageMb, setStorageMb] = useState<number>(
+    service.storage_mb || STORAGE_BOUNDS.defaultMB,
+  );
   const [storageUnit, setStorageUnit] = useState<StorageUnit>("GB");
   const [dataPath, setDataPath] = useState(service.data_path || "");
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  
+
   // State สำหรับควบคุม 2-Step Verification
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -1643,7 +1922,8 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
   const storageUsed = namespace?.usage.used_storage_mb ?? 0;
 
   // คืนโควตาที่ service นี้ถืออยู่ ณ ปัจจุบัน
-  const originalReplicas = (service.is_database || service.storage_mb > 0) ? 1 : service.replicas;
+  const originalReplicas =
+    service.is_database || service.storage_mb > 0 ? 1 : service.replicas;
   const originalCpuTotal = service.cpu_milli * originalReplicas;
   const originalRamTotal = service.ram_mb * originalReplicas;
   const originalStorageTotal = service.storage_mb || 0;
@@ -1651,7 +1931,10 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
   // เอาโควตาที่เหลือจริง + โควตาที่ service นี้กอดไว้ = โควตาที่สามารถแก้ไขไปถึงได้
   const cpuAvailable = Math.max(cpuLimit - cpuUsed + originalCpuTotal, 0);
   const ramAvailable = Math.max(ramLimit - ramUsed + originalRamTotal, 0);
-  const storageAvailable = Math.max(storageLimit - storageUsed + originalStorageTotal, 0);
+  const storageAvailable = Math.max(
+    storageLimit - storageUsed + originalStorageTotal,
+    0,
+  );
 
   const effectiveReplicas = storageOn ? 1 : replicas;
 
@@ -1667,15 +1950,25 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
   const overRam = namespace !== null && ramRemaining < 0;
   const overStorage = namespace !== null && storageOn && storageRemaining < 0;
 
-  const cpuFit = namespace ? floorTo(cpuAvailable / effectiveReplicas, 100) : MAX_CPU_MILLI;
-  const ramFit = namespace ? floorTo(ramAvailable / effectiveReplicas, 128) : MAX_RAM_MB;
-  const storageFit = namespace ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB) : STORAGE_BOUNDS.maxMB;
+  const cpuFit = namespace
+    ? floorTo(cpuAvailable / effectiveReplicas, 100)
+    : MAX_CPU_MILLI;
+  const ramFit = namespace
+    ? floorTo(ramAvailable / effectiveReplicas, 128)
+    : MAX_RAM_MB;
+  const storageFit = namespace
+    ? floorTo(storageAvailable, STORAGE_BOUNDS.stepMB)
+    : STORAGE_BOUNDS.maxMB;
   const cpuFull = cpuFit < MIN_CPU_MILLI;
   const ramFull = ramFit < MIN_RAM_MB;
   const storageFull = storageFit < STORAGE_BOUNDS.minMB;
   const cpuMax = clamp(cpuFit, MIN_CPU_MILLI, MAX_CPU_MILLI);
   const ramMax = clamp(ramFit, MIN_RAM_MB, MAX_RAM_MB);
-  const storageMax = clamp(storageFit, STORAGE_BOUNDS.minMB, STORAGE_BOUNDS.maxMB);
+  const storageMax = clamp(
+    storageFit,
+    STORAGE_BOUNDS.minMB,
+    STORAGE_BOUNDS.maxMB,
+  );
 
   useEffect(() => setCpuMilli((v) => Math.min(v, cpuMax)), [cpuMax]);
   useEffect(() => setRamMb((v) => Math.min(v, ramMax)), [ramMax]);
@@ -1683,12 +1976,15 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
 
   const buildEnvMap = () => {
     const env: Record<string, string> = {};
-    envVars.forEach(({ key, value }) => { if (key.trim()) env[key.trim()] = value; });
+    envVars.forEach(({ key, value }) => {
+      if (key.trim()) env[key.trim()] = value;
+    });
     return env;
   };
 
   const NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-  const nameHasError = name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
+  const nameHasError =
+    name.trim().length > 0 && !NAME_PATTERN.test(name.trim());
 
   const portNumber = Number(containerPort);
   const portIsValid =
@@ -1716,11 +2012,20 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
         : null;
 
   const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
-  const removeEnvRow = (i: number) => setEnvVars((p) => p.filter((_, idx) => idx !== i));
+  const removeEnvRow = (i: number) =>
+    setEnvVars((p) => p.filter((_, idx) => idx !== i));
   const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
-    setEnvVars((p) => { const n = [...p]; n[i] = { ...n[i], [field]: val }; return n; });
+    setEnvVars((p) => {
+      const n = [...p];
+      n[i] = { ...n[i], [field]: val };
+      return n;
+    });
 
-  const applyParsedEnv = (base: EnvPair[], parsed: EnvPair[], source: string) => {
+  const applyParsedEnv = (
+    base: EnvPair[],
+    parsed: EnvPair[],
+    source: string,
+  ) => {
     const merged = mergeEnv(base, parsed);
     setEnvVars(merged.slice(0, MAX_ENV_VARS));
     setEnvNotice(
@@ -1736,16 +2041,22 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
     const parsed = parseEnvText(text);
     if (parsed.length === 0) return;
     e.preventDefault();
-    applyParsedEnv(envVars.filter((_, idx) => idx !== i), parsed, "ที่วางมา");
+    applyParsedEnv(
+      envVars.filter((_, idx) => idx !== i),
+      parsed,
+      "ที่วางมา",
+    );
   };
 
   const handleEnvFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; 
+    e.target.value = "";
     if (!file) return;
     const parsed = parseEnvText(await file.text());
     if (parsed.length === 0) {
-      setEnvNotice(`อ่านค่าจาก ${file.name} ไม่ได้ — ไฟล์ต้องอยู่ในรูปแบบ KEY=value`);
+      setEnvNotice(
+        `อ่านค่าจาก ${file.name} ไม่ได้ — ไฟล์ต้องอยู่ในรูปแบบ KEY=value`,
+      );
       return;
     }
     applyParsedEnv(envVars, parsed, ` ${file.name}`);
@@ -1772,9 +2083,11 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
         container_port: portNumber,
         replicas: effectiveReplicas,
         is_database: isDatabase,
-        ...(storageOn ? { storage_mb: storageMb, data_path: dataPath.trim() } : {}),
+        ...(storageOn
+          ? { storage_mb: storageMb, data_path: dataPath.trim() }
+          : {}),
       };
-      
+
       const updatedSvc = await serviceApi.update(service.id, payload);
       onUpdated(updatedSvc);
     } catch (err) {
@@ -1788,12 +2101,17 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
     <>
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 font-mono">
         <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl custom-scrollbar animate-in fade-in zoom-in duration-200">
-
           {/* Header */}
           <div className="flex items-center justify-between px-8 py-6 border-b border-black/5">
             <div>
-              <h2 className="text-2xl font-bold text-[#211a14]">Edit Service</h2>
-              <p className="text-base text-[#211a14]/50 mt-0.5">Update configuration for <span className="font-bold text-[#BB6653]">{service.name}</span>.</p>
+              <h2 className="text-2xl font-bold text-[#211a14]">
+                Edit Service
+              </h2>
+              <p className="text-base text-[#211a14]/50 mt-0.5">
+                Update configuration for{" "}
+                <span className="font-bold text-[#BB6653]">{service.name}</span>
+                .
+              </p>
             </div>
             <button
               type="button"
@@ -1843,10 +2161,17 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                 placeholder="my-web-app"
                 className={cn(
                   "w-full rounded-xl border bg-white px-4 py-3 text-base text-[#211a14] placeholder:text-[#211a14]/30 outline-none disabled:opacity-60",
-                  nameHasError ? "border-red-300 focus:border-red-400" : "border-black/10",
+                  nameHasError
+                    ? "border-red-300 focus:border-red-400"
+                    : "border-black/10",
                 )}
               />
-              <p className={cn("text-sm", nameHasError ? "text-red-500" : "text-[#211a14]/40")}>
+              <p
+                className={cn(
+                  "text-sm",
+                  nameHasError ? "text-red-500" : "text-[#211a14]/40",
+                )}
+              >
                 {nameHasError
                   ? "Lowercase letters, numbers and hyphens only — start and end with a letter or number"
                   : "lowercase letters, numbers and hyphens only"}
@@ -1861,7 +2186,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
               <div
                 className={cn(
                   "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
-                  containerPort.trim() !== "" && !portIsValid ? "border-red-300" : "border-black/10",
+                  containerPort.trim() !== "" && !portIsValid
+                    ? "border-red-300"
+                    : "border-black/10",
                 )}
               >
                 <Network size={18} className="text-[#211a14]/30 shrink-0" />
@@ -1879,7 +2206,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
               <p
                 className={cn(
                   "text-sm",
-                  containerPort.trim() !== "" && !portIsValid ? "text-red-500" : "text-[#211a14]/40",
+                  containerPort.trim() !== "" && !portIsValid
+                    ? "text-red-500"
+                    : "text-[#211a14]/40",
                 )}
               >
                 {containerPort.trim() !== "" && !portIsValid
@@ -1905,7 +2234,10 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
             >
               <Database
                 size={20}
-                className={cn("shrink-0", isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30")}
+                className={cn(
+                  "shrink-0",
+                  isDatabase ? "text-[#BB6653]" : "text-[#211a14]/30",
+                )}
               />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span
@@ -1942,11 +2274,17 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
             >
               <HardDrive
                 size={20}
-                className={cn("shrink-0", storageOn ? "text-[#BB6653]" : "text-[#211a14]/30")}
+                className={cn(
+                  "shrink-0",
+                  storageOn ? "text-[#BB6653]" : "text-[#211a14]/30",
+                )}
               />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span
-                  className={cn("text-base font-bold", storageOn ? "text-[#BB6653]" : "text-[#211a14]")}
+                  className={cn(
+                    "text-base font-bold",
+                    storageOn ? "text-[#BB6653]" : "text-[#211a14]",
+                  )}
                 >
                   ดิสก์ถาวร
                 </span>
@@ -1958,7 +2296,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                       : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
                 </span>
               </span>
-              {isDatabase && <Lock size={16} className="shrink-0 text-[#BB6653]" />}
+              {isDatabase && (
+                <Lock size={16} className="shrink-0 text-[#BB6653]" />
+              )}
               <SwitchKnob on={storageOn} />
             </button>
 
@@ -1970,7 +2310,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                 <div
                   className={cn(
                     "flex items-center gap-2 rounded-xl border bg-white px-4 py-3",
-                    dataPath.trim() !== "" && dataPathError ? "border-red-300" : "border-black/10",
+                    dataPath.trim() !== "" && dataPathError
+                      ? "border-red-300"
+                      : "border-black/10",
                   )}
                 >
                   <HardDrive size={18} className="text-[#211a14]/30 shrink-0" />
@@ -1986,7 +2328,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                 <p
                   className={cn(
                     "text-sm",
-                    dataPath.trim() !== "" && dataPathError ? "text-red-500" : "text-[#211a14]/40",
+                    dataPath.trim() !== "" && dataPathError
+                      ? "text-red-500"
+                      : "text-[#211a14]/40",
                   )}
                 >
                   {dataPath.trim() !== "" && dataPathError
@@ -2026,7 +2370,13 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                       onChange={(e) => {
                         const cores = Number(e.target.value);
                         if (!Number.isFinite(cores)) return;
-                        setCpuMilli(clamp(Math.round(cores * 1000), MIN_CPU_MILLI, cpuMax));
+                        setCpuMilli(
+                          clamp(
+                            Math.round(cores * 1000),
+                            MIN_CPU_MILLI,
+                            cpuMax,
+                          ),
+                        );
                       }}
                       className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
                     />
@@ -2043,7 +2393,11 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                   onChange={(e) => setCpuMilli(Number(e.target.value))}
                   className="w-full accent-[#BB6653] disabled:opacity-50"
                 />
-                {cpuFull && <p className="text-sm text-red-500">CPU ของกลุ่มถูกใช้เต็มแล้ว</p>}
+                {cpuFull && (
+                  <p className="text-sm text-red-500">
+                    CPU ของกลุ่มถูกใช้เต็มแล้ว
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-col gap-2">
@@ -2079,7 +2433,11 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                   onChange={(e) => setRamMb(Number(e.target.value))}
                   className="w-full accent-[#BB6653] disabled:opacity-50"
                 />
-                {ramFull && <p className="text-sm text-red-500">Memory ของกลุ่มถูกใช้เต็มแล้ว</p>}
+                {ramFull && (
+                  <p className="text-sm text-red-500">
+                    Memory ของกลุ่มถูกใช้เต็มแล้ว
+                  </p>
+                )}
               </div>
 
               {storageOn && (
@@ -2100,7 +2458,11 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                           const n = Number(e.target.value);
                           if (!Number.isFinite(n)) return;
                           setStorageMb(
-                            clamp(Math.round(n * UNIT_FACTOR[storageUnit]), STORAGE_BOUNDS.minMB, storageMax),
+                            clamp(
+                              Math.round(n * UNIT_FACTOR[storageUnit]),
+                              STORAGE_BOUNDS.minMB,
+                              storageMax,
+                            ),
                           );
                         }}
                         className="w-20 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-right text-sm text-[#211a14] outline-none disabled:opacity-60"
@@ -2108,7 +2470,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                       <select
                         value={storageUnit}
                         disabled={submitting}
-                        onChange={(e) => setStorageUnit(e.target.value as StorageUnit)}
+                        onChange={(e) =>
+                          setStorageUnit(e.target.value as StorageUnit)
+                        }
                         className="rounded-lg border border-black/10 bg-white px-2 py-1.5 text-sm text-[#211a14] outline-none disabled:opacity-60"
                       >
                         <option value="GB">GB</option>
@@ -2150,7 +2514,8 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                         value={n}
                         disabled={
                           namespace !== null &&
-                          (n * MIN_CPU_MILLI > cpuAvailable || n * MIN_RAM_MB > ramAvailable)
+                          (n * MIN_CPU_MILLI > cpuAvailable ||
+                            n * MIN_RAM_MB > ramAvailable)
                         }
                       >
                         {n} {n === 1 ? "pod" : "pods"}
@@ -2170,36 +2535,62 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                         : "grid-cols-[1fr_auto_auto]",
                     )}
                   >
-                    <span className="font-bold uppercase tracking-wider text-[#211a14]/35">Summary</span>
-                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">CPU</span>
-                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Memory</span>
+                    <span className="font-bold uppercase tracking-wider text-[#211a14]/35">
+                      Summary
+                    </span>
+                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">
+                      CPU
+                    </span>
+                    <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">
+                      Memory
+                    </span>
                     {storageOn && (
-                      <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">Disk</span>
+                      <span className="text-right font-bold uppercase tracking-wider text-[#211a14]/35">
+                        Disk
+                      </span>
                     )}
 
                     <span className="text-[#211a14]/55">Group quota</span>
-                    <span className="text-right text-[#211a14]/70">{formatCores(cpuLimit)}</span>
-                    <span className="text-right text-[#211a14]/70">{formatRam(ramLimit)}</span>
+                    <span className="text-right text-[#211a14]/70">
+                      {formatCores(cpuLimit)}
+                    </span>
+                    <span className="text-right text-[#211a14]/70">
+                      {formatRam(ramLimit)}
+                    </span>
                     {storageOn && (
-                      <span className="text-right text-[#211a14]/70">{formatStorage(storageLimit)}</span>
+                      <span className="text-right text-[#211a14]/70">
+                        {formatStorage(storageLimit)}
+                      </span>
                     )}
 
                     <span className="text-[#211a14]/55">
                       In use (excluding this)
                     </span>
-                    <span className="text-right text-[#211a14]/70">- {formatCores(cpuUsed - originalCpuTotal)}</span>
-                    <span className="text-right text-[#211a14]/70">- {formatRam(ramUsed - originalRamTotal)}</span>
+                    <span className="text-right text-[#211a14]/70">
+                      - {formatCores(cpuUsed - originalCpuTotal)}
+                    </span>
+                    <span className="text-right text-[#211a14]/70">
+                      - {formatRam(ramUsed - originalRamTotal)}
+                    </span>
                     {storageOn && (
-                      <span className="text-right text-[#211a14]/70">- {formatStorage(storageUsed - originalStorageTotal)}</span>
+                      <span className="text-right text-[#211a14]/70">
+                        - {formatStorage(storageUsed - originalStorageTotal)}
+                      </span>
                     )}
 
                     <span className="text-[#211a14]/55">
                       This service (Editing)
                     </span>
-                    <span className="text-right text-[#BB6653]">- {formatCores(cpuTotal)}</span>
-                    <span className="text-right text-[#BB6653]">- {formatRam(ramTotal)}</span>
+                    <span className="text-right text-[#BB6653]">
+                      - {formatCores(cpuTotal)}
+                    </span>
+                    <span className="text-right text-[#BB6653]">
+                      - {formatRam(ramTotal)}
+                    </span>
                     {storageOn && (
-                      <span className="text-right text-[#BB6653]">- {formatStorage(storageTotal)}</span>
+                      <span className="text-right text-[#BB6653]">
+                        - {formatStorage(storageTotal)}
+                      </span>
                     )}
 
                     <span className="border-t border-black/5 pt-2 font-bold text-[#211a14]">
@@ -2233,14 +2624,17 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-[#211a14]/40">กำลังโหลดโควตาของกลุ่ม...</p>
+                  <p className="text-sm text-[#211a14]/40">
+                    กำลังโหลดโควตาของกลุ่ม...
+                  </p>
                 )}
               </div>
 
               {(overCpu || overRam || overStorage) && (
                 <p className="flex items-start gap-1.5 text-sm text-red-600">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                  เกินโควตาที่กลุ่มเหลืออยู่ — ลดขนาดลง หรือลบ service ที่ไม่ได้ใช้ออกก่อน
+                  เกินโควตาที่กลุ่มเหลืออยู่ — ลดขนาดลง หรือลบ service
+                  ที่ไม่ได้ใช้ออกก่อน
                 </p>
               )}
             </div>
@@ -2253,13 +2647,17 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                 </label>
                 <div className="flex items-center gap-4">
                   <button
-                    type="button" onClick={() => envFileRef.current?.click()} disabled={submitting}
+                    type="button"
+                    onClick={() => envFileRef.current?.click()}
+                    disabled={submitting}
                     className="inline-flex items-center gap-1.5 text-sm text-[#211a14]/50 hover:text-[#211a14] transition-colors disabled:opacity-40"
                   >
                     <Upload size={14} /> Upload .env
                   </button>
                   <button
-                    type="button" onClick={addEnvRow} disabled={submitting}
+                    type="button"
+                    onClick={addEnvRow}
+                    disabled={submitting}
                     className="inline-flex items-center gap-1.5 text-sm text-[#211a14]/50 hover:text-[#211a14] transition-colors disabled:opacity-40"
                   >
                     <Plus size={14} /> Add variable
@@ -2285,7 +2683,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                       disabled={submitting}
                       className="flex-1 rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono tracking-wide text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                     />
-                    <span className="text-[#211a14]/25 text-sm select-none">=</span>
+                    <span className="text-[#211a14]/25 text-sm select-none">
+                      =
+                    </span>
                     <input
                       placeholder="value"
                       type={looksSecret(pair.key) ? "password" : "text"}
@@ -2305,7 +2705,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
                   </div>
                 ))}
               </div>
-              {envNotice && <p className="text-sm text-[#BB6653]">{envNotice}</p>}
+              {envNotice && (
+                <p className="text-sm text-[#BB6653]">{envNotice}</p>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -2324,10 +2726,12 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
               ) : (
                 <div className="flex flex-col gap-1.5 rounded-xl border border-black/8 bg-white/60 p-4">
                   <span className="flex items-center gap-1.5 text-sm font-bold text-[#211a14]/60">
-                    <Network size={14} className="text-[#BB6653]" /> เข้าถึงได้จากนอกระบบ
+                    <Network size={14} className="text-[#BB6653]" />{" "}
+                    เข้าถึงได้จากนอกระบบ
                   </span>
                   <span className="font-mono text-sm text-[#211a14]/70">
-                    &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :{containerPort || "8080"}
+                    &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :
+                    {containerPort || "8080"}
                   </span>
                 </div>
               )}
@@ -2347,7 +2751,9 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
 
             <div className="flex items-center gap-3">
               {blockedReason && !submitting && (
-                <span className="max-w-[16rem] text-right text-sm text-red-600">{blockedReason}</span>
+                <span className="max-w-[16rem] text-right text-sm text-red-600">
+                  {blockedReason}
+                </span>
               )}
               <button
                 type="button"
@@ -2365,7 +2771,6 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
               </button>
             </div>
           </div>
-
         </div>
       </div>
 
@@ -2379,11 +2784,12 @@ export function EditServiceModal({ service, namespace, onClose, onUpdated }: Edi
               </div>
               <h3 className="text-lg font-bold">ยืนยันการดำเนินการ</h3>
             </div>
-            
+
             <p className="text-[#211a14]/70 text-sm leading-relaxed">
-              การแก้ไขข้อมูล จะทำการลบ database เก่าของผู้ใช้งานออกไปทั้งหมด คุณจะดำเนินการต่อหรือไม่
+              การแก้ไขข้อมูล จะทำการลบ database เก่าของผู้ใช้งานออกไปทั้งหมด
+              คุณจะดำเนินการต่อหรือไม่
             </p>
-            
+
             <div className="flex items-center gap-3 mt-2">
               <button
                 type="button"
