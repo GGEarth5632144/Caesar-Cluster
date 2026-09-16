@@ -179,3 +179,4 @@ docker compose down -v          # หยุด+ลบ container พร้อม�
 - **Axios** — HTTP client
 - **Lucide React** — icons
 - **crypto-js** — SHA-256 route hashing
+- Rechart
