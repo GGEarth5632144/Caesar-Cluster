@@ -3,15 +3,14 @@ import { useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRight, Loader2 ,ChevronRight} from "lucide-react";
+import { Loader2 ,ChevronRight} from "lucide-react";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authApi, getApiErrorMessage } from "@/api/authApi";
 import { PATHS } from "@/config/routes";
 import AuthHeroArt from "@/components/AuthHeroArt";
 import ResendVerification from "@/components/ResendVerification";
-import { cn } from "@/lib/utils";
 
 const registerSchema = z
   .object({

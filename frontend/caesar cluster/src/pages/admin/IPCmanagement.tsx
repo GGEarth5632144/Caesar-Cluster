@@ -728,7 +728,7 @@ export default function IPCmanagement() {
                     }}
                     itemStyle={{ color: "#3b82f6", fontWeight: "bold" }}
                     labelFormatter={formatTooltipTime}
-                    formatter={(value: any, name: any, props: any) => {
+                    formatter={(value: any, _name: any, props: any) => {
                       // ดึง maxRam จาก Payload แล้วโชว์แบบ Used / Total
                       const used = (Number(value) / 1024).toFixed(2);
                       const total = props.payload.maxRam
