@@ -18,16 +18,14 @@ var (
 	ErrServiceNotFound         = errors.New("ไม่พบ service นี้ใน namespace ของคุณ")
 	ErrServiceNotReady         = errors.New("service ยังไม่พร้อม — รอให้ deploy เสร็จก่อนค่อยปรับจำนวน replica")
 
-	// ── error ของสวิตช์ database (ดู entity.Service.IsDatabase) ────────────────────────
+	// ── error ของดิสก์ถาวร (ดู entity.Service.HasStorage) ────────────────────────────
 
 	// ระบบไม่เดาจุด mount ให้ไม่ว่าจะเป็น image อะไร เพราะเดาผิดแล้วได้ PVC ที่ไม่มีใครเขียนลง
 	// ข้อมูลหายตอน Pod restart ทั้งที่ทุกอย่างดูเหมือนสำเร็จ
 	ErrDataPathRequired = errors.New("ต้องระบุตำแหน่งที่ image นี้เก็บข้อมูล")
 
 	// ตอบเป็น error แทนการแก้ค่าให้เงียบๆ ไม่งั้นผู้เรียก API จะเข้าใจว่าได้ 3 Pod ทั้งที่ระบบให้ 1
-	ErrDatabaseReplicas = errors.New("database ต้องมี 1 pod เท่านั้น — สอง pod เขียนดิสก์ก้อนเดียวกันคือข้อมูลพัง")
-
-	ErrStorageNotAllowed = errors.New("ดิสก์ถาวรใช้ได้เฉพาะ service ที่เปิดสวิตช์ database")
+	ErrStorageReplicas = errors.New("service ที่มีดิสก์ถาวรต้องมี 1 pod เท่านั้น — สอง pod เขียนดิสก์ก้อนเดียวกันคือข้อมูลพัง")
 )
 
 // CreateServiceParams คือ input ของ ServiceManager.Create — ใช้ struct ของ services เอง
@@ -47,12 +45,13 @@ type CreateServiceParams struct {
 	Replicas      int
 	EnvVars       map[string]string
 
-	// IsDatabase = สวิตช์จากหน้าเว็บ เปิดแล้ว Create จะบังคับกติกาของ database ทั้งชุด
-	// (เครือข่ายปิด + ดิสก์ถาวร + 1 pod) — ดู entity.Service.IsDatabase
+	// IsDatabase = สวิตช์ "เข้าได้เฉพาะใน namespace" จากหน้าเว็บ — database ต้องมีดิสก์เสมอ
+	// Create จึงบังคับกติกาดิสก์ถาวรให้ด้วย (ดู entity.Service.IsDatabase)
 	IsDatabase bool
-	// StorageMB เป็น 0 ได้ = ใช้ entity.DefaultStorageMBPerService (มีผลเฉพาะตอน IsDatabase)
+	// StorageMB > 0 หรือส่ง DataPath มา = ขอดิสก์ถาวร (ได้ทั้ง database และ web)
+	// ขอดิสก์แต่ StorageMB เป็น 0 = ใช้ entity.DefaultStorageMBPerService
 	StorageMB int
-	// DataPath = จุดที่ image เก็บข้อมูล — บังคับกรอกทุกครั้งที่ IsDatabase
+	// DataPath = จุดที่ image เก็บข้อมูล — บังคับกรอกทุกครั้งที่ขอดิสก์
 	DataPath string
 }
 
@@ -127,14 +126,20 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 	storageMB := 0
 	dataPath := ""
 
-	// ── สวิตช์ database: แปลง "ติ๊กหนึ่งครั้ง" เป็นกติกาทั้งชุด ────────────────────────
+	// ── ดิสก์ถาวร: แปลงคำขอเป็นกติกาทั้งชุด (StatefulSet + PVC + 1 pod) ─────────────────
+	//
+	// ขอดิสก์ได้สองทาง: เปิดสวิตช์ database (database ต้องมีดิสก์เสมอ) หรือเป็น web ที่ส่ง
+	// storage_mb/data_path มา เช่น Nextcloud ที่เก็บไฟล์ผู้ใช้ไว้ใน /var/www/html
+	// ส่งมาช่องใดช่องหนึ่งก็ถือว่าขอดิสก์ แล้วบังคับให้ครบ (ขนาดมี default ส่วน path ไม่เดาให้)
+	// ไม่ใช่ทิ้ง data_path ที่ส่งมาเงียบๆ — ผู้ใช้จะคิดว่าข้อมูลถาวรทั้งที่ไม่ใช่
 	//
 	// ตรวจให้จบก่อนแตะ DB เพราะเป็นการตรวจคำขอล้วนๆ ไม่ต้องถือ lock ระหว่างทำ
-	if p.IsDatabase {
-		if p.Replicas > entity.DatabaseReplicas {
-			return nil, ErrDatabaseReplicas
+	wantsStorage := p.IsDatabase || p.StorageMB > 0 || strings.TrimSpace(p.DataPath) != ""
+	if wantsStorage {
+		if p.Replicas > entity.StorageReplicas {
+			return nil, ErrStorageReplicas
 		}
-		replicas = entity.DatabaseReplicas
+		replicas = entity.StorageReplicas
 		storageMB = p.StorageMB
 		if storageMB == 0 {
 			storageMB = entity.DefaultStorageMBPerService
@@ -143,9 +148,6 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 			return nil, fmt.Errorf("%w: %s", ErrDataPathRequired, msg)
 		}
 		dataPath = strings.TrimRight(strings.TrimSpace(p.DataPath), "/")
-	} else if p.StorageMB > 0 {
-		// ขอดิสก์โดยไม่เปิดสวิตช์ = คำขอที่ขัดแย้งในตัวเอง ตอบให้ชัดดีกว่าเงียบๆ ไม่สร้าง PVC ให้
-		return nil, ErrStorageNotAllowed
 	}
 
 	svc := &entity.Service{
@@ -244,10 +246,11 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 		return nil, err
 	}
 
-	// เช็คก่อนเรื่องสถานะ เพราะถ้าเช็คทีหลัง การ scale database ที่ยังไม่ขึ้นจะได้ error ว่า
-	// "ยังไม่พร้อม" ซึ่งชวนให้เข้าใจผิดว่ารอแล้วทำได้ (ต้องกันที่นี่ ไม่ใช่แค่ซ่อน dropdown บนหน้าเว็บ)
-	if svc.IsDatabase {
-		return nil, ErrDatabaseReplicas
+	// เช็คก่อนเรื่องสถานะ เพราะถ้าเช็คทีหลัง การ scale service ที่มีดิสก์ (รวม database) ซึ่งยังไม่ขึ้น
+	// จะได้ error ว่า "ยังไม่พร้อม" ซึ่งชวนให้เข้าใจผิดว่ารอแล้วทำได้ (ต้องกันที่นี่ ไม่ใช่แค่ซ่อน dropdown บนหน้าเว็บ)
+	// และ ScaleService ของจริงแก้แค่ Deployment — ปล่อยผ่านมาจะได้ NotFound จาก StatefulSet
+	if svc.HasStorage() {
+		return nil, ErrStorageReplicas
 	}
 
 	// ห้าม scale ระหว่างที่ยังไม่ได้ยืนยันว่า workload ขึ้นจริง ไม่งั้น DB กับคลัสเตอร์จะ drift ถาวร:
@@ -333,7 +336,7 @@ func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int)
 		return err
 	}
 
-	// ส่งทั้ง svc ไปเพราะ database ต้องถอน PVC + NetworkPolicy เพิ่มด้วย (ดู Provisioner.DeleteService)
+	// ส่งทั้ง svc ไปเพราะมีดิสก์ต้องถอน PVC และ database ต้องถอน NetworkPolicy เพิ่มด้วย (ดู Provisioner.DeleteService)
 	if err := m.prov.DeleteService(ctx, K8sNamespaceName(ns.ID), &svc); err != nil {
 		return err
 	}

@@ -1,8 +1,9 @@
 /**
- * database.ts — ค่าคงที่และตัวช่วยของ service ที่เปิดสวิตช์ "เป็นฐานข้อมูล"
+ * database.ts — ค่าคงที่และตัวช่วยของดิสก์ถาวร และของสวิตช์ "เป็นฐานข้อมูล"
  *
- * ระบบไม่แยกชนิดของฐานข้อมูล ใช้ image อะไรก็ได้ — สิ่งที่สวิตช์ให้คือเครือข่ายปิด + ดิสก์ถาวร
- * + ตรึง 1 pod ซึ่งไม่มีข้อไหนต้องรู้ชนิดของฐานข้อมูลเลย
+ * ดิสก์ถาวรใช้ได้ทั้งฐานข้อมูลและ web ที่เก็บไฟล์ผู้ใช้ (Nextcloud, WordPress) — docs 022
+ * ระบบไม่แยกชนิดของ image ใช้อะไรก็ได้: ดิสก์ให้ PVC + ตรึง 1 pod ส่วนสวิตช์ฐานข้อมูลให้เครือข่ายปิด
+ * ซึ่งไม่มีข้อไหนต้องรู้ว่า image ข้างในเป็นอะไร
  */
 
 /** โฟลเดอร์ที่ห้าม mount ทับ (ต้องตรงกับ reservedMountRoots ฝั่ง Go) — ทับแล้วไฟล์ของ image ถูกบังหมด */
@@ -55,7 +56,7 @@ export function looksSecret(key: string): boolean {
   return SECRET_KEY_HINTS.some((hint) => upper.includes(hint));
 }
 
-// ── ขนาดดิสก์ต่อ 1 ฐานข้อมูล — ต้องตรงกับ binding ของ dto.CreateServiceRequest ฝั่ง Go ────────
+// ── ขนาดดิสก์ต่อ service 1 ตัว — ต้องตรงกับ binding ของ dto.CreateServiceRequest ฝั่ง Go ──────
 export const STORAGE_BOUNDS = {
   minMB: 1024, // 1 GB
   maxMB: 20480, // 20 GB
