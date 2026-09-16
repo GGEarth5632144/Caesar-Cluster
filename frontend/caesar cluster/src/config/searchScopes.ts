@@ -165,11 +165,11 @@ export const namespacesScope: SearchScope = {
 export const requestTemplatesScope: SearchScope = {
   id: "admin-request-templates",
   noun: "แม่แบบ",
-  placeholder: "ค้นหาแม่แบบ — ชื่อ, หมวดหมู่, วิชา หรือ cpu:>=1000",
+  placeholder: "ค้นหาแม่แบบ — วิชา, ชื่อ, หมวดหมู่ หรือ cpu:>=1000",
   fields: [
+    { id: "subject", label: "วิชาที่เกี่ยวข้อง", aliases: ["วิชา", "subject"], get: (t: RequestTemplate) => t.relate_subject },
     { id: "name", label: "ชื่อตัวเลือก", aliases: ["ชื่อ", "option"], get: (t: RequestTemplate) => t.option_name },
     { id: "category", label: "หมวดหมู่", aliases: ["หมวด", "cat"], get: (t: RequestTemplate) => t.category },
-    { id: "subject", label: "วิชาที่เกี่ยวข้อง", aliases: ["วิชา", "subject"], get: (t: RequestTemplate) => t.relate_subject },
     { id: "desc", label: "คำอธิบาย", aliases: ["คำอธิบาย", "description"], get: (t: RequestTemplate) => t.description },
     {
       id: "status",

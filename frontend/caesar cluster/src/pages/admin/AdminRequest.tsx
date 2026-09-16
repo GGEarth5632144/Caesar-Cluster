@@ -161,8 +161,8 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
       <table className="w-full text-left text-base text-[#211a14]">
         <thead>
           <tr className="border-b border-black/10 text-[#BB6653]">
-            <th className="pb-4 font-semibold">Option Name</th>
             <th className="pb-4 font-semibold">Relate Subject</th>
+            <th className="pb-4 font-semibold">Option Name</th>
             <th className="pb-4 font-semibold">Resources (CPU/RAM/STORAGE)</th>
             <th className="pb-4 font-semibold text-center">Status</th>
             <th className="pb-4 font-semibold text-center">Action</th>
@@ -179,10 +179,10 @@ function ListView({ data, onEdit, onToggleStatus }: ListViewProps) {
             paginatedData.map((item) => (
               <tr key={item.id} className="border-b border-black/5 transition-colors last:border-0 hover:bg-black/[0.02]">
                 <td className="py-4 text-[#211a14]/70 break-all max-w-[200px]">
-                  <Highlight text={item.option_name} terms={highlightTerms} />
+                  <Highlight text={item.relate_subject} terms={highlightTerms} />
                 </td>
                 <td className="py-4 text-[#211a14]/70 break-all max-w-[200px]">
-                  <Highlight text={item.relate_subject} terms={highlightTerms} />
+                  <Highlight text={item.option_name} terms={highlightTerms} />
                 </td>
                 <td className="py-4 text-[#211a14]/70 break-all max-w-[200px]">
                   {item.cpu_limit_milli / 1000} Core / {(item.ram_limit_mb / 1024).toFixed(1)} GB / {item.storage_gb} GB
@@ -373,7 +373,11 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
   return (
     <div className="rounded-3xl bg-[#FFFDF6] p-8 shadow-sm">
       <div className="flex flex-col gap-5">
-        
+        <div className="flex flex-col gap-1.5">
+          <label className="text-base font-semibold text-[#BB6653] ml-1">Relate Subject</label>
+          <input name="relate_subject" value={formData.relate_subject} onChange={handleChange} placeholder="Relate subject" className={inputClass} />
+        </div>
+
         <div className="grid grid-cols-2 gap-5">
           <div className="flex flex-col gap-1.5">
             <label className="text-base font-semibold text-[#BB6653] ml-1">Option Name</label>
@@ -388,11 +392,6 @@ function FormView({ mode, initialData, onBack, onSuccess }: FormViewProps) {
         <div className="flex flex-col gap-1.5">
           <label className="text-base font-semibold text-[#BB6653] ml-1">Description</label>
           <textarea name="description" value={formData.description} onChange={handleChange} placeholder="Description" rows={3} className={inputClass} />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-base font-semibold text-[#BB6653] ml-1">Relate Subject</label>
-          <input name="relate_subject" value={formData.relate_subject} onChange={handleChange} placeholder="Relate subject" className={inputClass} />
         </div>
 
         {/* 🚨 วางทับโค้ด Grid ของเดิมทั้งหมด 🚨 */}

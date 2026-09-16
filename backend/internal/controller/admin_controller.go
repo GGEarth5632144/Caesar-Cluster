@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/extrame/xls"
 	"github.com/gin-gonic/gin"
@@ -93,6 +94,10 @@ func (h *AdminController) AddEligibleStudent(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID", "กรุณากรอกรหัสประจำตัว")
 		return
 	}
+	major, ok := eligibleMajor(c, req)
+	if !ok {
+		return
+	}
 
 	ctx := c.Request.Context()
 
@@ -104,7 +109,7 @@ func (h *AdminController) AddEligibleStudent(c *gin.Context) {
 	row := entity.EligibleStudent{
 		StudentID:        studentID,
 		RealName:         strings.TrimSpace(req.RealName),
-		Major:            strings.TrimSpace(req.Major),
+		Major:            major,
 		EnrollmentStatus: req.EnrollmentStatus,
 		Role:             req.Role,
 		ImportedAt:       time.Now(),
@@ -158,6 +163,10 @@ func (h *AdminController) UpdateEligibleStudent(c *gin.Context) {
 	newID := strings.TrimSpace(req.StudentID)
 	if newID == "" {
 		utils.Error(c, http.StatusBadRequest, "INVALID_STUDENT_ID", "กรุณากรอกรหัสประจำตัว")
+		return
+	}
+	major, ok := eligibleMajor(c, req)
+	if !ok {
 		return
 	}
 
@@ -222,7 +231,7 @@ func (h *AdminController) UpdateEligibleStudent(c *gin.Context) {
 		}
 		if err := tx.Model(&entity.EligibleStudent{}).Where("student_id = ?", newID).Updates(map[string]any{
 			"real_name":         strings.TrimSpace(req.RealName),
-			"major":             strings.TrimSpace(req.Major),
+			"major":             major,
 			"enrollment_status": status,
 			"role":              req.Role,
 		}).Error; err != nil {
@@ -313,6 +322,18 @@ func (h *AdminController) resolveEligibleRole(c *gin.Context, studentID, roleNam
 		return role, false
 	}
 	return role, true
+}
+
+func eligibleMajor(c *gin.Context, req dto.SingleEligibleStudentRequest) (string, bool) {
+	if req.Role == entity.RoleAdmin {
+		return "", true
+	}
+	major := strings.TrimSpace(req.Major)
+	if utf8.RuneCountInString(major) < 2 {
+		utils.Error(c, http.StatusBadRequest, "INVALID_MAJOR", "กรุณากรอกสาขาวิชาอย่างน้อย 2 ตัวอักษร")
+		return "", false
+	}
+	return major, true
 }
 
 func (h *AdminController) isSelf(c *gin.Context, studentID string) bool {

@@ -462,17 +462,6 @@ function EditUserModal({ user, onClose, onSuccess }: EditUserModalProps) {
           </select>
           {isSelf && <p className="mt-1.5 text-sm text-[#211a14]/50">ไม่สามารถแก้ไข Role ของตัวเองได้</p>}
         </div>
-
-        {/* เนมสเปซที่สังกัด — อ่านอย่างเดียว ย้ายผู้ใช้ข้าม space จากที่นี่ไม่ได้
-            โควตาของ space ไปปรับที่หน้า Namespace Management */}
-        <div className="sm:col-span-2">
-          <label className={labelClass}>Namespace</label>
-          <div className="rounded-xl border border-black/10 bg-black/[0.03] px-4 py-3 text-base text-[#211a14]/60">
-            {user.namespace_id
-              ? `${user.namespace_name || `#${user.namespace_id}`} — โควตาของ space นี้ปรับได้ที่หน้า Namespace Management`
-              : "ผู้ใช้ยังไม่มี namespace — จะสังกัด space เมื่อสร้างหรือเข้าร่วมกลุ่มแล้ว"}
-          </div>
-        </div>
       </div>
     </AdminModal>
   );
@@ -492,6 +481,8 @@ const ROLE_BADGE: Record<EligibleRole, { label: string; className: string }> = {
   user: { label: "User", className: "bg-[#FFF8E8] text-[#BB6653]" },
   admin: { label: "Admin", className: "bg-red-50 text-red-600" },
 };
+
+const eligibleMajorLabel = (s: EligibleStudent) => (s.role === "admin" ? "—" : s.major);
 
 const eligibleStatusLabel = (s: EligibleStudent) =>
   s.role === "admin" ? "—" : enrollmentStatusLabel(s.enrollment_status);
@@ -528,10 +519,11 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
   const trimmedMajor = major.trim();
   const isAdminRole = role === "admin";
   const canRegister = isAdminRole || ACTIVE_ENROLLMENT_STATUSES.includes(Number(status));
+  const canSubmit = !!trimmedId && (isAdminRole || trimmedMajor.length >= 2);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!trimmedId || trimmedMajor.length < 2) return;
+    if (!canSubmit) return;
 
     setIsSubmitting(true);
     try {
@@ -539,7 +531,7 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
         // ใช้ตัวสะกดของแถวเดิมถ้ามี จะได้ชน student_id เดิมตอน upsert ไม่กลายเป็นแถวใหม่
         student_id: match?.student_id ?? trimmedId,
         real_name: realName.trim(),
-        major: trimmedMajor,
+        major: isAdminRole ? "" : trimmedMajor,
         enrollment_status: isAdminRole ? 0 : Number(status),
         role,
       });
@@ -582,7 +574,7 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
           </button>
           <button
             type="submit"
-            disabled={isSubmitting || !trimmedId || trimmedMajor.length < 2}
+            disabled={isSubmitting || !canSubmit}
             className="inline-flex items-center justify-center min-w-[120px] rounded-xl bg-green-600 px-5 py-2.5 text-base font-bold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
           >
             {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : match ? "อัปเดต" : "เพิ่ม"}
@@ -604,7 +596,7 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
           />
           {match && (
             <p className="mt-1.5 text-sm text-[#F08B51]">
-              รหัสนี้มีในรายชื่ออยู่แล้ว ({ROLE_BADGE[match.role]?.label ?? match.role} · {match.major} ·{" "}
+              รหัสนี้มีในรายชื่ออยู่แล้ว ({ROLE_BADGE[match.role]?.label ?? match.role} · {eligibleMajorLabel(match)} ·{" "}
               {eligibleStatusLabel(match)}) — บันทึกจะอัปเดต Role สาขา สถานภาพ และชื่อ-สกุล (ถ้ากรอก) เป็นค่าใหม่
               ถ้าสมัครใช้งานแล้ว Role ของบัญชีจะเปลี่ยนทันที
             </p>
@@ -638,23 +630,25 @@ function AddEligibleStudentModal({ onClose, onUserRoleChanged }: AddEligibleStud
           {isSelf && <p className="mt-1.5 text-sm text-[#211a14]/50">ไม่สามารถแก้ไข Role ของตัวเองได้</p>}
           {isAdminRole && (
             <p className="mt-1.5 text-sm text-red-500">
-              ผู้ดูแลระบบเข้าถึงหน้าจัดการทั้งหมดได้ และไม่ต้องมีสถานภาพ
+              ผู้ดูแลระบบเข้าถึงหน้าจัดการทั้งหมดได้ และไม่ต้องมีสาขาวิชาหรือสถานภาพ
             </p>
           )}
         </div>
 
-        <div>
-          <label htmlFor="eligible-major" className={labelClass}>สาขาวิชา</label>
-          <input
-            id="eligible-major"
-            value={major}
-            onChange={(e) => setMajor(e.target.value)}
-            disabled={isSubmitting}
-            maxLength={100}
-            required
-            className={inputClass}
-          />
-        </div>
+        {!isAdminRole && (
+          <div>
+            <label htmlFor="eligible-major" className={labelClass}>สาขาวิชา</label>
+            <input
+              id="eligible-major"
+              value={major}
+              onChange={(e) => setMajor(e.target.value)}
+              disabled={isSubmitting}
+              maxLength={100}
+              required
+              className={inputClass}
+            />
+          </div>
+        )}
 
         {!isAdminRole && (
           <div>
@@ -775,7 +769,7 @@ function EligibleStudentsModal({ onClose, onUsersChanged }: EligibleStudentsModa
           <table className="w-full min-w-[760px] text-left text-base text-[#211a14]">
             <thead>
               <tr className="border-b border-black/10 text-sm font-bold uppercase tracking-wider text-[#BB6653]">
-                <th className="pb-3 pr-3">รหัสประจำตัว</th>
+                <th className="pb-3 pr-3">Username</th>
                 <th className="pb-3 pr-3">ชื่อ-สกุล</th>
                 <th className="pb-3 pr-3">Role</th>
                 <th className="pb-3 pr-3">สาขาวิชา</th>
@@ -831,15 +825,20 @@ function EligibleStudentRow({ student, onSaved, onDeleted }: EligibleStudentRowP
 
   const handleSave = async () => {
     if (!draft) return;
+    const isAdminDraft = draft.role === "admin";
     const payload: EligibleStudentPayload = {
       student_id: draft.student_id.trim(),
       real_name: draft.real_name?.trim() ?? "",
-      major: draft.major.trim(),
-      enrollment_status: draft.role === "admin" ? 0 : draft.enrollment_status,
+      major: isAdminDraft ? "" : draft.major.trim(),
+      enrollment_status: isAdminDraft ? 0 : draft.enrollment_status,
       role: draft.role,
     };
-    if (!payload.student_id || payload.major.length < 2) {
-      notify.error("ข้อมูลไม่ครบ", "กรุณากรอกรหัสประจำตัว และสาขาวิชาอย่างน้อย 2 ตัวอักษร");
+    if (!payload.student_id) {
+      notify.error("ข้อมูลไม่ครบ", "กรุณากรอกรหัสประจำตัว");
+      return;
+    }
+    if (!isAdminDraft && payload.major.length < 2) {
+      notify.error("ข้อมูลไม่ครบ", "กรุณากรอกสาขาวิชาอย่างน้อย 2 ตัวอักษร");
       return;
     }
 
@@ -932,14 +931,18 @@ function EligibleStudentRow({ student, onSaved, onDeleted }: EligibleStudentRowP
           </select>
         </td>
         <td className="py-2 pr-2">
-          <input
-            aria-label="สาขาวิชา"
-            value={draft.major}
-            onChange={(e) => updateDraft({ major: e.target.value })}
-            disabled={isBusy}
-            maxLength={100}
-            className={inputClass}
-          />
+          {draft.role === "admin" ? (
+            "—"
+          ) : (
+            <input
+              aria-label="สาขาวิชา"
+              value={draft.major}
+              onChange={(e) => updateDraft({ major: e.target.value })}
+              disabled={isBusy}
+              maxLength={100}
+              className={inputClass}
+            />
+          )}
         </td>
         <td className="py-2 pr-2">
           {draft.role === "admin" ? (
@@ -993,7 +996,7 @@ function EligibleStudentRow({ student, onSaved, onDeleted }: EligibleStudentRowP
           {roleBadge.label}
         </span>
       </td>
-      <td className="py-3 pr-3 text-[#211a14]/70">{student.major}</td>
+      <td className="py-3 pr-3 text-[#211a14]/70">{eligibleMajorLabel(student)}</td>
       <td className="py-3 pr-3">
         {student.role === "admin" ? (
           "—"
