@@ -1911,6 +1911,12 @@ export function EditServiceModal({
   // State สำหรับควบคุม 2-Step Verification
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // ผู้ใช้กดยืนยันจากปุ่มด้านล่าง แต่ error อยู่บนสุดของฟอร์ม — เลื่อนกลับขึ้นไปให้เห็นก่อนแก้ไข
+  const modalRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) modalRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [error]);
+
   const dataPathError = storageOn ? validateDataPath(dataPath) : "";
 
   // โควตา: โหมดแก้ไข ต้องเอาที่ service เดิมใช้อยู่ "บวกกลับ" เข้าไปให้ available ก่อน
@@ -2091,7 +2097,7 @@ export function EditServiceModal({
       const updatedSvc = await serviceApi.update(service.id, payload);
       onUpdated(updatedSvc);
     } catch (err) {
-      setError(getApiErrorMessage(err, "Update ไม่สำเร็จ"));
+      setError(getApiErrorMessage(err, "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ"));
     } finally {
       setSubmitting(false);
     }
@@ -2100,7 +2106,10 @@ export function EditServiceModal({
   return (
     <>
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 font-mono">
-        <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl custom-scrollbar animate-in fade-in zoom-in duration-200">
+        <div
+          ref={modalRef}
+          className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl bg-[#FFF8E8] border border-black/5 shadow-xl custom-scrollbar animate-in fade-in zoom-in duration-200"
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-8 py-6 border-b border-black/5">
             <div>
@@ -2127,8 +2136,18 @@ export function EditServiceModal({
           <div className="px-8 py-6 flex flex-col gap-6">
             {/* ส่วนแสดง Error จาก Backend */}
             {error && (
-              <div className="flex items-start gap-2 p-3.5 rounded-xl bg-red-50 text-red-600 text-sm border border-red-100">
-                <AlertTriangle size={16} className="shrink-0 mt-0.5" /> {error}
+              <div
+                role="alert"
+                className="flex items-start gap-2 p-3.5 rounded-xl bg-red-50 text-red-600 text-sm border border-red-100"
+              >
+                <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                <div className="flex flex-col gap-1">
+                  <span className="font-bold">Update ไม่สำเร็จ</span>
+                  <span className="break-words">{error}</span>
+                  <span className="text-red-600/70">
+                    แก้ไขข้อมูลด้านล่าง แล้วกด Update and Re-Deploy อีกครั้ง
+                  </span>
+                </div>
               </div>
             )}
 
