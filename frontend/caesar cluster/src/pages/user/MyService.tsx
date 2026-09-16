@@ -245,14 +245,24 @@ export default function MyService() {
     fetchNamespace();
   }, []);
 
-  // ── ดึงข้อมูลซ้ำระหว่างที่ยังมี service สถานะไม่นิ่ง ───────────────────────────────
+  // เก็บแค่ id แล้วอ่านตัวจริงจาก services — ถ้าเก็บทั้ง object ไว้ หน้าต่างรายละเอียดจะค้างสถานะ
+  // ตอนที่กดเปิด ไม่ขยับตามรอบดึงข้อมูลด้านล่าง (ถูกลบไปแล้ว find ไม่เจอ หน้าต่างก็ปิดเอง)
+  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(
+    null,
+  );
+  const selectedServiceDetail =
+    services.find((s) => s.id === selectedServiceId) ?? null;
+
+  // ── ดึงข้อมูลซ้ำระหว่างที่ยังมี service สถานะไม่นิ่ง หรือเปิดดูรายละเอียดอยู่ ──────────────
   //
   // จำเป็นเพราะ backend ไม่เขียน running ทันทีที่ deploy ผ่าน ต้องรอ ServiceHealthMonitor
   // ยืนยันกับคลัสเตอร์ก่อน ถ้าไม่ดึงซ้ำผู้ใช้จะเห็น "Deploying..." ค้างจนกว่าจะกด refresh เอง
-  // หยุดเองเมื่อทุกตัวนิ่งแล้ว
+  // ส่วนตอนเปิดดูรายละเอียด ตัวที่ running อยู่ก็อาจกลายเป็น crashloop ได้ จึงดึงต่อจนกว่าจะปิด
+  // หยุดเองเมื่อทุกตัวนิ่งและไม่ได้เปิดดูรายละเอียดอยู่
   const hasUnsettled = services.some((s) => !isSettled(s.status));
+  const isViewingDetail = selectedServiceId !== null;
   useEffect(() => {
-    if (!hasUnsettled) return;
+    if (!hasUnsettled && !isViewingDetail) return;
     const timer = setInterval(() => {
       serviceApi
         .list()
@@ -260,14 +270,13 @@ export default function MyService() {
         .catch((err) => console.error(err));
     }, 4000);
     return () => clearInterval(timer);
-  }, [hasUnsettled]);
+  }, [hasUnsettled, isViewingDetail]);
 
   const runningCount = services.filter((s) => s.status === "running").length;
   const deployingCount = services.filter((s) => !isSettled(s.status)).length;
   const brokenCount = services.filter(
     (s) => s.status === "crashloop" || s.status === "failed",
   ).length;
-  const [selectedServiceDetail, setSelectedServiceDetail] = useState<any>(null);
   const [editingService, setEditingService] = useState<any>(null);
   // ช่องค้นหาบน Topbar กรองการ์ดด้านล่าง — ตัวเลขสรุปบรรทัดบนยังนับจาก services ทั้งหมด
   // เพราะเป็นภาพรวมของเนมสเปซ ไม่ใช่ผลของคำค้น
@@ -394,7 +403,7 @@ export default function MyService() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedServiceDetail(svc)}
+                  onClick={() => setSelectedServiceId(svc.id)}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#211a14]/50 hover:text-[#BB6653] hover:bg-[#FBDFDA] rounded-xl transition-colors mt-2"
                   title="ดูข้อมูลฉบับเต็ม"
                 >
@@ -667,7 +676,7 @@ export default function MyService() {
                     </span>
                   </div>
                   <button
-                    onClick={() => setSelectedServiceDetail(null)}
+                    onClick={() => setSelectedServiceId(null)}
                     className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
                   >
                     <X size={20} />
@@ -822,7 +831,7 @@ export default function MyService() {
                 </div>
                 <div className="mt-2 flex items-center gap-3 w-full">
                   <button
-                    onClick={() => setSelectedServiceDetail(null)}
+                    onClick={() => setSelectedServiceId(null)}
                     className="flex-1 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#211a14] font-bold transition-colors"
                   >
                     Close
@@ -830,7 +839,7 @@ export default function MyService() {
                   <button
                     onClick={() => {
                       setEditingService(selectedServiceDetail);
-                      setSelectedServiceDetail(null);
+                      setSelectedServiceId(null);
                     }}
                     className="flex-1 py-3 rounded-xl bg-[#FBEFD9] hover:bg-[#f2e0c2] text-[#A96A15] font-bold transition-colors"
                   >
@@ -875,7 +884,7 @@ export default function MyService() {
             );
             fetchNamespace();
             setEditingService(null);
-            setSelectedServiceDetail(updatedSvc); // ให้ Modal ข้อมูลรีเฟรชข้อมูลล่าสุดด้วย (ถ้าเปิดไว้)
+            setSelectedServiceId(updatedSvc.id); // เปิดหน้าต่างรายละเอียดให้ดูสถานะ re-deploy ต่อ
           }}
         />
       )}
