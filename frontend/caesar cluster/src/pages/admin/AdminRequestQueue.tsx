@@ -135,7 +135,7 @@ export default function AdminRequestQueue() {
         
         {/* ส่วนหัวของหน้า */}
         <div className="mb-6 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <h2 className="text-3xl font-bold text-[#BB6653]">VM Requests</h2>
+          <h2 className="text-3xl font-bold text-[#BB6653]">Resource Requests</h2>
           {!isLoading && !error && (
             <p className="text-base text-[#211a14]/50">
               {pendingCount} waiting

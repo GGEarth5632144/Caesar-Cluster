@@ -488,7 +488,7 @@ func (k *KubernetesProvisioner) DeployService(ctx context.Context, nsName string
 	}
 
 	svc.NodePort = &nodePort
-	log.Printf("[k8s] deploy '%s' เข้า namespace '%s' แล้ว — %d replica × (%dm CPU / %d MB), เข้าถึงที่ <node-ip>:%d → container port %d",
+	log.Printf("[k8s] deploy '%s' เข้า namespace '%s' แล้ว — %d replica × (%dm CPU / %d MB), เข้าถึงที่ <host>:%d → container port %d",
 		svc.Name, nsName, svc.Replicas, svc.CPUMilli, svc.RAMMB, nodePort, svc.ContainerPort)
 	return nil
 }
@@ -540,7 +540,7 @@ func (k *KubernetesProvisioner) deployStateful(
 		return nil
 	}
 	svc.NodePort = &nodePort
-	log.Printf("[k8s] deploy '%s' (StatefulSet) เข้า namespace '%s' แล้ว — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s, เข้าถึงที่ <node-ip>:%d → container port %d",
+	log.Printf("[k8s] deploy '%s' (StatefulSet) เข้า namespace '%s' แล้ว — %dm CPU / %d MB / ดิสก์ %d MB ที่ %s, เข้าถึงที่ <host>:%d → container port %d",
 		svc.Name, nsName, svc.CPUMilli, svc.RAMMB, svc.StorageMB, svc.DataPath, nodePort, svc.ContainerPort)
 	return nil
 }
@@ -830,15 +830,21 @@ func networkPolicyFor(nsName string, svc *entity.Service) *netv1.NetworkPolicy {
 	}
 }
 
-// createNodePortService เปิดทางเข้าจากนอกให้ workload แล้วคืนเลข nodePort ที่ k8s จ่ายมา
+// createNodePortService เปิดทางเข้าจากนอกให้ workload แล้วคืนเลข nodePort ที่ได้จริง
 //
-// ไม่ระบุ nodePort เอง ปล่อยให้ k8s สุ่มจากช่วง 30000-32767: ถ้าเราเลือกเลขเองต้องมาจดว่าใครใช้เลขไหน
-// แล้วกันชนกันข้าม namespace ซึ่ง k8s ทำให้อยู่แล้ว (คอลัมน์ node_port ใน DB เป็นแค่สำเนาไว้โชว์ URL)
+// svc.NodePort มีค่า = เลขที่จองให้ผู้ใช้ตอนเปิดฟอร์ม (docs 031) ต้องได้เลขนั้นเป๊ะ ไม่งั้น URL ที่ผู้ใช้เห็นก่อนกด deploy ผิด
+// ไม่มีค่า = ให้ k8s สุ่มเอง · apiserver เป็นตัวกันเลขซ้ำข้าม namespace ให้ (เลขที่ถูกใช้แล้ว = ErrNodePortTaken)
 func (k *KubernetesProvisioner) createNodePortService(
 	ctx context.Context, cs kubernetes.Interface, nsName string, svc *entity.Service,
 ) (int, error) {
-	created, err := cs.CoreV1().Services(nsName).Create(ctx,
-		serviceFor(nsName, svc, corev1.ServiceTypeNodePort), metav1.CreateOptions{})
+	want := serviceFor(nsName, svc, corev1.ServiceTypeNodePort)
+	if svc.NodePort != nil {
+		want.Spec.Ports[0].NodePort = int32(*svc.NodePort)
+	}
+	created, err := cs.CoreV1().Services(nsName).Create(ctx, want, metav1.CreateOptions{})
+	if svc.NodePort != nil && apierrors.IsInvalid(err) && strings.Contains(err.Error(), "port is already allocated") {
+		return 0, fmt.Errorf("%w: %d (service '%s' ใน namespace '%s')", ErrNodePortTaken, *svc.NodePort, svc.Name, nsName)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("สร้าง Service (NodePort) '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 	}
@@ -848,7 +854,7 @@ func (k *KubernetesProvisioner) createNodePortService(
 	// (ServiceManager.Create จะเก็บกวาดของบนคลัสเตอร์ + คืนโควตาให้เอง)
 	if len(created.Spec.Ports) == 0 || created.Spec.Ports[0].NodePort == 0 {
 		return 0, fmt.Errorf("คลัสเตอร์ไม่ได้จ่าย nodePort ให้ service '%s' ใน namespace '%s' "+
-			"(ช่วง 30000-32767 อาจเต็ม)", svc.Name, nsName)
+			"(ช่วง NodePort อาจเต็ม)", svc.Name, nsName)
 	}
 	return int(created.Spec.Ports[0].NodePort), nil
 }
@@ -859,7 +865,7 @@ func (k *KubernetesProvisioner) createNodePortService(
 // ใช้ merge patch แทน Get→Update: ยิงครั้งเดียว ไม่มีช่อง conflict กับ controller ที่เขียน status อยู่
 // และไม่แตะ field อื่นของ spec (pod template ไม่เปลี่ยน = ไม่เกิด rollout ใหม่ Pod เดิมรันต่อ)
 //
-// ห้ามแตะ Service/NodePort ที่จ่ายไปแล้ว — ผู้ใช้ถือ URL <node-ip>:<node_port> อยู่
+// ห้ามแตะ Service/NodePort ที่จ่ายไปแล้ว — ผู้ใช้ถือ URL <host>:<node_port> อยู่
 //
 // NotFound ไม่ถือว่าสำเร็จ (ต่างจาก DeleteService): ต้องคืน error ให้ ServiceManager.Scale ย้อน replicas
 // ใน DB กลับ ไม่งั้นโควตาถูกจองไว้ให้ Pod ที่ไม่มีอยู่จริง
@@ -901,6 +907,8 @@ func (k *KubernetesProvisioner) UpdateService(ctx context.Context, nsName string
 		if err := k.DeleteService(ctx, nsName, oldSvc); err != nil {
 			return fmt.Errorf("ลบ workload เดิมไม่สำเร็จ: %w", err)
 		}
+		// ขอเลข NodePort เดิม — URL ที่ผู้ใช้ถืออยู่ต้องใช้ได้ต่อ (Service เดิมถูกลบแล้ว เลขจึงว่าง)
+		svc.NodePort = oldSvc.NodePort
 		return k.DeployService(ctx, nsName, svc)
 	}
 
@@ -1015,6 +1023,27 @@ func (k *KubernetesProvisioner) updateNetworkPolicyPort(
 		return fmt.Errorf("แก้ NetworkPolicy ของ '%s' ใน namespace '%s' ไม่สำเร็จ: %w", svc.Name, nsName, err)
 	}
 	return nil
+}
+
+// UsedNodePorts อ่านเลข NodePort ของ Service ทุกตัวในคลัสเตอร์ (ดูสัญญาใน Provisioner)
+func (k *KubernetesProvisioner) UsedNodePorts(ctx context.Context) (map[int]bool, error) {
+	cs, err := k.client()
+	if err != nil {
+		return nil, err
+	}
+	list, err := cs.CoreV1().Services(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("อ่านรายการ Service ทั้งคลัสเตอร์ไม่สำเร็จ: %w", err)
+	}
+	used := make(map[int]bool)
+	for _, s := range list.Items {
+		for _, p := range s.Spec.Ports {
+			if p.NodePort != 0 {
+				used[int(p.NodePort)] = true
+			}
+		}
+	}
+	return used, nil
 }
 
 // DeleteService ลบของที่ DeployService สร้างไว้ (ทุกชิ้นชื่อตาม svc.Name)

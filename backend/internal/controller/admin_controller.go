@@ -1086,7 +1086,7 @@ func (h *AdminController) notifyNamespaceDeleted(ctx context.Context, nsName str
 	}
 }
 
-// ListAllRequests คืนคำขอ VM/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
+// ListAllRequests คืนคำขอ Resource/namespace ทั้งหมดในระบบ (ทุกสถานะ) พร้อมชื่อ/รหัส นศ. ของผู้ยื่น ให้ admin ดู
 //
 // data flow: SELECT requests ทั้งหมด → enrichRequests เติมชื่อ/รหัส นศ. ของผู้ยื่นให้
 // (ถาม users เป็นก้อนเดียว กัน N+1 — ดู admin_dashboard.go)

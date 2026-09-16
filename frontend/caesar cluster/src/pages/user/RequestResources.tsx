@@ -50,7 +50,7 @@ export default function RequestResources() {
         <div>
           <h1 className="text-5xl font-bold text-[#211a14]">My Requests</h1>
           <p className="max-w-2xl text-lg text-[#211a14]/60 mt-1">
-            Track your VM and quota requests, and their approval status.
+            Track your resource and quota requests, and their approval status.
           </p>
         </div>
         {requests.length > 0 && <SearchStatus className="self-start sm:self-end" />}
@@ -109,7 +109,7 @@ export default function RequestResources() {
                     </div>
                     <div>
                       <h3 className="text-2xl font-bold text-[#211a14]">
-                        New VM request submitted
+                        New resource request submitted
                       </h3>
                       <p className="text-sm text-[#211a14]/40 mt-0.5">
                         #REQ-{req.id} • submitted {formatTimeAgo(req.created_at)}
