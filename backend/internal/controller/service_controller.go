@@ -86,6 +86,7 @@ func (h *ServiceController) Create(c *gin.Context) {
 		ContainerPort:     req.ContainerPort,
 		Replicas:          req.Replicas,
 		EnvVars:           req.EnvVars,
+		NodePort:          req.NodePort,
 		StorageMB:         req.StorageMB,
 		DataPath:          req.DataPath,
 	})
@@ -102,6 +103,11 @@ func (h *ServiceController) Create(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "DATA_PATH_REQUIRED", err.Error())
 		case errors.Is(err, services.ErrStorageReplicas):
 			utils.Error(c, http.StatusBadRequest, "STORAGE_SINGLE_REPLICA", err.Error())
+		// พอร์ตที่จองไว้ใช้ไม่ได้แล้ว — หน้าเว็บขอใบจองใหม่แล้วให้ผู้ใช้กด deploy อีกครั้ง
+		case errors.Is(err, services.ErrNodePortReservationInvalid):
+			utils.Error(c, http.StatusConflict, "NODE_PORT_RESERVATION_EXPIRED", err.Error())
+		case errors.Is(err, services.ErrNodePortTaken):
+			utils.Error(c, http.StatusConflict, "NODE_PORT_TAKEN", err.Error())
 		default:
 			log.Printf("create service error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "deploy ไม่สำเร็จ")
@@ -431,4 +437,25 @@ func (h *ServiceController) Connection(c *gin.Context) {
 		return
 	}
 	utils.OK(c, http.StatusOK, conn)
+}
+
+// ReserveNodePort สุ่มพอร์ตว่างจองไว้ให้ผู้ใช้ตอนเปิดฟอร์ม New Service (docs 031)
+// หน้าเว็บโชว์ <host>:<node_port> ตั้งแต่ก่อนกด deploy แล้วส่งเลขนี้กลับมาใน POST /api/services
+// เปิดฟอร์มซ้ำระหว่างใบจองยังไม่หมดอายุ = ได้เลขเดิม
+func (h *ServiceController) ReserveNodePort(c *gin.Context) {
+	nsID, ok := currentNamespaceID(c, h.db)
+	if !ok {
+		return
+	}
+	r, err := h.svc.ReserveNodePort(c.Request.Context(), c.GetInt("userID"), nsID)
+	if err != nil {
+		if errors.Is(err, services.ErrNodePortExhausted) {
+			utils.Error(c, http.StatusServiceUnavailable, "NODE_PORT_EXHAUSTED", err.Error())
+			return
+		}
+		log.Printf("reserve node port error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "จองพอร์ตไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, r)
 }

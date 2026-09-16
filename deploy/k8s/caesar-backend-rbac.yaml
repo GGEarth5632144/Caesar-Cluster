@@ -51,11 +51,12 @@ rules:
   - apiGroups: [""]
     resources: [resourcequotas, limitranges]
     verbs: [get, create, update]
-  # createNodePortService (DeployService): Create — ไม่เลือก nodePort เอง · DeleteService: Delete
+  # createNodePortService (DeployService): Create ด้วยเลข nodePort ที่จองให้ผู้ใช้ · DeleteService: Delete
   # updateServicePort (UpdateService): Get + Update พอร์ต โดยคงเลข nodePort เดิม
+  # UsedNodePorts (จองพอร์ตตอนเปิดฟอร์ม, docs 031): List ทุก namespace เพื่อหาเลขที่ว่าง
   - apiGroups: [""]
     resources: [services]
-    verbs: [get, create, update, delete]
+    verbs: [get, list, create, update, delete]
   # DeployService: Create (+ Delete ตอน rollback เมื่อสร้าง Service ไม่ผ่าน)
   # ScaleService: merge patch spec.replicas · DeleteService: Delete · Status: Get
   # UpdateService: Get + Update pod template / replicas (แก้ในที่)

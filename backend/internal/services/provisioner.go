@@ -89,6 +89,7 @@ type Provisioner interface {
 	//   svc.HasStorage() → workload: false = Deployment, true = StatefulSet + PVC (ตรึง 1 pod)
 	//                      StatefulSet ปิด pod เก่าก่อนเปิดตัวใหม่ สอง pod จึงไม่แย่งเขียนดิสก์ก้อนเดียวกัน
 	//   svc.IsDatabase   → เครือข่าย: false = Service ชนิด NodePort แล้วเซ็ต svc.NodePort กลับเข้า struct เดิม
+	//                      (svc.NodePort มีค่ามาก่อน = เลขที่จองให้ผู้ใช้ไว้ ต้องใช้เลขนั้น · ถูกใช้แล้ว = ErrNodePortTaken)
 	//                      true = Service ชนิด ClusterIP + NetworkPolicy และห้ามจ่าย NodePort (ปล่อย nil)
 	//                      — ไม่เคยจองพอร์ตบน node ก็ไม่มีประตูให้เคาะ ซึ่งเชื่อถือได้กว่าการหวังให้ NetworkPolicy ทำงานถูก
 	//
@@ -149,4 +150,8 @@ type Provisioner interface {
 	// รหัสผ่านไม่ได้อยู่ใน DB ของ backend — ที่นี่คือทางเดียวที่ระบบรู้รหัสหลัง deploy (docs 029)
 	// svc ที่ไม่ใช่ database template ต้องได้ ErrNotTemplateDatabase
 	DatabaseCredentials(ctx context.Context, nsName string, svc *entity.Service) (DatabaseCredentials, error)
+
+	// UsedNodePorts คืนเลข NodePort ที่ Service ทุกตัวบนคลัสเตอร์ใช้อยู่ (ทุก namespace รวมของระบบ)
+	// ใช้ตอนสุ่มพอร์ตจองให้ฟอร์ม New Service — ดู NodePortReservations
+	UsedNodePorts(ctx context.Context) (map[int]bool, error)
 }

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -107,6 +109,9 @@ func ConnectDB(dbURL string) *gorm.DB {
 	dropRetiredAlertTables(db)
 	dropRetiredUserColumns(db)
 	syncEligibleRoles(db)
+	if err := EnsureNodePortCheck(db); err != nil {
+		log.Fatalf("update node_port check failed: %v", err)
+	}
 
 	// ไม่ประกาศ relation ให้ GORM จัดการ FK เอง เพราะเคยเจอว่ามันสร้าง sequence ผิดให้ column ที่เป็น FK
 	// (เข้าใจผิดว่าเป็น auto-increment) เลยมาเพิ่ม FK เองด้วย raw SQL — idempotent รันซ้ำได้ทุกครั้งที่ start
@@ -135,6 +140,30 @@ func syncEligibleRoles(db *gorm.DB) {
 	if res.RowsAffected > 0 {
 		log.Printf("sync eligible_students.role ตามบัญชีจริงแล้ว %d แถว ✓", res.RowsAffected)
 	}
+}
+
+// EnsureNodePortCheck ทำให้ CHECK ของ services.node_port ตรงกับช่วงใน entity (MinNodePort-MaxNodePort)
+//
+// AutoMigrate ไม่แก้ CHECK constraint ที่มีชื่อเดิมอยู่แล้ว — DB ที่สร้างตอนช่วงยังเป็น 30000-32767
+// จะปฏิเสธพอร์ต 20000-29999 ทั้งที่คลัสเตอร์จ่ายให้ได้ (docs 031) · idempotent: ตรงแล้วไม่แตะ
+func EnsureNodePortCheck(db *gorm.DB) error {
+	want := fmt.Sprintf("node_port IS NULL OR (node_port BETWEEN %d AND %d)", entity.MinNodePort, entity.MaxNodePort)
+	var def string
+	db.Raw(`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		WHERE conrelid = 'services'::regclass AND conname = 'chk_services_node_port'`).Scan(&def)
+	if strings.Contains(def, fmt.Sprintf(">= %d", entity.MinNodePort)) && strings.Contains(def, fmt.Sprintf("<= %d", entity.MaxNodePort)) {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`ALTER TABLE services DROP CONSTRAINT IF EXISTS chk_services_node_port`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`ALTER TABLE services ADD CONSTRAINT chk_services_node_port CHECK (` + want + `)`).Error; err != nil {
+			return err
+		}
+		log.Printf("services.node_port CHECK → %d-%d ✓", entity.MinNodePort, entity.MaxNodePort)
+		return nil
+	})
 }
 
 // ConnectDBReadOnly เปิด connection เฉยๆ ไม่ AutoMigrate ไม่แตะ FK — สำหรับเครื่องมือที่อ่าน

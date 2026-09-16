@@ -124,6 +124,7 @@ func Setup(
 
 			protected.GET("/services", svcCtl.List)
 			protected.POST("/services", svcCtl.Create)
+			protected.POST("/services/node-port-reservation", svcCtl.ReserveNodePort)
 			protected.PATCH("/services/:id/scale", svcCtl.Scale)
 			protected.DELETE("/services/:id", svcCtl.Delete)
 			protected.GET("/services/:id/logs", svcCtl.Logs)

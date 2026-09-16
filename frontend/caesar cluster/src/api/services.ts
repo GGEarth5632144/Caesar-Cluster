@@ -31,8 +31,8 @@ export interface AppService {
   image: string;
   cpu_milli: number;
   ram_mb: number;
-  // container_port = พอร์ตที่ image ฟังอยู่ข้างใน, node_port = ทางเข้าจากนอกคลัสเตอร์ที่ k8s จ่ายให้
-  // (30000-32767) — คนละชั้นกัน k8s Service เป็นตัวเชื่อมให้เอง
+  // container_port = พอร์ตที่ image ฟังอยู่ข้างใน, node_port = ทางเข้าจากนอกคลัสเตอร์ (20000-32767)
+  // จองให้ตอนเปิดฟอร์ม — คนละชั้นกัน k8s Service เป็นตัวเชื่อมให้เอง · เข้าที่ <host ที่เปิดเว็บ>:<node_port>
   container_port: number;
   node_port: number | null;
   // จำนวน Pod ที่รันขนานกัน — หักโควตากลุ่มเป็น cpu_milli x replicas
@@ -140,6 +140,14 @@ export interface CreateServiceDTO {
   env_vars?: Record<string, string>;
   storage_mb?: number;
   data_path?: string;
+  // เลขจาก reserveNodePort เท่านั้น — เลขอื่น backend ตอบ 409 NODE_PORT_RESERVATION_EXPIRED
+  node_port?: number;
+}
+
+/** ใบจอง NodePort ตอนเปิดฟอร์ม New Service (docs 031) */
+export interface NodePortReservation {
+  node_port: number;
+  expires_at: string;
 }
 
 interface ApiResponse<T> {
@@ -169,6 +177,12 @@ export const serviceApi = {
 
   remove: async (id: number) => {
     const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/services/${id}`);
+    return response.data.data;
+  },
+
+  // จองพอร์ตว่างให้ฟอร์ม New Service — เปิดฟอร์มซ้ำระหว่างใบจองยังไม่หมดอายุได้เลขเดิม
+  reserveNodePort: async () => {
+    const response = await axiosClient.post<ApiResponse<NodePortReservation>>('/services/node-port-reservation');
     return response.data.data;
   },
 

@@ -34,7 +34,7 @@ func ServiceStatusSettled(status string) bool {
 }
 
 // ContainerPort = พอร์ตที่โปรเซสข้างใน container ฟังอยู่ (ตรงกับ EXPOSE ใน image) คนละชั้นกับ
-// NodePort ที่ k8s จ่ายให้ (30000-32767) เป็นทางเข้าจากนอก — Service เป็นตัวเชื่อมสองอันนี้
+// NodePort (MinNodePort-MaxNodePort) ที่เป็นทางเข้าจากนอก — Service เป็นตัวเชื่อมสองอันนี้
 //
 // Replicas = จำนวน Pod ที่รันขนานกัน (1 Pod = 1 container) กินโควตา namespace เป็น cpu_milli × replicas
 // เพดาน 10 กันตั้งเลขหลุดจนกินทั้งคลัสเตอร์
@@ -42,6 +42,12 @@ const (
 	DefaultContainerPort = 8080
 	MinContainerPort     = 1
 	MaxContainerPort     = 65535
+
+	// ช่วง NodePort ต้องตรงกับ --service-node-port-range ของ kube-apiserver (docs 031)
+	// ขยายจาก default 30000-32767 ลงมาเริ่ม 20000 แต่ไม่เกิน 32767 เพื่อไม่ทับพอร์ตสุ่มขาออกของ Linux (32768+)
+	// เปลี่ยนตัวเลขนี้ต้องแก้ CHECK ของคอลัมน์ node_port ด้วย (config.EnsureNodePortCheck)
+	MinNodePort = 20000
+	MaxNodePort = 32767
 
 	DefaultReplicas = 1
 	MinReplicas     = 1
@@ -94,7 +100,7 @@ func (e *EnvVarMap) Scan(value any) error {
 }
 
 // Service = ตาราง services — workload (container) 1 ตัวที่ผู้ใช้ deploy เข้าไปใน namespace ของตัวเอง
-// (มาแทน entity VM เดิม เพราะเราไป Kubernetes ไม่ใช่ Proxmox แล้ว)
+// (มาแทน entity เดิมสมัยใช้ Proxmox เพราะเราไป Kubernetes แล้ว)
 //
 // ข้อมูลไหลเข้า: ServiceController.Create → QuotaService เช็คโควตาของ namespace → INSERT ภายใน transaction
 // ข้อมูลไหลออก: ServiceManager.ListByNamespace อ่านไปโชว์, QuotaService SUM cpu_milli/ram_mb
@@ -105,7 +111,8 @@ func (e *EnvVarMap) Scan(value any) error {
 //
 // NodePort คือช่องทางที่ user ใช้เข้าถึง service ของตัวเอง — เปิดเป็น k8s Service ชนิด NodePort
 // (ทุก node อยู่ subnet เดียวกัน ไม่มี cloud LoadBalancer ให้ใช้ เลยเลือกแบบนี้แทน Ingress)
-// user ต่อเข้าที่ <node-ip ตัวไหนก็ได้>:<node_port> — เป็น pointer เพราะยังไม่มีค่าจนกว่า provisioner จะ deploy สำเร็จ
+// user ต่อเข้าที่ <host ที่เปิดเว็บ>:<node_port> (IP ของ node ตัวไหนก็ได้) — เลขจองให้ตอนเปิดฟอร์ม (NodePortReservations)
+// เป็น pointer เพราะ database ไม่มี NodePort และ service เก่าที่ยัง deploy ไม่เสร็จยังไม่มีค่า
 type Service struct {
 	ID                int       `gorm:"column:id;type:serial;primaryKey" json:"id"`
 	NamespaceID       int       `gorm:"column:namespace_id;type:integer;not null;uniqueIndex:uni_services_ns_name" json:"namespace_id"`
@@ -116,7 +123,7 @@ type Service struct {
 	CPUMilli          int       `gorm:"column:cpu_milli;type:integer;not null;check:cpu_milli > 0" json:"cpu_milli"`
 	RAMMB             int       `gorm:"column:ram_mb;type:integer;not null;check:ram_mb > 0" json:"ram_mb"`
 	ContainerPort     int       `gorm:"column:container_port;type:integer;not null;default:8080;check:container_port BETWEEN 1 AND 65535" json:"container_port"`
-	NodePort          *int      `gorm:"column:node_port;type:integer;check:node_port IS NULL OR (node_port BETWEEN 30000 AND 32767)" json:"node_port"`
+	NodePort          *int      `gorm:"column:node_port;type:integer;check:node_port IS NULL OR (node_port BETWEEN 20000 AND 32767)" json:"node_port"`
 	Replicas          int       `gorm:"column:replicas;type:integer;not null;default:1;check:replicas BETWEEN 1 AND 10" json:"replicas"`
 	Status            string    `gorm:"column:status;type:varchar(20);not null;default:creating" json:"status"`
 	EnvVars           EnvVarMap `gorm:"column:env_vars;type:jsonb;not null;default:'{}'" json:"env_vars"`

@@ -14,7 +14,7 @@ import (
 	"backend/internal/utils"
 )
 
-// RequestController ดูแลคำขอสร้าง VM/namespace ของผู้ใช้ — ยื่นคำขอ, ดูประวัติของตัวเอง
+// RequestController ดูแลคำขอ Resource/namespace ของผู้ใช้ — ยื่นคำขอ, ดูประวัติของตัวเอง
 // การอนุมัติ/ปฏิเสธเป็นหน้าที่ของ AdminController (ต้องผ่าน AdminOnly)
 type RequestController struct {
 	db *gorm.DB
@@ -25,7 +25,7 @@ func NewRequestController(db *gorm.DB) *RequestController {
 	return &RequestController{db: db}
 }
 
-// Create ยื่นคำขอสร้าง VM/namespace ใหม่ (รอ admin อนุมัติ)
+// Create ยื่นคำขอ Resource/namespace ใหม่ (รอ admin อนุมัติ)
 //
 // data flow: JSON body → bind CreateRequestRequest → เช็คว่ายังไม่มี space และยังไม่มีคำขอค้างอยู่
 // → INSERT requests (status = pending)

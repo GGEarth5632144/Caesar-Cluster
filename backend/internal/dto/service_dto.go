@@ -15,6 +15,9 @@ type CreateServiceRequest struct {
 	RequestTemplateID *int   `json:"request_template_id" binding:"omitempty,min=1"`
 	CPUMilli          int    `json:"cpu_milli" binding:"required_without=RequestTemplateID,omitempty,min=100,max=3000"`
 	RAMMB             int    `json:"ram_mb" binding:"required_without=RequestTemplateID,omitempty,min=128,max=2048"`
+	// NodePort = เลขที่จองไว้ตอนเปิดฟอร์ม (POST /api/services/node-port-reservation) ไม่ส่ง = ให้คลัสเตอร์สุ่ม
+	// ช่วงต้องตรงกับ entity.MinNodePort/MaxNodePort · เลขที่ไม่ได้จองไว้ถูกปฏิเสธใน ServiceManager.Create
+	NodePort int `json:"node_port" binding:"omitempty,min=20000,max=32767"`
 	// ContainerPort ไม่ใช่ NodePort — คนละชั้นกัน (ดู entity/service.go)
 	// ทั้งคู่ omitempty: ไม่ส่งมา = ServiceManager เติม default ให้ (8080 / 1 replica)
 	ContainerPort int `json:"container_port" binding:"omitempty,min=1,max=65535"`
