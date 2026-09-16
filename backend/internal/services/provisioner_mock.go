@@ -88,6 +88,33 @@ func (m *MockProvisioner) ScaleService(ctx context.Context, nsName, svcName stri
 	return nil
 }
 
+// UpdateService จำลองการแก้ workload — กติกาเดียวกับของจริง: มีดิสก์ห้ามแตะค่าที่ผูกกับ PVC,
+// ชื่อ/ชนิดเท่าเดิม = แก้ในที่ (NodePort เลขเดิม), ไม่มีดิสก์แล้วเปลี่ยนชื่อ/ขอดิสก์ = ลบแล้วสร้างใหม่
+func (m *MockProvisioner) UpdateService(ctx context.Context, nsName string, oldSvc, svc *entity.Service) error {
+	if oldSvc.HasStorage() {
+		if msg := storageChange(oldSvc, svc); msg != "" {
+			return fmt.Errorf("%w: %s", ErrStorageImmutable, msg)
+		}
+	} else if svc.Name != oldSvc.Name || svc.HasStorage() {
+		if err := m.DeleteService(ctx, nsName, oldSvc); err != nil {
+			return err
+		}
+		return m.DeployService(ctx, nsName, svc)
+	}
+
+	m.mu.Lock()
+	m.known[mockKey(nsName, svc.Name)] = true
+	m.mu.Unlock()
+
+	log.Printf("[MOCK] แก้ service '%s' ใน namespace '%s' ในที่ (image=%s, %dm CPU / %d MB, port %d) — PVC และ NodePort คงเดิม",
+		svc.Name, nsName, svc.Image, svc.CPUMilli, svc.RAMMB, svc.ContainerPort)
+	if !svc.IsDatabase {
+		port := 30000 + (svc.ID % 2768) // เลขเดียวกับที่ DeployService จ่าย = "คงเดิม"
+		svc.NodePort = &port
+	}
+	return nil
+}
+
 // ErrMockNoRecord = mock ถูกถามถึง workload ที่ตัวเองไม่เคยเห็น จึงตอบแทนคลัสเตอร์ไม่ได้
 //
 // ต้องเป็น error ไม่ใช่ PhaseGone: mock เก็บทุกอย่างไว้ในหน่วยความจำ พอรีสตาร์ท backend

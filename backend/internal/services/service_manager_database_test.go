@@ -433,3 +433,47 @@ func TestMockDeployDatabaseNeverAssignsNodePort(t *testing.T) {
 		t.Error("web ที่มีดิสก์ต้องได้ NodePort — ไม่งั้นคนนอกเข้าใช้แอปไม่ได้")
 	}
 }
+
+// TestUpdateWithStorageKeepsDisk — แก้ image ของ service ที่มีดิสก์ผ่าน ServiceManager ต้องผ่าน
+// และแก้ค่าที่ผูกกับ PVC ต้องได้ ErrStorageImmutable โดยแถวใน DB ไม่ถูกแก้ (docs 030)
+func TestUpdateWithStorageKeepsDisk(t *testing.T) {
+	db := testDB(t)
+	ns := dbTestNamespace(t, db, "update-disk-test-ns")
+	ctx := context.Background()
+	mgr := NewServiceManager(db, NewQuotaService(db), NewMockProvisioner())
+
+	created, err := mgr.Create(ctx, 1, ns.ID, CreateServiceParams{
+		Name: "nextcloud", Image: "nextcloud:apache",
+		CPUMilli: 500, RAMMB: 512, ContainerPort: 80,
+		StorageMB: 2048, DataPath: "/var/www/html",
+	})
+	if err != nil {
+		t.Fatalf("สร้าง web ที่มีดิสก์ไม่สำเร็จ: %v", err)
+	}
+
+	params := UpdateServiceParams{
+		Name: "nextcloud", Image: "nextcloud:31-apache",
+		CPUMilli: 500, RAMMB: 512, ContainerPort: 80, Replicas: 1,
+		StorageMB: 2048, DataPath: "/var/www/html",
+	}
+	updated, err := mgr.Update(ctx, created.ID, 1, ns.ID, params)
+	if err != nil {
+		t.Fatalf("แก้ image ต้องผ่าน: %v", err)
+	}
+	if updated.NodePort == nil || created.NodePort == nil || *updated.NodePort != *created.NodePort {
+		t.Errorf("NodePort ต้องคงเดิม เดิม=%v ใหม่=%v", created.NodePort, updated.NodePort)
+	}
+
+	bad := params
+	bad.Name = "nextcloud-new"
+	if _, err := mgr.Update(ctx, created.ID, 1, ns.ID, bad); !errors.Is(err, ErrStorageImmutable) {
+		t.Fatalf("เปลี่ยนชื่อ service ที่มีดิสก์ต้องได้ ErrStorageImmutable ได้ %v", err)
+	}
+	var row entity.Service
+	if err := db.WithContext(ctx).First(&row, created.ID).Error; err != nil {
+		t.Fatalf("อ่านแถวไม่สำเร็จ: %v", err)
+	}
+	if row.Name != "nextcloud" || row.Image != "nextcloud:31-apache" {
+		t.Errorf("คำขอที่ถูกปฏิเสธต้องไม่แก้ DB ได้ name=%q image=%q", row.Name, row.Image)
+	}
+}

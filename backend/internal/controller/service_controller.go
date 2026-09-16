@@ -263,7 +263,7 @@ func (h *ServiceController) Logs(c *gin.Context) {
 	}
 }
 
-// Update ขอแก้ไขการตั้งค่า Service (ใช้กระบวนการ Redeploy: ลบของเดิมสร้างของใหม่)
+// Update ขอแก้ไขการตั้งค่า Service (แก้ workload เดิมในที่ — ดิสก์และ NodePort คงเดิม)
 //
 // data flow: JSON body -> bind UpdateServiceRequest -> ตรวจรูปแบบ
 // -> แปลงเป็น services.UpdateServiceParams -> ServiceManager.Update -> ตอบ service ที่แก้ไขเสร็จ
@@ -321,6 +321,8 @@ func (h *ServiceController) Update(c *gin.Context) {
             utils.Error(c, http.StatusBadRequest, "DATA_PATH_REQUIRED", err.Error())
         case errors.Is(err, services.ErrStorageReplicas):
             utils.Error(c, http.StatusBadRequest, "STORAGE_SINGLE_REPLICA", err.Error())
+        case errors.Is(err, services.ErrStorageImmutable):
+            utils.Error(c, http.StatusConflict, "STORAGE_IMMUTABLE", err.Error())
         default:
             log.Printf("update service error: %v", err)
             utils.Error(c, http.StatusInternalServerError, "INTERNAL", "แก้ไข service ไม่สำเร็จ")
