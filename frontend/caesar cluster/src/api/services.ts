@@ -124,14 +124,18 @@ export const adminServiceApi = {
     return Array.isArray(response.data.data) ? response.data.data : [];
   },
 
-  remove: async (id: number) => {
-    const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/admin/services/${id}`);
+  // reason บังคับ — backend ส่งทางอีเมลถึงสมาชิกใน namespace
+  remove: async (id: number, reason: string) => {
+    const response = await axiosClient.delete<ApiResponse<{ deleted: number }>>(`/admin/services/${id}`, {
+      data: { reason },
+    });
     return response.data.data;
   },
 
-  scheduleDelete: async (id: number) => {
+  scheduleDelete: async (id: number, reason: string) => {
     const response = await axiosClient.post<ApiResponse<{ id: number; delete_at: string }>>(
       `/admin/services/${id}/schedule-delete`,
+      { reason },
     );
     return response.data.data;
   },
