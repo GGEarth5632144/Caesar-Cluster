@@ -794,7 +794,7 @@ func (h *AdminController) notifyServiceDeletion(ctx context.Context, n serviceNo
 		log.Printf("service '%s': ยังไม่ได้ตั้งค่า SMTP — ไม่ได้ส่งอีเมลแจ้งสมาชิก %d คน", n.serviceName, len(n.members))
 		return
 	}
-	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/"
+	appLink := strings.TrimRight(h.cfg.FrontendOrigin, "/") + "/create-service"
 	for _, u := range n.members {
 		_ = h.mailer.SendServiceDeletionEmail(ctx, u.ID, u.Gmail, u.RealName, n.serviceName, n.namespaceName, reason, deleteAt, appLink)
 	}
