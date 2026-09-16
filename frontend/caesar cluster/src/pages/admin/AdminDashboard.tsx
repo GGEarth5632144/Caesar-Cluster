@@ -457,7 +457,7 @@ export default function AdminDashboard() {
 
       {/* ── Row 2: Analytics Charts ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Chart 1: VM Donut */}
+        {/* Chart 1: Resource Donut */}
         <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
           <h2 className="text-sm font-extrabold text-gray-800 mb-4">
             Resource Requests Status
@@ -491,7 +491,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Chart 2: VM Trend Bar */}
+        {/* Chart 2: Resource Trend Bar */}
         <div className="bg-white rounded-3xl shadow-sm p-6 border border-black/5 flex flex-col h-[360px]">
           <h2 className="text-sm font-extrabold text-gray-800 mb-4">
             Resource Requests Trend (Last 7 Days)

@@ -80,9 +80,10 @@ func (m *MockProvisioner) DeployService(ctx context.Context, nsName string, svc 
 		return nil
 	}
 
-	port := 30000 + (svc.ID % 2768) // เลขปลอมแต่นิ่งต่อ service เดิม อยู่ในช่วง NodePort ของ k8s
+	// เลขที่จองไว้มาก่อน = ใช้เลขนั้น (เหมือนของจริง) · ไม่มี = เลขปลอมแต่นิ่งต่อ service เดิม
+	port := mockNodePort(svc)
 	svc.NodePort = &port
-	log.Printf("[MOCK] service '%s' เข้าถึงได้ที่ <node-ip>:%d → container port %d",
+	log.Printf("[MOCK] service '%s' เข้าถึงได้ที่ <host>:%d → container port %d",
 		svc.Name, port, svc.ContainerPort)
 	return nil
 }
@@ -104,6 +105,7 @@ func (m *MockProvisioner) UpdateService(ctx context.Context, nsName string, oldS
 		if err := m.DeleteService(ctx, nsName, oldSvc); err != nil {
 			return err
 		}
+		svc.NodePort = oldSvc.NodePort // ของจริงขอเลขเดิมคืน
 		return m.DeployService(ctx, nsName, svc)
 	}
 
@@ -114,10 +116,26 @@ func (m *MockProvisioner) UpdateService(ctx context.Context, nsName string, oldS
 	log.Printf("[MOCK] แก้ service '%s' ใน namespace '%s' ในที่ (image=%s, %dm CPU / %d MB, port %d) — PVC และ NodePort คงเดิม",
 		svc.Name, nsName, svc.Image, svc.CPUMilli, svc.RAMMB, svc.ContainerPort)
 	if !svc.IsDatabase {
-		port := 30000 + (svc.ID % 2768) // เลขเดียวกับที่ DeployService จ่าย = "คงเดิม"
-		svc.NodePort = &port
+		svc.NodePort = oldSvc.NodePort // แก้ในที่ = เลขเดิม
+		if svc.NodePort == nil {
+			port := mockNodePort(svc)
+			svc.NodePort = &port
+		}
 	}
 	return nil
+}
+
+// mockNodePort = เลขที่ mock จ่าย: เลขที่จองไว้ถ้ามี ไม่งั้นเลขปลอมที่นิ่งต่อ service เดิมในช่วง NodePort
+func mockNodePort(svc *entity.Service) int {
+	if svc.NodePort != nil {
+		return *svc.NodePort
+	}
+	return entity.MinNodePort + svc.ID%(entity.MaxNodePort-entity.MinNodePort+1)
+}
+
+// UsedNodePorts — mock ไม่มีคลัสเตอร์ พอร์ตที่ใช้อยู่จริงมีแค่ใน DB (NodePortReservations อ่านเอง)
+func (m *MockProvisioner) UsedNodePorts(context.Context) (map[int]bool, error) {
+	return map[int]bool{}, nil
 }
 
 // ErrMockNoRecord = mock ถูกถามถึง workload ที่ตัวเองไม่เคยเห็น จึงตอบแทนคลัสเตอร์ไม่ได้

@@ -9,6 +9,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"backend/internal/config"
 	"backend/internal/entity"
 )
 
@@ -34,6 +35,10 @@ func testDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&entity.Namespace{}, &entity.Service{}); err != nil {
 		t.Skipf("ข้าม: migrate schema ของ DB ทดสอบไม่สำเร็จ (%v)", err)
 	}
+	// AutoMigrate ไม่แก้ CHECK ที่มีอยู่แล้ว — ช่วง NodePort ใหม่ต้องตามให้ทัน (docs 031)
+	if err := config.EnsureNodePortCheck(db); err != nil {
+		t.Skipf("ข้าม: แก้ CHECK ของ node_port ไม่สำเร็จ (%v)", err)
+	}
 	return db
 }
 
@@ -56,6 +61,9 @@ func (p *disconnectingProv) Status(context.Context, string, *entity.Service) (Wo
 }
 func (p *disconnectingProv) DatabaseCredentials(context.Context, string, *entity.Service) (DatabaseCredentials, error) {
 	return DatabaseCredentials{}, nil
+}
+func (p *disconnectingProv) UsedNodePorts(context.Context) (map[int]bool, error) {
+	return map[int]bool{}, nil
 }
 func (p *disconnectingProv) DeployService(ctx context.Context, _ string, _ *entity.Service) error {
 	p.cancel()

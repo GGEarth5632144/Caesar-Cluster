@@ -115,7 +115,7 @@ export default function WorkspaceOnboarding() {
         </div>
         <h1 className="text-4xl font-bold text-[#211a14]">คำขอของคุณกำลังรอการอนุมัติ</h1>
         <p className="max-w-xl text-lg text-[#211a14]/60">
-          ทีมงานได้รับคำขอสร้าง Virtual Machine ของคุณแล้ว กรุณารอ Admin ตรวจสอบและอนุมัติ
+          ทีมงานได้รับคำขอ Resource ของคุณแล้ว กรุณารอ Admin ตรวจสอบและอนุมัติ
         </p>
         <button
           type="button"
@@ -132,7 +132,7 @@ export default function WorkspaceOnboarding() {
     <div className="flex min-h-full flex-col items-center justify-center gap-3 px-4 py-10 text-center font-mono">
       <h1 className="text-6xl font-bold text-[#211a14]">Welcome to Caesar Cluster</h1>
       <p className="max-w-2xl text-xl text-[#211a14]/60">
-        You don't have any virtual machines yet. Create your first VM to get a
+        You don't have any resources yet. Request your first resource to get a
         namespace and start computing.
       </p>
 
@@ -148,7 +148,7 @@ export default function WorkspaceOnboarding() {
               <Cpu size={32} />
             </div>
             <div>
-              <p className="text-3xl font-bold text-white">Create VM</p>
+              <p className="text-3xl font-bold text-white">Request Resource</p>
               <p className="mt-1.5 max-w-md text-lg text-white/80">
                 Set up your workspace and pick a resource quota to get started.
               </p>
@@ -174,7 +174,7 @@ export default function WorkspaceOnboarding() {
               </button>
               <div>
                 <h2 className="text-2xl font-bold text-[#211a14]">
-                  Configure your VM
+                  Configure your Resource
                 </h2>
                 <p className="text-base text-[#211a14]/60">เลือกโควตาทรัพยากรที่ต้องการยื่นขอ</p>
               </div>

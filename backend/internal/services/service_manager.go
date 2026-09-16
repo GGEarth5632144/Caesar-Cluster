@@ -53,6 +53,10 @@ type CreateServiceParams struct {
 	Replicas      int
 	EnvVars       map[string]string
 
+	// NodePort = เลขที่ผู้ใช้จองไว้ตอนเปิดฟอร์ม (ReserveNodePort) — 0 = ให้คลัสเตอร์สุ่มเอง
+	// ต้องเป็นใบจองของผู้ใช้คนนี้ในกลุ่มนี้เท่านั้น ผู้ใช้เลือกเลขเองผ่าน API ไม่ได้ (docs 031)
+	NodePort int
+
 	// database ไม่ได้สร้างผ่านทางนี้แล้ว — ใช้ CreateDatabase (template) แทน (docs 029)
 
 	// StorageMB > 0 หรือส่ง DataPath มา = ขอดิสก์ถาวร (web ที่เก็บไฟล์ เช่น Nextcloud)
@@ -63,16 +67,17 @@ type CreateServiceParams struct {
 }
 
 // ServiceManager = business logic ของ workload: เช็คโควตา → บันทึก DB → deploy จริงขึ้น cluster
-// (มาแทน VMService เดิม)
+// (มาแทน service เดิมสมัยใช้ Proxmox)
 type ServiceManager struct {
 	db    *gorm.DB
 	quota *QuotaService
 	prov  Provisioner
+	ports *NodePortReservations
 }
 
 // NewServiceManager ประกอบ manager โดยฉีด db/quota/prov — ถูกเรียกจาก main ตอน start
 func NewServiceManager(db *gorm.DB, quota *QuotaService, prov Provisioner) *ServiceManager {
-	return &ServiceManager{db: db, quota: quota, prov: prov}
+	return &ServiceManager{db: db, quota: quota, prov: prov, ports: NewNodePortReservations(db, prov)}
 }
 
 // ListByNamespace คืน service ทั้งหมดใน namespace เรียงใหม่→เก่า
@@ -101,7 +106,7 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 //
 // ทำไมล้มเหลวแล้วต้องลบ row (ไม่ mark failed ค้างไว้):
 // โควตาคิดจาก SUM ของ service ทุกแถวใน namespace — ถ้าปล่อยแถว failed ค้างไว้ มันจะกินโควตาไปเรื่อยๆ
-// ทั้งที่ไม่มี workload อยู่จริงบน cluster (นี่คือบั๊กแบบเดียวกับที่ VMService เดิมมี แต่รอบนี้ปิดไปเลย)
+// ทั้งที่ไม่มี workload อยู่จริงบน cluster (นี่คือบั๊กแบบเดียวกับที่ระบบสมัย Proxmox มี แต่รอบนี้ปิดไปเลย)
 //
 // เรียก provisioner นอก transaction เพราะการ deploy ช้า/พลาดได้ ไม่ควรถือ lock ของ namespace ค้างไว้ตอนรอ
 func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p CreateServiceParams) (*entity.Service, error) {
@@ -146,7 +151,7 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		dataPath = strings.TrimRight(strings.TrimSpace(p.DataPath), "/")
 	}
 
-	return m.reserveAndDeploy(ctx, namespaceID, &entity.Service{
+	svc := &entity.Service{
 		NamespaceID:       namespaceID,
 		Name:              p.Name,
 		CreatedBy:         userID,
@@ -160,7 +165,27 @@ func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p 
 		EnvVars:           entity.EnvVarMap(envVars),
 		StorageMB:         storageMB,
 		DataPath:          dataPath,
-	})
+	}
+	if p.NodePort == 0 {
+		return m.reserveAndDeploy(ctx, namespaceID, svc)
+	}
+
+	if err := m.ports.Check(userID, namespaceID, p.NodePort); err != nil {
+		return nil, err
+	}
+	svc.NodePort = &p.NodePort
+	created, err := m.reserveAndDeploy(ctx, namespaceID, svc)
+	// สำเร็จ = เลขอยู่ใน DB/คลัสเตอร์แล้ว · ถูกใช้ไปแล้ว = ใบจองไร้ค่า — ทั้งสองกรณีคืนใบจอง
+	// ล้มด้วยเหตุอื่น (โควตา, ชื่อซ้ำ) เก็บใบจองไว้ให้ผู้ใช้แก้ฟอร์มแล้วกดใหม่ได้เลขเดิม
+	if err == nil || errors.Is(err, ErrNodePortTaken) {
+		m.ports.Release(p.NodePort)
+	}
+	return created, err
+}
+
+// ReserveNodePort สุ่มพอร์ตว่างจองให้ผู้ใช้ตอนเปิดฟอร์ม New Service (ดู NodePortReservations)
+func (m *ServiceManager) ReserveNodePort(ctx context.Context, userID, namespaceID int) (NodePortReservation, error) {
+	return m.ports.Reserve(ctx, userID, namespaceID)
 }
 
 // resolveSpec คืน cpu/ram ที่จะใช้จริง — เลือก template มา = ใช้สเปกของ template (ค่าที่กรอกเองถูกข้าม)

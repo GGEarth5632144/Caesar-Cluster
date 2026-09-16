@@ -6,6 +6,6 @@ export interface NavItem {
   label: string;
   icon: LucideIcon;
   path: string;
-  // true = แสดงเมนูนี้เฉพาะตอนที่ user สร้าง VM/namespace แล้วเท่านั้น
+  // true = แสดงเมนูนี้เฉพาะตอนที่ user ขอ Resource/namespace แล้วเท่านั้น
   requiresVm?: boolean;
 }

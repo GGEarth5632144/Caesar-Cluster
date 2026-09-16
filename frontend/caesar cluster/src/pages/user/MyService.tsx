@@ -37,7 +37,7 @@ import {
   type UpdateServiceDTO,
 } from "@/api/services";
 import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
-import { getApiErrorMessage } from "@/api/authApi";
+import { getApiErrorCode, getApiErrorMessage } from "@/api/authApi";
 import { useAuthStore } from "@/store/authStore";
 import { PATHS } from "@/config/routes";
 import { usePageSearch } from "@/hooks/usePageSearch";
@@ -518,7 +518,7 @@ export default function MyService() {
                     <Network size={16} className="text-[#BB6653] shrink-0" />
                     {svc.node_port ? (
                       <span className="truncate">
-                        &lt;node-ip&gt;:{svc.node_port} &rarr; :
+                        {window.location.hostname}:{svc.node_port} &rarr; :
                         {svc.container_port}
                       </span>
                     ) : (
@@ -846,7 +846,7 @@ export default function MyService() {
                       ) : (
                         <span className="break-words font-mono text-[#211a14]/60">
                           {selectedServiceDetail.node_port
-                            ? `<node-ip>:${selectedServiceDetail.node_port} → :${selectedServiceDetail.container_port}`
+                            ? `${window.location.hostname}:${selectedServiceDetail.node_port} → :${selectedServiceDetail.container_port}`
                             : "Waiting for cluster port..."}
                         </span>
                       )}
@@ -984,6 +984,25 @@ function CreateServiceModal({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // ── NodePort จองให้ตั้งแต่เปิดฟอร์ม (docs 031) ─────────────────────────────────────
+  // ผู้ใช้เห็น <host ที่เปิดเว็บ>:<พอร์ต> ก่อนกด deploy และได้เลขนั้นจริง — เลือกเลขเองไม่ได้
+  // (ใบจองอายุ 30 นาที เปิดฟอร์มซ้ำได้เลขเดิม · หมดอายุ/ถูกใช้ไปแล้ว backend ตอบ 409 แล้วเราขอใหม่)
+  const [nodePort, setNodePort] = useState<number | null>(null);
+  const [nodePortError, setNodePortError] = useState<string | null>(null);
+  const reserveNodePort = () => {
+    setNodePortError(null);
+    return serviceApi
+      .reserveNodePort()
+      .then((r) => setNodePort(r.node_port))
+      .catch((err) => {
+        setNodePort(null);
+        setNodePortError(getApiErrorMessage(err, "จองพอร์ตไม่สำเร็จ"));
+      });
+  };
+  useEffect(() => {
+    void reserveNodePort();
+  }, []);
+
   // ตำแหน่งเก็บข้อมูลบังคับกรอกทุกครั้งที่มีดิสก์ ไม่ว่าจะใช้ image อะไร
   const dataPathError = storageOn ? validateDataPath(dataPath) : "";
 
@@ -1069,6 +1088,7 @@ function CreateServiceModal({
     name.trim().length >= 3 &&
     NAME_PATTERN.test(name.trim()) &&
     portIsValid &&
+    nodePort !== null &&
     !overCpu &&
     !overRam &&
     !overStorage &&
@@ -1157,6 +1177,7 @@ function CreateServiceModal({
         ram_mb: ramMb,
         container_port: portNumber,
         replicas: effectiveReplicas,
+        node_port: nodePort ?? undefined,
         // ส่งเฉพาะตอนมีดิสก์ — backend ถือว่าส่ง storage_mb หรือ data_path มาเมื่อไหร่คือขอดิสก์ทันที
         ...(storageOn
           ? { storage_mb: storageMb, data_path: dataPath.trim() }
@@ -1165,6 +1186,11 @@ function CreateServiceModal({
       onCreated(svc);
     } catch (err) {
       setError(getApiErrorMessage(err, "Deploy ไม่สำเร็จ"));
+      // พอร์ตที่จองไว้ใช้ไม่ได้แล้ว — ขอเลขใหม่ให้ทันที ผู้ใช้เห็นเลขใหม่ในการ์ดแล้วกด Deploy อีกครั้งได้เลย
+      const code = getApiErrorCode(err);
+      if (code === "NODE_PORT_RESERVATION_EXPIRED" || code === "NODE_PORT_TAKEN") {
+        void reserveNodePort();
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1789,13 +1815,27 @@ function CreateServiceModal({
                   เข้าถึงได้จากนอกระบบ
                 </span>
                 <span className="font-mono text-sm text-[#211a14]/70">
-                  &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :
-                  {containerPort || "8080"}
+                  {window.location.hostname}:
+                  {nodePort ?? (nodePortError ? "—" : "กำลังจองพอร์ต...")}{" "}
+                  &rarr; :{containerPort || "8080"}
                 </span>
-                <span className="text-sm text-[#211a14]/45">
-                  ระบบจะจ่ายพอร์ตให้หลัง deploy เสร็จ
-                  ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
-                </span>
+                {nodePortError ? (
+                  <span className="flex items-center gap-2 text-sm text-red-600">
+                    {nodePortError}
+                    <button
+                      type="button"
+                      onClick={() => void reserveNodePort()}
+                      className="font-bold underline"
+                    >
+                      ลองใหม่
+                    </button>
+                  </span>
+                ) : (
+                  <span className="text-sm text-[#211a14]/45">
+                    พอร์ตนี้จองไว้ให้คุณแล้ว (30 นาที) และจะเป็นพอร์ตของ service
+                    นี้หลัง deploy · ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
+                  </span>
+                )}
               </div>
           </div>
         </div>
@@ -2695,7 +2735,8 @@ export function EditServiceModal({
                     เข้าถึงได้จากนอกระบบ
                   </span>
                   <span className="font-mono text-sm text-[#211a14]/70">
-                    &lt;node-ip&gt;:{"<พอร์ตที่ระบบจ่ายให้>"} &rarr; :
+                    {window.location.hostname}:
+                    {service.node_port ?? "<พอร์ตที่ระบบจ่ายให้>"} &rarr; :
                     {containerPort || "8080"}
                   </span>
                 </div>
