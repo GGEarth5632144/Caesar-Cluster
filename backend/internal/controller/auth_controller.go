@@ -152,7 +152,7 @@ func (h *AuthController) Register(c *gin.Context) {
 	}
 
 	user := entity.User{
-		StudentID: req.StudentID,
+		StudentID: eligible.StudentID,
 		RoleID:    userRole.ID,
 		RealName:  req.RealName,
 		Gmail:     req.Gmail,
