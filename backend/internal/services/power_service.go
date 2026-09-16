@@ -27,8 +27,8 @@ func NewPowerService(db *gorm.DB, retentionDays int) *PowerService {
 }
 
 const (
-	powerWorkerInterval = 15 * time.Second // ความถี่ที่ดึงค่าจากมิเตอร์ (GetPowerHistory คิดขนาด bucket จากค่านี้)
-	powerPruneInterval  = 6 * time.Hour    // ความถี่ที่ไล่ลบของเก่า — ไม่ต้องบ่อย รอบเดียวลบได้ทีละหลายชั่วโมง
+	powerWorkerInterval = 15 * time.Second // ความถี่ที่ดึงค่าจากมิเตอร์
+	powerPruneInterval  = 6 * time.Hour    // ความถี่ที่ไล่ลบของเก่า
 )
 
 func (s *PowerService) StartPowerWorker() {

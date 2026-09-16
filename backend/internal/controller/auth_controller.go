@@ -78,21 +78,22 @@ func (h *AuthController) Register(c *gin.Context) {
 		return
 	}
 	req.Gmail = normalizeGmail(req.Gmail)
+	req.StudentID = strings.ToLower(strings.TrimSpace(req.StudentID))
 
 	db := h.db.WithContext(c.Request.Context())
 
 	// ด่านที่ 1: ต้องเป็น student_id ที่มีอยู่ในฐานข้อมูลจริง (ทุกสาขา)
 	var eligible entity.EligibleStudent
-	if err := db.Where("student_id = ?", req.StudentID).First(&eligible).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			utils.Error(c, http.StatusForbidden, "STUDENT_NOT_FOUND",
-				"ไม่พบรหัสนักศึกษานี้ในฐานข้อมูล")
-			return
-		}
-		log.Printf("register: query eligible error: %v", err)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
-		return
-	}
+	if err := db.Where("LOWER(student_id) = ?", req.StudentID).First(&eligible).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            utils.Error(c, http.StatusForbidden, "STUDENT_NOT_FOUND",
+                "ไม่พบรหัสนักศึกษานี้ในฐานข้อมูล")
+            return
+        }
+        log.Printf("register: query eligible error: %v", err)
+        utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+        return
+    }
 
 	// ด่านที่ 2: สมัครได้เฉพาะสาขา CPE เท่านั้น
 	if eligible.Major != entity.MajorCPE {
@@ -250,17 +251,18 @@ func (h *AuthController) Login(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
-	}
+	}	
 
+	req.StudentID = strings.ToLower(strings.TrimSpace(req.StudentID))
 	db := h.db.WithContext(c.Request.Context())
 
 	var user entity.User
-	err := db.Where("student_id = ?", req.StudentID).First(&user).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("login query error: %v", err)
-		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
-		return
-	}
+	err := db.Where("LOWER(student_id) = ?", req.StudentID).First(&user).Error
+    if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+        log.Printf("login query error: %v", err)
+        utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+        return
+    }
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)) != nil {
 		utils.Error(c, http.StatusUnauthorized, "LOGIN_FAILED", "student_id หรือ password ไม่ถูกต้อง")
 		return

@@ -3,7 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 ,ChevronRight} from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -189,7 +189,11 @@ export default function Register() {
                   กำลังตรวจสอบข้อมูล...
                 </>
               ) : (
-                <ArrowRight size={20} />
+                <>
+                  <span className="ml-2">Create Account</span>
+                  <ChevronRight size={20} />
+                </>
+                
               )}
             </Button>
 
@@ -205,10 +209,7 @@ export default function Register() {
                 เป็น Link ไม่ใช่ Button เพื่อให้คลิกขวา/เปิดแท็บใหม่ได้ตามปกติของลิงก์จริง */}
             <Link
               to={PATHS.login}
-              className={cn(
-                buttonVariants({ variant: "secondary" }),
-                "h-12 w-full rounded-full bg-[#FBE3E6] text-base text-[#211a14] hover:bg-[#FBE3E6]/90",
-              )}
+              className="block text-center text-xs font-medium text-white/70 transition-colors hover:text-white hover:underline hover:underline-offset-4"
             >
               มีบัญชีอยู่แล้ว? เข้าสู่ระบบ
             </Link>
