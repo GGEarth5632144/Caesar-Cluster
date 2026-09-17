@@ -4,6 +4,7 @@ import {
   useRef,
   type ChangeEvent,
   type ClipboardEvent,
+  type KeyboardEvent,
 } from "react";
 import {
   Box,
@@ -83,6 +84,38 @@ const MAX_ENV_VARS = 20;
 const clamp = (v: number, min: number, max: number) =>
   Math.min(Math.max(v, min), max);
 const floorTo = (v: number, step: number) => Math.floor(v / step) * step;
+
+// กด Enter ที่ช่อง value → ไปแถวถัดไป (แถวสุดท้ายจะเพิ่มแถวใหม่) แล้ว focus ช่อง key
+// ใช้ร่วมกันทั้งฟอร์ม deploy และฟอร์มแก้ไข · ข้าม Enter ระหว่างพิมพ์ด้วย IME (ภาษาไทย/จีน) ที่ยังไม่ commit
+function useEnvEnterToNext(rowCount: number, addRow: () => void) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<number | null>(null);
+
+  const focusKey = (i: number) =>
+    listRef.current
+      ?.querySelectorAll<HTMLInputElement>("input[data-env-key]")
+      [i]?.focus();
+
+  // แถวใหม่ยังไม่อยู่ใน DOM ตอนกด Enter — รอ render รอบถัดไปก่อนค่อย focus
+  useEffect(() => {
+    if (pendingFocus.current === null) return;
+    focusKey(pendingFocus.current);
+    pendingFocus.current = null;
+  }, [rowCount]);
+
+  const onValueKeyDown = (i: number) => (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    e.preventDefault(); // กันฟอร์ม submit
+    if (i + 1 < rowCount) {
+      focusKey(i + 1);
+    } else if (rowCount < MAX_ENV_VARS) {
+      pendingFocus.current = i + 1;
+      addRow();
+    }
+  };
+
+  return { listRef, onValueKeyDown };
+}
 
 function formatCores(milli: number) {
   return `${(milli / 1000).toFixed(1)} cores`;
@@ -1108,6 +1141,7 @@ function CreateServiceModal({
         : null;
 
   const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const envEnter = useEnvEnterToNext(envVars.length, addEnvRow);
   const removeEnvRow = (i: number) =>
     setEnvVars((p) => p.filter((_, idx) => idx !== i));
   const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
@@ -1763,11 +1797,15 @@ function CreateServiceModal({
               />
             </div>
 
-            <div className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3">
+            <div
+              ref={envEnter.listRef}
+              className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3"
+            >
               {envVars.map((pair, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input
                     placeholder="key"
+                    data-env-key
                     value={pair.key}
                     onChange={(e) => updateEnvRow(i, "key", e.target.value)}
                     onPaste={(e) => handleEnvPaste(i, e)}
@@ -1784,6 +1822,7 @@ function CreateServiceModal({
                     type={looksSecret(pair.key) ? "password" : "text"}
                     value={pair.value}
                     onChange={(e) => updateEnvRow(i, "value", e.target.value)}
+                    onKeyDown={envEnter.onValueKeyDown(i)}
                     disabled={submitting}
                     className="flex-[2] rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                   />
@@ -2045,6 +2084,7 @@ export function EditServiceModal({
         : null;
 
   const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const envEnter = useEnvEnterToNext(envVars.length, addEnvRow);
   const removeEnvRow = (i: number) =>
     setEnvVars((p) => p.filter((_, idx) => idx !== i));
   const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
@@ -2680,11 +2720,15 @@ export function EditServiceModal({
                 />
               </div>
 
-              <div className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3">
+              <div
+                ref={envEnter.listRef}
+                className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3"
+              >
                 {envVars.map((pair, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <input
                       placeholder="key"
+                      data-env-key
                       value={pair.key}
                       onChange={(e) => updateEnvRow(i, "key", e.target.value)}
                       onPaste={(e) => handleEnvPaste(i, e)}
@@ -2699,6 +2743,7 @@ export function EditServiceModal({
                       type={looksSecret(pair.key) ? "password" : "text"}
                       value={pair.value}
                       onChange={(e) => updateEnvRow(i, "value", e.target.value)}
+                      onKeyDown={envEnter.onValueKeyDown(i)}
                       disabled={submitting}
                       className="flex-[2] rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                     />

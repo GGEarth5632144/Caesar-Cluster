@@ -680,28 +680,72 @@ export function EditDatabaseModal({ service, namespace, onClose, onUpdated }: Ed
 
 // ─── Connection panel (หน้ารายละเอียด) ────────────────────────────────────────
 
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
+// value เป็นฟังก์ชันได้ = ค่ายังไม่อยู่ในมือ (รหัสใน Secret) ต้องดึงจาก API ตอนกด copy
+function CopyButton({
+  value,
+  onError,
+}: {
+  value: string | (() => Promise<string>);
+  onError?: (msg: string) => void;
+}) {
+  const [state, setState] = useState<"idle" | "loading" | "copied">("idle");
+
+  const copy = async () => {
+    const clip = navigator.clipboard;
+    if (!clip) {
+      onError?.("เบราว์เซอร์ไม่อนุญาตให้คัดลอก (ต้องเปิดผ่าน https หรือ localhost)");
+      return;
+    }
+    setState("loading");
+    try {
+      if (typeof value === "string") {
+        await clip.writeText(value);
+      } else {
+        const text = value();
+        try {
+          // ส่ง Promise ให้ ClipboardItem ทันทีตอนกด — Safari ปฏิเสธ writeText ที่เกิดหลัง await API (หลุด user gesture)
+          await clip.write([
+            new ClipboardItem({
+              "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })),
+            }),
+          ]);
+        } catch {
+          // เบราว์เซอร์ที่ไม่มี ClipboardItem / ไม่รับ Promise — รอค่าก่อนแล้วค่อยเขียน (error จาก API หลุดไป catch นอก)
+          await clip.writeText(await text);
+        }
+      }
+      setState("copied");
+      setTimeout(() => setState("idle"), 1500);
+    } catch (err) {
+      setState("idle");
+      onError?.(getApiErrorMessage(err, "คัดลอกไม่สำเร็จ"));
+    }
+  };
+
   return (
     <button
       type="button"
-      onClick={() => {
-        void navigator.clipboard?.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      className="shrink-0 rounded-lg p-1.5 text-[#211a14]/40 hover:bg-[#FBDFDA] hover:text-[#BB6653]"
+      disabled={state === "loading"}
+      onClick={() => void copy()}
+      className="shrink-0 rounded-lg p-1.5 text-[#211a14]/40 hover:bg-[#FBDFDA] hover:text-[#BB6653] disabled:opacity-60"
       title="คัดลอก"
     >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
+      {state === "loading" ? (
+        <Loader2 size={14} className="animate-spin" />
+      ) : state === "copied" ? (
+        <Check size={14} />
+      ) : (
+        <Copy size={14} />
+      )}
     </button>
   );
 }
 
-// ข้อมูลเชื่อมต่อ database template — รหัสผ่านไม่อยู่ในรายการ service ต้องกด "แสดง" ถึงจะดึงจาก Secret
+// ข้อมูลเชื่อมต่อ database template — รหัสผ่านไม่อยู่ในรายการ service ดึงจาก Secret ตอนกด "แสดง" หรือกด copy
+// ดึงครั้งแรกแล้วเก็บไว้ · "ซ่อน" แค่กลับไปแสดงแบบ masked ไม่ต้องดึงใหม่
 export function DatabaseConnectionPanel({ service }: { service: AppService }) {
   const [conn, setConn] = useState<DatabaseConnection | null>(null);
+  const [revealed, setRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -709,17 +753,27 @@ export function DatabaseConnectionPanel({ service }: { service: AppService }) {
   const scheme = service.database_engine === "postgresql" ? "postgresql" : "mysql";
   const masked = `${scheme}://${service.db_username}:••••••@${service.name}:${port}/${service.db_name}`;
 
+  const loadConn = async () => {
+    if (conn) return conn;
+    setError(null);
+    const c = await serviceApi.connection(service.id);
+    setConn(c);
+    return c;
+  };
+
   const reveal = async () => {
     setLoading(true);
-    setError(null);
     try {
-      setConn(await serviceApi.connection(service.id));
+      await loadConn();
+      setRevealed(true);
     } catch (err) {
       setError(getApiErrorMessage(err, "อ่านข้อมูลการเชื่อมต่อไม่สำเร็จ"));
     } finally {
       setLoading(false);
     }
   };
+
+  const shown = revealed && conn ? conn : null;
 
   const rows: [string, string][] = [
     ["Host", service.name],
@@ -732,10 +786,10 @@ export function DatabaseConnectionPanel({ service }: { service: AppService }) {
     <div className="bg-white p-4 rounded-2xl border border-black/5 flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Connection</p>
-        {conn ? (
+        {shown ? (
           <button
             type="button"
-            onClick={() => setConn(null)}
+            onClick={() => setRevealed(false)}
             className="inline-flex items-center gap-1 text-xs font-bold text-[#211a14]/50 hover:text-[#BB6653]"
           >
             <EyeOff size={14} /> ซ่อน
@@ -753,8 +807,8 @@ export function DatabaseConnectionPanel({ service }: { service: AppService }) {
       </div>
 
       <div className="flex items-center gap-2 rounded-xl bg-black/[0.03] px-3 py-2">
-        <span className="flex-1 break-all font-mono text-sm text-[#211a14]/75">{conn ? conn.url : masked}</span>
-        {conn && <CopyButton value={conn.url} />}
+        <span className="flex-1 break-all font-mono text-sm text-[#211a14]/75">{shown ? shown.url : masked}</span>
+        <CopyButton value={conn ? conn.url : () => loadConn().then((c) => c.url)} onError={setError} />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -767,15 +821,16 @@ export function DatabaseConnectionPanel({ service }: { service: AppService }) {
             <CopyButton value={v} />
           </div>
         ))}
-        {conn && (
-          <div className="col-span-2 flex items-center justify-between gap-1 rounded-lg border border-black/5 px-2.5 py-1.5">
-            <span className="min-w-0">
-              <span className="block text-[10px] font-bold uppercase tracking-widest text-gray-400">Password</span>
-              <span className="block break-all font-mono text-sm">{conn.password}</span>
-            </span>
-            <CopyButton value={conn.password} />
-          </div>
-        )}
+        <div className="col-span-2 flex items-center justify-between gap-1 rounded-lg border border-black/5 px-2.5 py-1.5">
+          <span className="min-w-0">
+            <span className="block text-[10px] font-bold uppercase tracking-widest text-gray-400">Password</span>
+            <span className="block break-all font-mono text-sm">{shown ? shown.password : "••••••••"}</span>
+          </span>
+          <CopyButton
+            value={conn ? conn.password : () => loadConn().then((c) => c.password)}
+            onError={setError}
+          />
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
