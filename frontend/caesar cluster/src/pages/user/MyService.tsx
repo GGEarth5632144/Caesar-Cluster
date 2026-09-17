@@ -462,9 +462,12 @@ export default function MyService() {
                     )}
 
                     {svc.status_message && (
-                      <pre className="max-h-28 overflow-auto rounded-lg bg-white/70 p-2 text-xs leading-relaxed text-[#211a14]/70">
+                      <p
+                        className="truncate rounded-lg bg-white/70 p-2 font-mono text-xs text-[#211a14]/70"
+                        title={svc.status_message}
+                      >
                         {svc.status_message}
-                      </pre>
+                      </p>
                     )}
                   </div>
                 )}
@@ -756,7 +759,7 @@ export default function MyService() {
                       )}
 
                       {selectedServiceDetail.status_message && (
-                        <pre className="mt-1 max-h-32 overflow-auto rounded-lg bg-white/60 p-3 text-xs leading-relaxed text-[#211a14]/70 custom-scrollbar">
+                        <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-white/60 p-3 text-xs leading-relaxed text-[#211a14]/70 custom-scrollbar">
                           {selectedServiceDetail.status_message}
                         </pre>
                       )}

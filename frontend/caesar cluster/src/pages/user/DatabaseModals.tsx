@@ -390,7 +390,6 @@ export function DeployDatabaseModal({ namespace, onClose, onCreated }: DeployDat
                 disabled={submitting}
                 onClick={() => {
                   setPassword(generatePassword());
-                  setShowPassword(true);
                 }}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 py-3 text-sm font-bold text-[#211a14]/60 hover:text-[#BB6653] disabled:opacity-50"
               >
