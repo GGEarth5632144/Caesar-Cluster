@@ -100,7 +100,8 @@ func Setup(
 		api.GET("/telemetry/history", telemetryCtrl.GetTelemetryHistory)
 		api.GET("/power", powerController.GetPower)
 		api.GET("/power/history", powerController.GetPowerHistory)
-		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db))
+		// Audit บันทึกทุก POST/PATCH/DELETE ที่สำเร็จลง audit_logs → หน้า Audit Log ของ admin
+		protected := api.Group("", middlewares.Auth(cfg.JWTSecret, db), middlewares.Audit(db))
 		{
 			protected.GET("/me", authCtl.Me)
 			protected.PATCH("/me", authCtl.UpdateMe)
@@ -141,7 +142,7 @@ func Setup(
 			protected.GET("/ai-review-requests/:request_id", aiReviewReqCtl.Get)
 		}
 
-		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret, db), middlewares.AdminOnly())
+		admin := api.Group("/admin", middlewares.Auth(cfg.JWTSecret, db), middlewares.AdminOnly(), middlewares.Audit(db))
 		{
 			admin.GET("/eligible-students", adminCtl.ListEligibleStudents)
 			admin.POST("/eligible-students", adminCtl.AddEligibleStudents)
@@ -174,6 +175,7 @@ func Setup(
 			admin.PATCH("/requests/:id/deny", adminCtl.Deny)
 
 			admin.GET("/email-deliveries", adminCtl.ListEmailDeliveries)
+			admin.GET("/audit-logs", adminCtl.ListAuditLogs)
 
 			admin.GET("/users", adminCtl.ListUsers)
 			admin.PATCH("/users/:id", adminCtl.UpdateUser)

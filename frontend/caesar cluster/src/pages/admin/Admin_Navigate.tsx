@@ -32,7 +32,7 @@ export const adminNavItems: NavItem[] = [
   { label: "Import Students", icon: Upload, path: `/${PATHS.adminImportStudents}` },
 
   // 4. การตรวจสอบย้อนหลัง และตั้งค่าระบบ (มักจะอยู่ล่างสุดเสมอ)
-  { label: "Audit Log", icon: ScrollText, path: `/${PATHS.auditLog}` },//กำลังทำ
+  { label: "Audit Log", icon: ScrollText, path: `/${PATHS.auditLog}` },
   { label: "Settings", icon: Settings, path: `/${PATHS.settings}` },//กำลังทำ
 ];
 
