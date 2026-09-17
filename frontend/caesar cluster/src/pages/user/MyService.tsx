@@ -425,7 +425,7 @@ export default function MyService() {
                   title="ดูข้อมูลฉบับเต็ม"
                 >
                   <Eye size={16} />
-                  Change and Re-Deploy
+                  See or change and re-deploy
                 </button>
                 {(svc.status === "crashloop" ||
                   svc.status === "pending" ||
@@ -540,10 +540,10 @@ export default function MyService() {
                       title={
                         svc.is_database
                           ? "ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย"
-                          : "ดิสก์ถาวรใช้ได้ทีละ pod — เพิ่มจำนวนแล้วสอง pod จะเขียนดิสก์ก้อนเดียวกันจนข้อมูลพัง"
+                          : "ดิสก์ถาวรใช้ได้ทีละ container — เพิ่มจำนวนแล้วสอง container จะเขียนดิสก์ก้อนเดียวกันจนข้อมูลพัง"
                       }
                     >
-                      1 pod &middot; ปรับไม่ได้
+                      1 container &middot; ปรับไม่ได้
                     </span>
                   ) : (
                     <div className="flex items-center gap-1.5">
@@ -566,7 +566,7 @@ export default function MyService() {
                       >
                         {REPLICA_CHOICES.map((n) => (
                           <option key={n} value={n}>
-                            {n} {n === 1 ? "pod" : "pods"}
+                            {n} {n === 1 ? "container" : "containers"}
                           </option>
                         ))}
                       </select>
@@ -1353,8 +1353,8 @@ function CreateServiceModal({
               </span>
               <span className="text-sm text-[#211a14]/50">
                 {storageOn
-                  ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
-                  : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ (Nextcloud, WordPress) จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+                  ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ container ถูกสร้างใหม่ · รันได้ครั้งละ 1 container"
+                  : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์และมีการเก็บข้อมูล (ที่ไม่ได้อยู่ใน database) อาจสูญหายได้หากไฟดับหรือ service ล่ม"}
               </span>
             </span>
             <SwitchKnob on={storageOn} />
@@ -1573,9 +1573,9 @@ function CreateServiceModal({
               </label>
               {storageOn ? (
                 <span className="text-right text-sm text-[#211a14]/45">
-                  <span className="font-bold text-[#211a14]/70">1 pod</span>
+                  <span className="font-bold text-[#211a14]/70">1 container</span>
                   <br />
-                  ดิสก์ถาวรใช้ได้ทีละ pod — สอง pod เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง
+                  ดิสก์ถาวรใช้ได้ทีละ container — สอง container เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง
                 </span>
               ) : (
                 <select
@@ -1595,7 +1595,7 @@ function CreateServiceModal({
                           n * MIN_RAM_MB > ramAvailable)
                       }
                     >
-                      {n} {n === 1 ? "pod" : "pods"}
+                      {n} {n === 1 ? "container" : "containers"}
                     </option>
                   ))}
                 </select>
@@ -1832,7 +1832,7 @@ function CreateServiceModal({
                   </span>
                 ) : (
                   <span className="text-sm text-[#211a14]/45">
-                    พอร์ตนี้จองไว้ให้คุณแล้ว (30 นาที) และจะเป็นพอร์ตของ service
+                    พอร์ตนี้จองไว้ให้คุณแล้ว และจะเป็นพอร์ตของ service
                     นี้หลัง deploy · ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
                   </span>
                 )}
@@ -2297,8 +2297,8 @@ export function EditServiceModal({
                   {isDatabase
                     ? "ฐานข้อมูลมีดิสก์ถาวรเสมอ — ปิดสวิตช์นี้ไม่ได้"
                     : storageOn
-                      ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
-                      : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+                      ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ container ถูกสร้างใหม่ · รันได้ครั้งละ 1 container"
+                      : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์และมีการเก็บข้อมูล (ที่ไม่ได้อยู่ใน database) อาจสูญหายได้หากไฟดับหรือ service ล่ม"}
                 </span>
               </span>
               {isDatabase && (
@@ -2504,7 +2504,7 @@ export function EditServiceModal({
                 </label>
                 {storageOn ? (
                   <span className="text-right text-sm text-[#211a14]/45">
-                    <span className="font-bold text-[#211a14]/70">1 pod</span>
+                    <span className="font-bold text-[#211a14]/70">1 container</span>
                   </span>
                 ) : (
                   <select
@@ -2523,7 +2523,7 @@ export function EditServiceModal({
                             n * MIN_RAM_MB > ramAvailable)
                         }
                       >
-                        {n} {n === 1 ? "pod" : "pods"}
+                        {n} {n === 1 ? "container" : "containers"}
                       </option>
                     ))}
                   </select>

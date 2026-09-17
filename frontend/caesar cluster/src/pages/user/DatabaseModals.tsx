@@ -452,7 +452,7 @@ export function DeployDatabaseModal({ namespace, onClose, onCreated }: DeployDat
             <span className="overflow-x-auto whitespace-nowrap font-mono text-sm text-[#211a14]/70">
               {`${template?.engine === "postgresql" ? "postgresql" : "mysql"}://${username || "user"}:••••@${name || "mydb"}:${template?.port ?? 5432}/${database || "db"}`}
             </span>
-            <span className="text-sm text-[#211a14]/45">คนนอกกลุ่มและคนนอกระบบเข้าไม่ได้ · 1 pod</span>
+            <span className="text-sm text-[#211a14]/45">คนนอกกลุ่มและคนนอกระบบเข้าไม่ได้ · 1 container</span>
           </div>
         </div>
 
@@ -626,7 +626,7 @@ export function EditDatabaseModal({ service, namespace, onClose, onUpdated }: Ed
           )}
           <p className="text-sm text-[#211a14]/50">
             database แก้ได้เฉพาะ CPU และ RAM — ชื่อ, version, username, password และขนาดดิสก์เปลี่ยนหลัง deploy ไม่ได้
-            · pod จะ restart หลังบันทึก (ข้อมูลในดิสก์ไม่หาย)
+            · container จะ restart หลังบันทึก (ข้อมูลในดิสก์ไม่หาย)
           </p>
           <RangeRow
             icon={<Cpu size={14} className="text-[#BB6653]" />}
