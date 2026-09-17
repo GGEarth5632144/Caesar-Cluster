@@ -3,6 +3,7 @@ import type { RequestTemplate } from "@/api/adminrequest";
 import type { AdminVmRequest, VmRequest } from "@/api/requests";
 import type { AdminService, AppService } from "@/api/services";
 import type { LogLine } from "@/api/logs";
+import type { AuditLog } from "@/api/auditLog";
 import type { NodeTelemetry } from "@/api/mornitorequest";
 import type { EligibleStudentItem } from "@/api/eligibleStudents";
 import {
@@ -104,6 +105,53 @@ export const usersScope: SearchScope = {
     },
   ],
   examples: ["role:admin", "space:no", "nsname:lab"],
+};
+
+// ---------------------------------------------------------------------------
+// ผู้ดูแล — Audit Log
+// ---------------------------------------------------------------------------
+
+const auditEventOptions = [
+  { value: "CREATE", label: "สร้าง" },
+  { value: "UPDATE", label: "แก้ไข" },
+  { value: "APPROVE", label: "อนุมัติ" },
+  { value: "DELETE", label: "ลบ" },
+];
+
+export const auditLogScope: SearchScope = {
+  id: "admin-audit-log",
+  noun: "รายการ",
+  placeholder: "ค้นหา log — ชื่อผู้กระทำ, การกระทำ, path, IP หรือ event:DELETE",
+  fields: [
+    { id: "actor", label: "ผู้กระทำ", aliases: ["ชื่อ", "ผู้กระทำ", "name"], get: (l: AuditLog) => l.actor_name },
+    { id: "action", label: "การกระทำ", aliases: ["การกระทำ", "title"], get: (l: AuditLog) => l.action_title },
+    { id: "detail", label: "รายละเอียด", aliases: ["รายละเอียด", "path"], get: (l: AuditLog) => l.detail },
+    { id: "ip", label: "IP ต้นทาง", aliases: ["ไอพี"], get: (l: AuditLog) => l.source_ip },
+    {
+      id: "event",
+      label: "ประเภท",
+      type: "enum",
+      aliases: ["ประเภท", "type"],
+      exactOnly: true,
+      options: auditEventOptions,
+      get: (l: AuditLog) => l.event_type,
+    },
+    {
+      id: "role",
+      label: "สิทธิ์",
+      type: "enum",
+      aliases: ["สิทธิ์", "บทบาท"],
+      exactOnly: true,
+      options: [
+        { value: "admin", label: "ผู้ดูแล" },
+        { value: "user", label: "นักศึกษา" },
+      ],
+      get: (l: AuditLog) => l.actor_role,
+    },
+    { id: "time", label: "เวลา", type: "date", aliases: ["เวลา", "วันที่"], exactOnly: true, get: (l: AuditLog) => l.created_at },
+  ],
+  quickFilters: [{ fieldId: "event", label: "ประเภท", options: auditEventOptions, multi: true }],
+  examples: ["event:DELETE", "action:อนุมัติ", "time:>2026-01-01", "-event:CREATE"],
 };
 
 // ---------------------------------------------------------------------------

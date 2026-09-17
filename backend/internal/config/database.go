@@ -112,6 +112,9 @@ func ConnectDB(dbURL string) *gorm.DB {
 	if err := EnsureNodePortCheck(db); err != nil {
 		log.Fatalf("update node_port check failed: %v", err)
 	}
+	if err := ensureAuditEventCheck(db); err != nil {
+		log.Fatalf("update audit_logs event_type check failed: %v", err)
+	}
 
 	// ไม่ประกาศ relation ให้ GORM จัดการ FK เอง เพราะเคยเจอว่ามันสร้าง sequence ผิดให้ column ที่เป็น FK
 	// (เข้าใจผิดว่าเป็น auto-increment) เลยมาเพิ่ม FK เองด้วย raw SQL — idempotent รันซ้ำได้ทุกครั้งที่ start
@@ -163,6 +166,24 @@ func EnsureNodePortCheck(db *gorm.DB) error {
 		}
 		log.Printf("services.node_port CHECK → %d-%d ✓", entity.MinNodePort, entity.MaxNodePort)
 		return nil
+	})
+}
+
+// ensureAuditEventCheck เพิ่ม DELETE ให้ CHECK ของ audit_logs.event_type บน DB เดิม
+// (AutoMigrate ไม่แก้ CHECK ที่มีชื่อนี้อยู่แล้ว) — DB ใหม่ได้ค่าถูกจาก tag ใน entity อยู่แล้วเลยข้ามไป
+func ensureAuditEventCheck(db *gorm.DB) error {
+	var def string
+	db.Raw(`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		WHERE conrelid = 'audit_logs'::regclass AND conname = 'chk_audit_logs_event_type'`).Scan(&def)
+	if strings.Contains(def, "DELETE") {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS chk_audit_logs_event_type`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`ALTER TABLE audit_logs ADD CONSTRAINT chk_audit_logs_event_type
+			CHECK (event_type IN ('CREATE','APPROVE','UPDATE','DELETE'))`).Error
 	})
 }
 

@@ -20,6 +20,7 @@ const (
 	CtxUserID      = "userID"
 	CtxRole        = "role"
 	CtxNamespaceID = "namespaceID" // *int — nil = ผู้ใช้ยังไม่มี space
+	CtxRealName    = "realName"    // ใช้เป็นชื่อผู้กระทำใน Audit
 )
 
 // authUser = ข้อมูลเท่าที่ middleware ต้องใช้ ดึงมาในคำสั่งเดียวพร้อมชื่อ role
@@ -27,6 +28,7 @@ type authUser struct {
 	ID          int
 	NamespaceID *int
 	RoleName    string
+	RealName    string
 }
 
 // Auth = middleware ตรวจ JWT ก่อนเข้า route ที่ต้อง login
@@ -81,7 +83,7 @@ func Auth(jwtSecret string, db *gorm.DB) gin.HandlerFunc {
 		var u authUser
 		err = db.WithContext(c.Request.Context()).
 			Table("users AS u").
-			Select("u.id AS id, u.namespace_id AS namespace_id, COALESCE(r.name, '') AS role_name").
+			Select("u.id AS id, u.namespace_id AS namespace_id, u.real_name AS real_name, COALESCE(r.name, '') AS role_name").
 			Joins("LEFT JOIN roles r ON r.id = u.role_id").
 			Where("u.id = ?", int(sub)).
 			Scan(&u).Error
@@ -105,6 +107,7 @@ func Auth(jwtSecret string, db *gorm.DB) gin.HandlerFunc {
 		c.Set(CtxUserID, u.ID)
 		c.Set(CtxRole, u.RoleName)
 		c.Set(CtxNamespaceID, u.NamespaceID)
+		c.Set(CtxRealName, u.RealName)
 		c.Next()
 	}
 }

@@ -54,3 +54,15 @@ func (h *AdminController) ListEmailDeliveries(c *gin.Context) {
 
 	utils.OK(c, http.StatusOK, rows)
 }
+
+// ListAuditLogs คืนประวัติการกระทำในระบบ ล่าสุดก่อน (admin only) — แถวเขียนโดย middlewares.Audit
+// ponytail: ตัดที่ 500 แถวล่าสุด ไม่มี pagination — เพิ่ม ?before=<id> ตอนที่ 500 แถวย้อนไม่ถึงที่ต้องดู
+func (h *AdminController) ListAuditLogs(c *gin.Context) {
+	var rows []entity.AuditLog
+	if err := h.db.WithContext(c.Request.Context()).Order("id DESC").Limit(500).Find(&rows).Error; err != nil {
+		log.Printf("admin: อ่าน audit_logs ไม่สำเร็จ: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "อ่าน audit log ไม่สำเร็จ")
+		return
+	}
+	utils.OK(c, http.StatusOK, rows)
+}

@@ -7,17 +7,18 @@ const (
 	AuditEventCreate  = "CREATE"
 	AuditEventApprove = "APPROVE"
 	AuditEventUpdate  = "UPDATE"
+	AuditEventDelete  = "DELETE"
 )
 
 // AuditLog = ตาราง audit_logs — บันทึกทุกการกระทำสำคัญในระบบไว้ตรวจสอบย้อนหลัง (ใครทำอะไร เมื่อไหร่ จากที่ไหน)
 //
-// ข้อมูลไหลเข้า: ทุก controller ที่ทำ action สำคัญ (สร้าง namespace, อนุมัติ/ปฏิเสธ request, แก้โควตา ฯลฯ)
-// เขียน log เข้ามาหลัง action สำเร็จ — เก็บ snapshot ของ actor (role/name) ไว้ตรงนี้เลย ไม่ FK ไปตาราง users
+// ข้อมูลไหลเข้า: middlewares.Audit เขียนแถวให้ทุก POST/PATCH/DELETE ที่ login แล้วและสำเร็จ
+// (สร้าง namespace, อนุมัติ/ปฏิเสธ request, แก้โควตา ฯลฯ) — เก็บ snapshot ของ actor (role/name) ไว้ตรงนี้เลย ไม่ FK ไปตาราง users
 // เพราะถ้า user ถูกลบหรือเปลี่ยนชื่อทีหลัง ประวัติ audit ต้องยังอ่านได้เหมือนเดิม ไม่เปลี่ยนย้อนหลัง
-// ข้อมูลไหลออก: AdminController โชว์หน้า audit trail ให้ admin ตรวจสอบ
+// ข้อมูลไหลออก: AdminController.ListAuditLogs → หน้า Audit Log ของ admin
 type AuditLog struct {
 	ID          int       `gorm:"column:id;type:serial;primaryKey" json:"id"`
-	EventType   string    `gorm:"column:event_type;type:varchar(20);not null;check:event_type IN ('CREATE','APPROVE','UPDATE')" json:"event_type"`
+	EventType   string    `gorm:"column:event_type;type:varchar(20);not null;check:event_type IN ('CREATE','APPROVE','UPDATE','DELETE')" json:"event_type"`
 	ActorRole   string    `gorm:"column:actor_role;type:varchar(20);not null" json:"actor_role"`
 	ActorName   string    `gorm:"column:actor_name;type:varchar(100);not null" json:"actor_name"`
 	ActionTitle string    `gorm:"column:action_title;type:varchar(100);not null" json:"action_title"`
