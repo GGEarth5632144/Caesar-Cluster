@@ -4,6 +4,7 @@ import {
   useRef,
   type ChangeEvent,
   type ClipboardEvent,
+  type KeyboardEvent,
 } from "react";
 import {
   Box,
@@ -83,6 +84,38 @@ const MAX_ENV_VARS = 20;
 const clamp = (v: number, min: number, max: number) =>
   Math.min(Math.max(v, min), max);
 const floorTo = (v: number, step: number) => Math.floor(v / step) * step;
+
+// กด Enter ที่ช่อง value → ไปแถวถัดไป (แถวสุดท้ายจะเพิ่มแถวใหม่) แล้ว focus ช่อง key
+// ใช้ร่วมกันทั้งฟอร์ม deploy และฟอร์มแก้ไข · ข้าม Enter ระหว่างพิมพ์ด้วย IME (ภาษาไทย/จีน) ที่ยังไม่ commit
+function useEnvEnterToNext(rowCount: number, addRow: () => void) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<number | null>(null);
+
+  const focusKey = (i: number) =>
+    listRef.current
+      ?.querySelectorAll<HTMLInputElement>("input[data-env-key]")
+      [i]?.focus();
+
+  // แถวใหม่ยังไม่อยู่ใน DOM ตอนกด Enter — รอ render รอบถัดไปก่อนค่อย focus
+  useEffect(() => {
+    if (pendingFocus.current === null) return;
+    focusKey(pendingFocus.current);
+    pendingFocus.current = null;
+  }, [rowCount]);
+
+  const onValueKeyDown = (i: number) => (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    e.preventDefault(); // กันฟอร์ม submit
+    if (i + 1 < rowCount) {
+      focusKey(i + 1);
+    } else if (rowCount < MAX_ENV_VARS) {
+      pendingFocus.current = i + 1;
+      addRow();
+    }
+  };
+
+  return { listRef, onValueKeyDown };
+}
 
 function formatCores(milli: number) {
   return `${(milli / 1000).toFixed(1)} cores`;
@@ -425,7 +458,7 @@ export default function MyService() {
                   title="ดูข้อมูลฉบับเต็ม"
                 >
                   <Eye size={16} />
-                  Change and Re-Deploy
+                  See or change and re-deploy
                 </button>
                 {(svc.status === "crashloop" ||
                   svc.status === "pending" ||
@@ -462,9 +495,12 @@ export default function MyService() {
                     )}
 
                     {svc.status_message && (
-                      <pre className="max-h-28 overflow-auto rounded-lg bg-white/70 p-2 text-xs leading-relaxed text-[#211a14]/70">
+                      <p
+                        className="truncate rounded-lg bg-white/70 p-2 font-mono text-xs text-[#211a14]/70"
+                        title={svc.status_message}
+                      >
                         {svc.status_message}
-                      </pre>
+                      </p>
                     )}
                   </div>
                 )}
@@ -540,10 +576,10 @@ export default function MyService() {
                       title={
                         svc.is_database
                           ? "ฐานข้อมูลรันได้ครั้งละตัวเดียว เพิ่มจำนวนแล้วข้อมูลจะเสียหาย"
-                          : "ดิสก์ถาวรใช้ได้ทีละ pod — เพิ่มจำนวนแล้วสอง pod จะเขียนดิสก์ก้อนเดียวกันจนข้อมูลพัง"
+                          : "ดิสก์ถาวรใช้ได้ทีละ container — เพิ่มจำนวนแล้วสอง container จะเขียนดิสก์ก้อนเดียวกันจนข้อมูลพัง"
                       }
                     >
-                      1 pod &middot; ปรับไม่ได้
+                      1 container &middot; ปรับไม่ได้
                     </span>
                   ) : (
                     <div className="flex items-center gap-1.5">
@@ -566,7 +602,7 @@ export default function MyService() {
                       >
                         {REPLICA_CHOICES.map((n) => (
                           <option key={n} value={n}>
-                            {n} {n === 1 ? "pod" : "pods"}
+                            {n} {n === 1 ? "container" : "containers"}
                           </option>
                         ))}
                       </select>
@@ -756,7 +792,7 @@ export default function MyService() {
                       )}
 
                       {selectedServiceDetail.status_message && (
-                        <pre className="mt-1 max-h-32 overflow-auto rounded-lg bg-white/60 p-3 text-xs leading-relaxed text-[#211a14]/70 custom-scrollbar">
+                        <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-white/60 p-3 text-xs leading-relaxed text-[#211a14]/70 custom-scrollbar">
                           {selectedServiceDetail.status_message}
                         </pre>
                       )}
@@ -1105,6 +1141,7 @@ function CreateServiceModal({
         : null;
 
   const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const envEnter = useEnvEnterToNext(envVars.length, addEnvRow);
   const removeEnvRow = (i: number) =>
     setEnvVars((p) => p.filter((_, idx) => idx !== i));
   const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
@@ -1353,8 +1390,8 @@ function CreateServiceModal({
               </span>
               <span className="text-sm text-[#211a14]/50">
                 {storageOn
-                  ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
-                  : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ (Nextcloud, WordPress) จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+                  ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ container ถูกสร้างใหม่ · รันได้ครั้งละ 1 container"
+                  : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์และมีการเก็บข้อมูล (ที่ไม่ได้อยู่ใน database) อาจสูญหายได้หากไฟดับหรือ service ล่ม"}
               </span>
             </span>
             <SwitchKnob on={storageOn} />
@@ -1573,9 +1610,9 @@ function CreateServiceModal({
               </label>
               {storageOn ? (
                 <span className="text-right text-sm text-[#211a14]/45">
-                  <span className="font-bold text-[#211a14]/70">1 pod</span>
+                  <span className="font-bold text-[#211a14]/70">1 container</span>
                   <br />
-                  ดิสก์ถาวรใช้ได้ทีละ pod — สอง pod เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง
+                  ดิสก์ถาวรใช้ได้ทีละ container — สอง container เขียนดิสก์ก้อนเดียวกันแล้วข้อมูลพัง
                 </span>
               ) : (
                 <select
@@ -1595,7 +1632,7 @@ function CreateServiceModal({
                           n * MIN_RAM_MB > ramAvailable)
                       }
                     >
-                      {n} {n === 1 ? "pod" : "pods"}
+                      {n} {n === 1 ? "container" : "containers"}
                     </option>
                   ))}
                 </select>
@@ -1760,11 +1797,15 @@ function CreateServiceModal({
               />
             </div>
 
-            <div className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3">
+            <div
+              ref={envEnter.listRef}
+              className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3"
+            >
               {envVars.map((pair, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input
                     placeholder="key"
+                    data-env-key
                     value={pair.key}
                     onChange={(e) => updateEnvRow(i, "key", e.target.value)}
                     onPaste={(e) => handleEnvPaste(i, e)}
@@ -1781,6 +1822,7 @@ function CreateServiceModal({
                     type={looksSecret(pair.key) ? "password" : "text"}
                     value={pair.value}
                     onChange={(e) => updateEnvRow(i, "value", e.target.value)}
+                    onKeyDown={envEnter.onValueKeyDown(i)}
                     disabled={submitting}
                     className="flex-[2] rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                   />
@@ -1832,7 +1874,7 @@ function CreateServiceModal({
                   </span>
                 ) : (
                   <span className="text-sm text-[#211a14]/45">
-                    พอร์ตนี้จองไว้ให้คุณแล้ว (30 นาที) และจะเป็นพอร์ตของ service
+                    พอร์ตนี้จองไว้ให้คุณแล้ว และจะเป็นพอร์ตของ service
                     นี้หลัง deploy · ใครที่อยู่บนเครือข่ายมหาวิทยาลัยและรู้พอร์ตก็เข้าใช้งานได้
                   </span>
                 )}
@@ -2042,6 +2084,7 @@ export function EditServiceModal({
         : null;
 
   const addEnvRow = () => setEnvVars((p) => [...p, { key: "", value: "" }]);
+  const envEnter = useEnvEnterToNext(envVars.length, addEnvRow);
   const removeEnvRow = (i: number) =>
     setEnvVars((p) => p.filter((_, idx) => idx !== i));
   const updateEnvRow = (i: number, field: "key" | "value", val: string) =>
@@ -2297,8 +2340,8 @@ export function EditServiceModal({
                   {isDatabase
                     ? "ฐานข้อมูลมีดิสก์ถาวรเสมอ — ปิดสวิตช์นี้ไม่ได้"
                     : storageOn
-                      ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ pod ถูกสร้างใหม่ · รันได้ครั้งละ 1 pod"
-                      : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์ จะดูเหมือนเก็บได้ แต่ไฟล์หายเมื่อ pod ถูกสร้างใหม่"}
+                      ? "ไฟล์ที่เขียนลงตำแหน่งด้านล่างไม่หายเมื่อ container ถูกสร้างใหม่ · รันได้ครั้งละ 1 container"
+                      : "ปิดอยู่ — แอปที่ให้ผู้ใช้อัปโหลดไฟล์และมีการเก็บข้อมูล (ที่ไม่ได้อยู่ใน database) อาจสูญหายได้หากไฟดับหรือ service ล่ม"}
                 </span>
               </span>
               {isDatabase && (
@@ -2504,7 +2547,7 @@ export function EditServiceModal({
                 </label>
                 {storageOn ? (
                   <span className="text-right text-sm text-[#211a14]/45">
-                    <span className="font-bold text-[#211a14]/70">1 pod</span>
+                    <span className="font-bold text-[#211a14]/70">1 container</span>
                   </span>
                 ) : (
                   <select
@@ -2523,7 +2566,7 @@ export function EditServiceModal({
                             n * MIN_RAM_MB > ramAvailable)
                         }
                       >
-                        {n} {n === 1 ? "pod" : "pods"}
+                        {n} {n === 1 ? "container" : "containers"}
                       </option>
                     ))}
                   </select>
@@ -2677,11 +2720,15 @@ export function EditServiceModal({
                 />
               </div>
 
-              <div className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3">
+              <div
+                ref={envEnter.listRef}
+                className="flex flex-col gap-2 rounded-xl border border-black/8 bg-white/60 p-3"
+              >
                 {envVars.map((pair, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <input
                       placeholder="key"
+                      data-env-key
                       value={pair.key}
                       onChange={(e) => updateEnvRow(i, "key", e.target.value)}
                       onPaste={(e) => handleEnvPaste(i, e)}
@@ -2696,6 +2743,7 @@ export function EditServiceModal({
                       type={looksSecret(pair.key) ? "password" : "text"}
                       value={pair.value}
                       onChange={(e) => updateEnvRow(i, "value", e.target.value)}
+                      onKeyDown={envEnter.onValueKeyDown(i)}
                       disabled={submitting}
                       className="flex-[2] rounded-lg border border-black/8 bg-white px-3 py-2 text-sm font-mono text-[#211a14] placeholder:text-[#211a14]/25 outline-none disabled:opacity-50"
                     />
