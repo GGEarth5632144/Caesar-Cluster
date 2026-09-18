@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { PATHS } from "@/config/routes";
 
@@ -36,6 +36,76 @@ const ServiceLogs = lazy(() => import("@/pages/user/ServiceLogs"));
 const GeneralDashboard = lazy(() => import("@/pages/user/GeneralDashboard"));
 const WorkspaceOnboarding = lazy(() => import("@/pages/user/WorkspaceOnboarding"));
 
+
+function PageTitleHandler() {
+  const location = useLocation();
+
+  useEffect(() => {
+    try {
+      // Helper function to guarantee every path starts with a "/"
+      const normalize = (path?: string) => {
+        if (!path) return "";
+        return path.startsWith("/") ? path : `/${path}`;
+      };
+
+      const currentPath = normalize(location.pathname);
+
+      // Excluded paths (skip setting title on these)
+      const excludedPaths = [
+        normalize(PATHS.login),
+        normalize(PATHS.register),
+        normalize(PATHS.forgotPassword),
+        "/login",
+        "/register",
+        "/forgot-password",
+      ];
+
+      if (excludedPaths.includes(currentPath)) {
+        document.title = "Caesar Cluster - Cloud for CPE Students";
+        return;
+      }
+      const titleMap: Record<string, string> = {
+        "/": "Dashboard",
+        [normalize(PATHS.settings || (PATHS as Record<string, string>).setting)]: "Settings",
+        [normalize(PATHS.requestResources)]: "Request Resources",
+        [normalize(PATHS.services)]: "My Services",
+        [normalize(PATHS.createService)]: "Create Service",
+        [normalize(PATHS.generalDashboard)]: "General Dashboard",
+        [normalize(PATHS.workspaceOnboarding)]: "Workspace Onboarding",
+        // Admin Routes
+        [normalize(PATHS.adminRequest)]: "Admin Requests",
+        [normalize(PATHS.adminApprovals)]: "Approval Queue",
+        [normalize(PATHS.userManagement)]: "User Management",
+        [normalize(PATHS.namespaceManagement)]: "Namespace Management",
+        [normalize(PATHS.ipcManagement)]: "IPC Management",
+        [normalize(PATHS.auditLog)]: "Audit Logs",
+        [normalize(PATHS.adminImportStudents)]: "Import Students",
+        // Public pages
+        [normalize(PATHS.terms)]: "Terms of Service",
+        [normalize(PATHS.verifyEmail)]: "Verify Email",
+        [normalize(PATHS.resetPassword)]: "Reset Password",
+      };
+
+      let pageTitle = titleMap[currentPath];
+
+      if (!pageTitle) {
+        const logsPrefix = normalize(PATHS.serviceLogs);
+        if (currentPath.startsWith(logsPrefix) || currentPath.includes("service-logs")) {
+          pageTitle = "Service Logs";
+        } else {
+          pageTitle = "Caesar Cluster";
+        }
+      }
+
+      document.title = `${pageTitle} - Caesar Cluster`;
+    } catch (err) {
+      console.error("Failed to update document title:", err);
+    }
+  }, [location]);
+
+  return null;
+}
+
 // redirect /reset-password?token=... → hashed reset-password path (preserves query string)
 // backend email links point to /reset-password but the frontend serves the page at a hashed path
 function ResetPasswordRedirect() {
@@ -69,6 +139,7 @@ function App() {
 
 return (
     <BrowserRouter>
+      <PageTitleHandler />
       <Suspense fallback={<LogoLoader fullScreen label="กำลังโหลด..." />}>
         <Routes>
           {/* ---------------- Public Routes ---------------- */}
