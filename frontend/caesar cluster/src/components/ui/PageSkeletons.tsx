@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 /**
  * ชุด Skeleton สำเร็จรูปสำหรับแต่ละ layout ที่ใช้ซ้ำในหลายหน้า
@@ -84,6 +85,81 @@ export function DashboardStatsSkeleton() {
   );
 }
 
+// ---------- แดชบอร์ดคลัสเตอร์: หัวข้อ + การ์ด KPI + กราฟ + กริดโหนด/รีเลย์ (AdminDashboard, IPCmanagement) ----------
+export function ClusterOverviewSkeleton({
+  cards = 8,
+  chartRows = 2,
+  fullWidthChart = false,
+  gridSections = 1,
+}: {
+  cards?: number;
+  chartRows?: number;
+  fullWidthChart?: boolean;
+  gridSections?: number;
+}) {
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white p-5 shadow-sm md:flex-row">
+        <div className="flex items-center gap-3">
+          <Skeleton className="size-10 rounded-xl" />
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-4 w-52" />
+            <Skeleton className="h-2.5 w-32" />
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-9 w-28 rounded-xl" />
+          <Skeleton className="h-9 w-28 rounded-xl" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {Array.from({ length: cards }).map((_, i) => (
+          <div key={i} className="flex flex-col gap-3 rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between">
+              <Skeleton className="h-2.5 w-16" />
+              <Skeleton className="size-8 rounded-lg" />
+            </div>
+            <Skeleton className="h-6 w-20" />
+          </div>
+        ))}
+      </div>
+
+      {Array.from({ length: chartRows }).map((_, r) => (
+        <div key={r} className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {[0, 1].map((c) => (
+            <div key={c} className="flex h-[360px] flex-col gap-4 rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="w-full flex-1 rounded-xl" />
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {fullWidthChart && (
+        <div className="flex h-[360px] flex-col gap-4 rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="w-full flex-1 rounded-xl" />
+        </div>
+      )}
+
+      {Array.from({ length: gridSections }).map((_, s) => (
+        <div key={s} className="flex flex-col gap-4 rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-5 w-24 rounded-full" />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-28 w-full rounded-2xl" />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---------- กริดการ์ด service (MyService / Service) ----------
 export function ServiceCardsSkeleton({ count = 6 }: { count?: number }) {
   return (
@@ -148,16 +224,24 @@ export function RequestListSkeleton({ count = 3 }: { count?: number }) {
   );
 }
 
-// ---------- กริดการ์ดเทมเพลต/preset (WorkspaceOnboarding, CreateServiceModal) ----------
+// ---------- กริดการ์ดเทมเพลต/preset (WorkspaceOnboarding, DeployDatabaseModal) ----------
 export function TemplateGridSkeleton({
   count = 4,
   compact = false,
+  cols = 2,
 }: {
   count?: number;
   compact?: boolean;
+  cols?: 2 | 3;
 }) {
   return (
-    <div className={compact ? "grid grid-cols-2 gap-2.5" : "grid gap-4 sm:grid-cols-2"}>
+    <div
+      className={
+        compact
+          ? cn("grid gap-2.5", cols === 3 ? "grid-cols-3" : "grid-cols-2")
+          : "grid gap-4 sm:grid-cols-2"
+      }
+    >
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}

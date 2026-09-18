@@ -27,6 +27,7 @@ import {
 import { type NamespaceDetail } from "@/api/namespace";
 import { getApiErrorMessage } from "@/api/authApi";
 import { formatStorage, STORAGE_BOUNDS } from "@/config/database";
+import { TemplateGridSkeleton } from "@/components/ui/PageSkeletons";
 
 // database จาก template (docs 029): ผู้ใช้เลือก engine/version แล้วกรอกแค่ username/password/ชื่อ database
 // image, พอร์ต, จุด mount และ env มาจาก catalog ฝั่ง backend ทั้งหมด — ตั้งค่าผิดจนข้อมูลหายไม่ได้อีก
@@ -247,9 +248,7 @@ export function DeployDatabaseModal({ namespace, onClose, onCreated }: DeployDat
           {/* engine */}
           <Field label="Engine">
             {templates === null ? (
-              <p className="flex items-center gap-2 text-sm text-[#211a14]/40">
-                <Loader2 size={14} className="animate-spin" /> กำลังโหลด...
-              </p>
+              <TemplateGridSkeleton count={3} compact cols={3} />
             ) : (
               <div className="grid gap-3 sm:grid-cols-3">
                 {templates.map((t) => (

@@ -39,6 +39,7 @@ import {
 import { usePageSearch } from "@/hooks/usePageSearch";
 import { nodesScope } from "@/config/searchScopes";
 import { SearchStatus } from "@/components/ui/search-status";
+import { ClusterOverviewSkeleton } from "@/components/ui/PageSkeletons";
 
 // --- Constants ---
 const REFRESH_INTERVALS = [
@@ -399,6 +400,16 @@ export default function IPCmanagement() {
         ? idx % 4 === 0
         : true,
   );
+
+  if (loading && nodes.length === 0) {
+    return (
+      <div className="min-h-screen bg-transparent text-gray-800 font-sans p-4 md:p-6">
+        <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
+          <ClusterOverviewSkeleton chartRows={2} fullWidthChart gridSections={2} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-transparent text-gray-800 font-sans p-4 md:p-6">

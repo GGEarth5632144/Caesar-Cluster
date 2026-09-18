@@ -110,8 +110,8 @@ export default function Sidebar({ navItems, userName, studentId, onLogout }: Sid
 
         {!collapsed && (
           <Link to="/" className="flex items-center gap-3 border-white/15">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF8E8] text-base font-bold text-[#BB6653]">
-              C
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF8E8] p-1.5">
+              <img src="/sut_logo.png" alt="Caesar Cluster" className="h-full w-full object-contain" />
             </div>
             <div className="leading-tight">
               <p className="text-base font-semibold">Caesar Cluster</p>

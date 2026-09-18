@@ -39,6 +39,7 @@ import {
 } from "@/api/mornitorequest";
 import { adminDashboardApi, type AdminDashboardSummary } from "@/api/requests";
 import { getApiErrorMessage } from "@/api/authApi";
+import { ClusterOverviewSkeleton } from "@/components/ui/PageSkeletons";
 
 // ─── Sub-Components ───
 const NodeGridItem = ({ node }: { node: NodeTelemetry }) => {
@@ -243,13 +244,8 @@ export default function AdminDashboard() {
 
   if (loading && nodes.length === 0) {
     return (
-      <div className="max-w-[1400px] mx-auto font-mono flex h-screen items-center justify-center bg-[#FFFDF6]">
-        <div className="flex flex-col items-center gap-3 text-[#BB6653]/60">
-          <RefreshCw className="h-10 w-10 animate-spin" />
-          <p className="text-xs font-bold uppercase tracking-widest">
-            Gathering System Intel...
-          </p>
-        </div>
+      <div className="max-w-[1400px] mx-auto font-sans flex flex-col gap-6 p-6 bg-[#FFFDF6] min-h-screen">
+        <ClusterOverviewSkeleton chartRows={2} fullWidthChart gridSections={2} />
       </div>
     );
   }
