@@ -260,6 +260,14 @@ export default function MyService() {
   // service ที่รอผล scale อยู่ — ล็อก dropdown ไม่ให้กดรัวจนคำสั่งซ้อนกัน
   const [scalingId, setScalingId] = useState<number | null>(null);
 
+  // เฉพาะหัวหน้ากลุ่มเท่านั้นที่สร้างของใหม่ได้ (backend ตอบ 403 NOT_NAMESPACE_OWNER ให้อยู่แล้ว
+  // ตรงนี้แค่ไม่โชว์ปุ่มที่กดไปก็ไม่ผ่าน) — ระหว่างที่ namespace ยังโหลดไม่เสร็จถือว่ายังไม่รู้ จึงซ่อนไว้ก่อน
+  const isOwner = user != null && namespace != null && user.id === namespace.contributor_id;
+
+  // สมาชิกที่ยังไม่มี service ของกลุ่มให้ดูเลย: กริดว่างเปล่าและกดสร้างเองก็ไม่ได้ หน้าจะโล่งทั้งหน้า
+  // จึงดันการ์ด Group Members ขึ้นมาแทน — พอหัวหน้าสร้าง service ตัวแรก หน้าก็กลับไปเป็นผังปกติเอง
+  const membersFirst = !isOwner && !loading && services.length === 0;
+
   // ดึงใหม่ทุกครั้งที่จำนวน service เปลี่ยน — ยอดคงเหลือจะได้ตรงกับของจริงตอนเปิดฟอร์มรอบถัดไป
   const fetchNamespace = () => {
     namespaceApi
@@ -372,20 +380,30 @@ export default function MyService() {
         </div>
         <div className="flex flex-wrap items-center gap-3 self-start">
           {services.length > 0 && <SearchStatus />}
-          <button
-            type="button"
-            onClick={() => setShowCreateDatabase(true)}
-            className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] px-5 py-2.5 text-base font-bold text-[#BB6653] transition-colors hover:bg-[#FBDFDA]"
-          >
-            <Database size={18} /> New Database
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowCreate(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-3 text-base font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
-          >
-            <Plus size={18} strokeWidth={3} /> New Service
-          </button>
+          {isOwner ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowCreateDatabase(true)}
+                className="inline-flex items-center gap-2 rounded-xl border-2 border-[#BB6653] px-5 py-2.5 text-base font-bold text-[#BB6653] transition-colors hover:bg-[#FBDFDA]"
+              >
+                <Database size={18} /> New Database
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCreate(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#BB6653] px-5 py-3 text-base font-bold text-white shadow-md transition-colors hover:bg-[#F08B51]"
+              >
+                <Plus size={18} strokeWidth={3} /> New Service
+              </button>
+            </>
+          ) : (
+            namespace && (
+              <span className="rounded-xl bg-[#FBEFD9] px-4 py-2.5 text-sm text-[#A96A15]">
+                เฉพาะหัวหน้ากลุ่มเท่านั้นที่สร้าง Service ได้
+              </span>
+            )
+          )}
         </div>
       </div>
 
@@ -395,9 +413,13 @@ export default function MyService() {
         </div>
       )}
 
+      {membersFirst && namespace && (
+        <GroupMembers namespace={namespace} isOwner={isOwner} />
+      )}
+
       {loading ? (
         <ServiceCardsSkeleton />
-      ) : (
+      ) : membersFirst ? null : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {visibleServices.map((svc) => {
             const badge = statusBadge(svc.status);
@@ -458,7 +480,8 @@ export default function MyService() {
                   title="ดูข้อมูลฉบับเต็ม"
                 >
                   <Eye size={16} />
-                  See or change and re-deploy
+                  {/* สมาชิกเปิดดูรายละเอียดได้ตามปกติ แค่แก้แล้ว re-deploy ไม่ได้ ชื่อปุ่มจึงต้องไม่สัญญาเกินจริง */}
+                  {isOwner ? "See or change and re-deploy" : "See details"}
                 </button>
                 {(svc.status === "crashloop" ||
                   svc.status === "pending" ||
@@ -581,6 +604,15 @@ export default function MyService() {
                     >
                       1 container &middot; ปรับไม่ได้
                     </span>
+                  ) : !isOwner ? (
+                    // สมาชิกดูจำนวนได้แต่ปรับไม่ได้ — โชว์เป็นตัวเลขแทน dropdown ที่กดแล้วเจอ 403
+                    <span
+                      className="text-[#211a14]/45"
+                      title="เฉพาะหัวหน้ากลุ่มเท่านั้นที่ปรับจำนวน container ได้"
+                    >
+                      {svc.replicas}{" "}
+                      {svc.replicas === 1 ? "container" : "containers"}
+                    </span>
                   ) : (
                     <div className="flex items-center gap-1.5">
                       {isScaling && (
@@ -656,13 +688,15 @@ export default function MyService() {
                     >
                       <Terminal size={15} /> Logs
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setPendingDeleteId(svc.id)}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                    >
-                      <X size={15} /> Delete
-                    </button>
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDeleteId(svc.id)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      >
+                        <X size={15} /> Delete
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -675,16 +709,19 @@ export default function MyService() {
               </p>
             )
           ) : (
-            <button
-              type="button"
-              onClick={() => setShowCreate(true)}
-              className="rounded-2xl border-2 border-dashed border-black/10 p-6 flex flex-col items-center justify-center gap-2 text-[#211a14]/40 transition-colors hover:border-[#BB6653]/40 hover:text-[#BB6653] min-h-[168px]"
-            >
-              <Plus size={28} />
-              <span className="text-base font-semibold">
-                Deploy a new service
-              </span>
-            </button>
+            // การ์ดนี้เป็นทางลัดไปฟอร์มสร้าง จึงโชว์เฉพาะคนที่สร้างได้จริง — สมาชิกคนอื่นกดไปก็เจอ 403
+            isOwner && (
+              <button
+                type="button"
+                onClick={() => setShowCreate(true)}
+                className="rounded-2xl border-2 border-dashed border-black/10 p-6 flex flex-col items-center justify-center gap-2 text-[#211a14]/40 transition-colors hover:border-[#BB6653]/40 hover:text-[#BB6653] min-h-[168px]"
+              >
+                <Plus size={28} />
+                <span className="text-base font-semibold">
+                  Deploy a new service
+                </span>
+              </button>
+            )
           )}
           {selectedServiceDetail && (
             
@@ -898,15 +935,17 @@ export default function MyService() {
                   >
                     Close
                   </button>
-                  <button
-                    onClick={() => {
-                      setEditingService(selectedServiceDetail);
-                      setSelectedServiceId(null);
-                    }}
-                    className="flex-1 py-3 rounded-xl bg-[#FBEFD9] hover:bg-[#f2e0c2] text-[#A96A15] font-bold transition-colors"
-                  >
-                    Update and Re-deploy
-                  </button>
+                  {isOwner && (
+                    <button
+                      onClick={() => {
+                        setEditingService(selectedServiceDetail);
+                        setSelectedServiceId(null);
+                      }}
+                      className="flex-1 py-3 rounded-xl bg-[#FBEFD9] hover:bg-[#f2e0c2] text-[#A96A15] font-bold transition-colors"
+                    >
+                      Update and Re-deploy
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -914,12 +953,10 @@ export default function MyService() {
         </div>
       )}
 
-      {/* ย้ายมาจากหน้า General Dashboard — สมาชิกกลุ่มคือคนที่แชร์โควตาก้อนเดียวกับ service ด้านบน */}
-      {namespace && (
-        <GroupMembers
-          namespace={namespace}
-          isOwner={user?.id === namespace.contributor_id}
-        />
+      {/* ย้ายมาจากหน้า General Dashboard — สมาชิกกลุ่มคือคนที่แชร์โควตาก้อนเดียวกับ service ด้านบน
+          (ถ้าถูกดันขึ้นไปอยู่บนสุดแล้วตาม membersFirst ก็ไม่ต้องซ้ำอีกใบตรงนี้) */}
+      {!membersFirst && namespace && (
+        <GroupMembers namespace={namespace} isOwner={isOwner} />
       )}
 
       {showCreateDatabase && (
