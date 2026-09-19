@@ -92,6 +92,9 @@ func (h *ServiceController) Create(c *gin.Context) {
 	})
 	if err != nil {
 		switch {
+		// สมาชิกที่ไม่ใช่หัวหน้ากลุ่มกดสร้าง — หน้าเว็บซ่อนปุ่มให้อยู่แล้ว แต่เส้นนี้เรียกตรงได้
+		case errors.Is(err, services.ErrNotNamespaceOwner):
+			utils.Error(c, http.StatusForbidden, "NOT_NAMESPACE_OWNER", err.Error())
 		case errors.Is(err, services.ErrQuotaExceeded):
 			utils.Error(c, http.StatusConflict, "QUOTA_EXCEEDED", err.Error())
 		case errors.Is(err, services.ErrServiceTooLarge):
@@ -139,9 +142,11 @@ func (h *ServiceController) Scale(c *gin.Context) {
 		return
 	}
 
-	svc, err := h.svc.Scale(c.Request.Context(), id, nsID, req.Replicas)
+	svc, err := h.svc.Scale(c.Request.Context(), id, c.GetInt("userID"), nsID, req.Replicas)
 	if err != nil {
 		switch {
+		case errors.Is(err, services.ErrNotNamespaceOwner):
+			utils.Error(c, http.StatusForbidden, "NOT_NAMESPACE_OWNER", err.Error())
 		case errors.Is(err, services.ErrServiceNotFound):
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
 		// 409 ไม่ใช่ 400: รูปแบบคำขอถูกต้อง แค่มาผิดจังหวะ ลองใหม่ตอน deploy เสร็จได้
@@ -181,7 +186,11 @@ func (h *ServiceController) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.Delete(c.Request.Context(), id, nsID); err != nil {
+	if err := h.svc.Delete(c.Request.Context(), id, c.GetInt("userID"), nsID); err != nil {
+		if errors.Is(err, services.ErrNotNamespaceOwner) {
+			utils.Error(c, http.StatusForbidden, "NOT_NAMESPACE_OWNER", err.Error())
+			return
+		}
 		if errors.Is(err, services.ErrServiceNotFound) {
 			utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
 			return
@@ -319,6 +328,8 @@ func (h *ServiceController) Update(c *gin.Context) {
 
     if err != nil {
         switch {
+        case errors.Is(err, services.ErrNotNamespaceOwner):
+            utils.Error(c, http.StatusForbidden, "NOT_NAMESPACE_OWNER", err.Error())
         case errors.Is(err, services.ErrServiceNotFound):
             utils.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error())
         case errors.Is(err, services.ErrQuotaExceeded):
@@ -387,6 +398,8 @@ func (h *ServiceController) CreateDatabase(c *gin.Context) {
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, services.ErrNotNamespaceOwner):
+			utils.Error(c, http.StatusForbidden, "NOT_NAMESPACE_OWNER", err.Error())
 		case errors.Is(err, services.ErrDatabaseEngineNotFound), errors.Is(err, services.ErrDatabaseVersionNotFound):
 			utils.Error(c, http.StatusBadRequest, "DATABASE_VERSION_NOT_FOUND", err.Error())
 		case errors.Is(err, services.ErrDatabaseInvalidInput):

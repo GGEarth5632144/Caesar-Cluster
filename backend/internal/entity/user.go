@@ -13,6 +13,9 @@ type User struct {
 	RoleID      int    `gorm:"column:role_id;type:integer;not null;index:idx_users_role" json:"role_id"`
 	RealName    string `gorm:"column:real_name;type:varchar(100);not null" json:"real_name"`
 	NamespaceID *int   `gorm:"column:namespace_id;type:integer;index:idx_users_namespace" json:"namespace_id"`
+	// เวลาที่เข้าร่วม space ปัจจุบัน — ใช้เรียงลำดับสมาชิกตามการเข้ามาก่อนหลัง (ดู NamespaceManager.Detail)
+	// NULL = ยังไม่มี space หรือเป็นแถวที่มีอยู่ก่อนเพิ่มคอลัมน์นี้ ซึ่งจะถูกเรียงด้วย created_at แทน
+	NamespaceJoinedAt *time.Time `gorm:"column:namespace_joined_at;type:timestamp" json:"namespace_joined_at"`
 	Password    string `gorm:"column:password;type:varchar(255);not null" json:"-"`
 	Gmail       string `gorm:"column:gmail;type:varchar(100);unique;not null" json:"gmail"`
 	// เวลาที่กดลิงก์ยืนยันในอีเมล — NULL = ยังไม่ยืนยัน ล็อกอินไม่ได้ (ดู AuthController.Login)

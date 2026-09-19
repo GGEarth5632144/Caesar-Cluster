@@ -21,6 +21,11 @@ var (
 	ErrServiceNotReady         = errors.New("service ยังไม่พร้อม — รอให้ deploy เสร็จก่อนค่อยปรับจำนวน replica")
 	ErrLogsUnavailable         = errors.New("ยังอ่าน log ไม่ได้ — container ของ service นี้ยังไม่เริ่มทำงาน (ถ้าเพิ่ง deploy รอสักครู่แล้วกดลองใหม่)")
 
+	// การสร้างของใหม่เป็นสิทธิ์ของหัวหน้ากลุ่มคนเดียว เพราะโควตาเป็นของกลุ่มร่วมกัน —
+	// สมาชิกคนหนึ่ง deploy จนเต็มโควตาเท่ากับปิดทางคนที่เหลือทั้งกลุ่มโดยที่หัวหน้าไม่รู้เรื่อง
+	// ส่วนการดู/แก้/ปรับขนาด/ลบของที่มีอยู่แล้ว สมาชิกทุกคนยังทำได้ตามเดิม
+	ErrNotNamespaceOwner = errors.New("เฉพาะหัวหน้ากลุ่มเท่านั้นที่สร้าง service ได้ กรุณาแจ้งหัวหน้ากลุ่มให้เป็นผู้สร้างแทน")
+
 	// ── error ของดิสก์ถาวร (ดู entity.Service.HasStorage) ────────────────────────────
 
 	// ระบบไม่เดาจุด mount ให้ไม่ว่าจะเป็น image อะไร เพราะเดาผิดแล้วได้ PVC ที่ไม่มีใครเขียนลง
@@ -95,6 +100,24 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 	return list, err
 }
 
+// requireNamespaceOwner ปล่อยผ่านเฉพาะหัวหน้ากลุ่ม (contributor) ของ namespace นั้น
+//
+// ตรวจที่ชั้น service ไม่ใช่ที่ controller เพราะเป็นกติกาของโดเมน ไม่ใช่เรื่องของ HTTP —
+// ทั้ง Create (service ทั่วไป) และ CreateDatabase ต้องใช้ด่านเดียวกัน จะได้ไม่มีทางเข้าที่หลุด
+func (m *ServiceManager) requireNamespaceOwner(ctx context.Context, userID, namespaceID int) error {
+	var ns entity.Namespace
+	if err := m.db.WithContext(ctx).First(&ns, namespaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNamespaceNotFound
+		}
+		return err
+	}
+	if ns.ContributorID != userID {
+		return ErrNotNamespaceOwner
+	}
+	return nil
+}
+
 // Create deploy service ใหม่เข้า namespace ของผู้ใช้
 //
 // data flow:
@@ -110,6 +133,10 @@ func (m *ServiceManager) ListByNamespace(ctx context.Context, namespaceID int) (
 //
 // เรียก provisioner นอก transaction เพราะการ deploy ช้า/พลาดได้ ไม่ควรถือ lock ของ namespace ค้างไว้ตอนรอ
 func (m *ServiceManager) Create(ctx context.Context, userID, namespaceID int, p CreateServiceParams) (*entity.Service, error) {
+	if err := m.requireNamespaceOwner(ctx, userID, namespaceID); err != nil {
+		return nil, err
+	}
+
 	// เลือกจาก choice ที่ admin สร้างไว้ → ใช้สเปกของ template เป็นหลัก
 	cpuMilli, ramMB, err := m.resolveSpec(ctx, p.RequestTemplateID, p.CPUMilli, p.RAMMB)
 	if err != nil {
@@ -274,7 +301,11 @@ func (m *ServiceManager) releaseReservation(ctx context.Context, serviceID int, 
 //
 // ลำดับ "DB ก่อน แล้วค่อยคลัสเตอร์" ตรงข้ามกับ Delete โดยตั้งใจ: ที่นี่ DB เป็นตัวถือโควตา
 // ถ้าไปเพิ่ม Pod บนคลัสเตอร์ก่อนโดยยังไม่จอง มีสิทธิ์แซงโควตาที่คนอื่นกำลังจองพร้อมกันอยู่
-func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, replicas int) (*entity.Service, error) {
+func (m *ServiceManager) Scale(ctx context.Context, serviceID, userID, namespaceID, replicas int) (*entity.Service, error) {
+	if err := m.requireNamespaceOwner(ctx, userID, namespaceID); err != nil {
+		return nil, err
+	}
+
 	var svc entity.Service
 	err := m.db.WithContext(ctx).
 		Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error
@@ -351,7 +382,18 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 	return &svc, nil
 }
 
-// Delete ลบ service ออกจาก namespace: ถอนของจริงบน cluster ก่อน แล้วค่อยลบ row (คืนโควตา)
+// Delete = ทางเข้าของผู้ใช้ทั่วไป — เฉพาะหัวหน้ากลุ่มเท่านั้นที่ลบ service ของกลุ่มได้
+//
+// แยกจาก deleteService เพราะฝั่งแอดมิน (DeleteByID) และ worker ลบตามเวลา (deleteDue)
+// ต้องลบได้โดยไม่ติดด่านนี้ — คนสั่งไม่ใช่สมาชิกของกลุ่มนั้นตั้งแต่ต้น
+func (m *ServiceManager) Delete(ctx context.Context, serviceID, userID, namespaceID int) error {
+	if err := m.requireNamespaceOwner(ctx, userID, namespaceID); err != nil {
+		return err
+	}
+	return m.deleteService(ctx, serviceID, namespaceID)
+}
+
+// deleteService ลบ service ออกจาก namespace: ถอนของจริงบน cluster ก่อน แล้วค่อยลบ row (คืนโควตา)
 //
 // data flow:
 //   - รับ serviceID + namespaceID ของผู้ใช้จาก ServiceController
@@ -359,7 +401,7 @@ func (m *ServiceManager) Scale(ctx context.Context, serviceID, namespaceID, repl
 //   - prov.DeleteService ถอน workload จริงก่อน → สำเร็จค่อย DELETE row
 //
 // เรียงลำดับนี้กันไม่ให้เหลือ workload ค้างบน cluster โดยไม่มี record ใน DB (กลายเป็นของผีที่กินทรัพยากรฟรี)
-func (m *ServiceManager) Delete(ctx context.Context, serviceID, namespaceID int) error {
+func (m *ServiceManager) deleteService(ctx context.Context, serviceID, namespaceID int) error {
 	var svc entity.Service
 	err := m.db.WithContext(ctx).
 		Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error
@@ -418,7 +460,7 @@ func (m *ServiceManager) DeleteByID(ctx context.Context, serviceID int) error {
 		}
 		return err
 	}
-	return m.Delete(ctx, svc.ID, svc.NamespaceID)
+	return m.deleteService(ctx, svc.ID, svc.NamespaceID)
 }
 
 // ScheduleDelete ตั้งเวลาลบ service ใน ScheduledDeleteDelay (ตั้งซ้ำ = นับใหม่)
@@ -468,7 +510,7 @@ func (m *ServiceManager) deleteDue(ctx context.Context) {
 		return
 	}
 	for _, svc := range due {
-		if err := m.Delete(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, ErrServiceNotFound) {
+		if err := m.deleteService(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, ErrServiceNotFound) {
 			log.Printf("scheduled delete: ลบ service '%s' (id=%d) ไม่สำเร็จ: %v", svc.Name, svc.ID, err)
 			continue
 		}
@@ -567,6 +609,10 @@ type UpdateServiceParams struct {
 // เดิมทำ DeleteService แล้ว DeployService ทันที ซึ่งลบ PVC ทิ้ง = กดแก้ไข service ที่มีดิสก์แล้วข้อมูลหาย
 // และ PVC ใหม่ชื่อเดิมชนโฟลเดอร์ NFS ที่ provisioner ยังลบไม่เสร็จ → pod ค้าง "stale NFS file handle" (docs 030)
 func (m *ServiceManager) Update(ctx context.Context, serviceID, userID, namespaceID int, p UpdateServiceParams) (*entity.Service, error) {
+	if err := m.requireNamespaceOwner(ctx, userID, namespaceID); err != nil {
+		return nil, err
+	}
+
 	var svc entity.Service
 	if err := m.db.WithContext(ctx).Where("id = ? AND namespace_id = ?", serviceID, namespaceID).First(&svc).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
