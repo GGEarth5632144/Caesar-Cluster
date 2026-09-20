@@ -108,7 +108,7 @@ export default function Login() {
               <Input
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
-                className={`${inputClass} pr-11`}
+                className={`${inputClass} pr-11 [&::-ms-reveal]:hidden [&::-ms-clear]:hidden`}
                 {...register("password")}
               />
               <button
