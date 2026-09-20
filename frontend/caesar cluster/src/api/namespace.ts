@@ -58,6 +58,11 @@ export const namespaceApi = {
     const response = await axiosClient.get<ApiResponse<NamespaceDetail>>('/namespaces/me');
     return response.data.data;
   },
+
+  // สมาชิกออกจากกลุ่ม
+  leave: async () => {
+    await axiosClient.delete('/namespaces');
+  },
 };
 
 /**

@@ -1,4 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuthStore } from "@/store/authStore";
 import { Users, UserPlus, X, Loader2, Crown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -7,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { inviteApi, type InviteDetail, type InviteStatus } from "@/api/invite";
 import { getApiErrorMessage } from "@/api/authApi";
-import type { NamespaceDetail } from "@/api/namespace";
+import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
 
 function statusBadgeClass(status: InviteStatus) {
   switch (status) {
@@ -92,6 +94,30 @@ export default function GroupMembers({
     }
   };
 
+  const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const refreshUser = useAuthStore((state) => state.refreshUser);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
+
+  const handleLeave = async () => {
+    if (leaving) return;
+    setLeaving(true);
+    setLeaveError(null);
+    try {
+      await namespaceApi.leave();
+      // ล้าง namespace_id ใน store ก่อน แล้วกลับหน้าแรกสุด (/) — UserDashboard จะโชว์หน้า Welcome
+      // เพราะ hasNamespace เป็น false (ถ้าไม่ล้าง จะเห็น dashboard เก่าพร้อม "ไม่พบข้อมูล namespace")
+      if (user) refreshUser({ ...user, namespace_id: null });
+      navigate("/", { replace: true });
+    } catch (err) {
+      setLeaveError(getApiErrorMessage(err, "ออกจากกลุ่มไม่สำเร็จ"));
+      setConfirmLeave(false);
+      setLeaving(false);
+    }
+  };
+
   // accepted แล้วก็คือสมาชิกที่โชว์อยู่ใน namespace.members อยู่แล้ว ไม่ต้องซ้ำในลิสต์ประวัติ
   const unresolvedInvites = sent.filter((invite) => invite.status !== "accepted");
 
@@ -126,6 +152,51 @@ export default function GroupMembers({
           </div>
         ))}
       </div>
+
+      {!isOwner && (
+        <div className="mt-4 border-t border-black/5 pt-4">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmLeave(true)}
+            className="border-red-300 text-red-600 hover:bg-red-50"
+          >
+            ออกจากกลุ่ม
+          </Button>
+          {leaveError && <p className="mt-2 text-sm text-red-600">{leaveError}</p>}
+        </div>
+      )}
+
+      {confirmLeave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-mono">
+          <div className="w-full max-w-sm rounded-3xl bg-[#FFFDF6] p-6 shadow-xl">
+            <p className="text-lg font-bold text-[#211a14]">ออกจากกลุ่ม</p>
+            <p className="mt-2 text-base text-[#211a14]/70">
+              คุณต้องการออกจากกลุ่มนี้จริงๆ ใช่หรือไม่?
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmLeave(false)}
+                disabled={leaving}
+                className="flex-1 rounded-xl bg-gray-100 py-2.5 font-bold text-[#211a14] transition-colors hover:bg-gray-200"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleLeave}
+                disabled={leaving}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 py-2.5 font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+              >
+                {leaving && <Loader2 size={16} className="animate-spin" />}
+                ยืนยัน
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isOwner && (
         <>

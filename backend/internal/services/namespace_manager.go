@@ -206,6 +206,11 @@ func (m *NamespaceManager) Join(ctx context.Context, userID, namespaceID int) (*
 	return &ns, nil
 }
 
+// memberOrder
+const memberOrder = "(users.id = (SELECT n.contributor_id FROM namespaces n WHERE n.id = users.namespace_id)) DESC, " +
+	"COALESCE((SELECT MIN(i.id) FROM namespace_invites i WHERE i.namespace_id = users.namespace_id " +
+	"AND i.invited_student_id = users.student_id AND i.status = 'accepted'), 0), users.id"
+
 // Detail คืน namespace + ยอดใช้งาน + จำนวนสมาชิก (ใช้ทั้งหน้า "space ของฉัน" และหน้า admin)
 // data flow: รับ namespaceID → อ่าน namespace → ถาม QuotaService.Usage → COUNT สมาชิก → รวมเป็น NamespaceDetail
 func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*NamespaceDetail, error) {
@@ -224,7 +229,7 @@ func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*Namesp
 
 	var users []entity.User
 	if err := m.db.WithContext(ctx).
-		Where("namespace_id = ?", namespaceID).Order("id").Find(&users).Error; err != nil {
+		Where("namespace_id = ?", namespaceID).Order(memberOrder).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	members := make([]MemberInfo, 0, len(users))
@@ -276,7 +281,7 @@ func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, erro
 	var users []entity.User
 	if err := m.db.WithContext(ctx).
 		Where("namespace_id IN ?", ids).
-		Order("namespace_id, id").Find(&users).Error; err != nil {
+		Order("users.namespace_id, " + memberOrder).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	membersByNS := make(map[int][]MemberInfo, len(all))
