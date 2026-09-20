@@ -354,7 +354,7 @@ func TestScaleWithStorageIsRejected(t *testing.T) {
 		t.Fatalf("สร้าง nc-scale ไม่สำเร็จ: %v", err)
 	}
 	for _, svc := range []*entity.Service{pg, nc} {
-		if _, err := mgr.Scale(ctx, svc.ID, 1, ns.ID, 3); !errors.Is(err, ErrStorageReplicas) {
+		if _, err := mgr.Scale(ctx, svc.ID, ns.ID, 3); !errors.Is(err, ErrStorageReplicas) {
 			t.Errorf("scale %s ต้องถูกปฏิเสธด้วย ErrStorageReplicas ได้ %v", svc.Name, err)
 		}
 	}
@@ -392,7 +392,7 @@ func TestDeleteWithStorageReleasesStorage(t *testing.T) {
 	}
 
 	for _, svc := range created {
-		if err := mgr.Delete(ctx, svc.ID, 1, ns.ID); err != nil {
+		if err := mgr.Delete(ctx, svc.ID, ns.ID); err != nil {
 			t.Fatalf("ลบ %s ไม่สำเร็จ: %v", svc.Name, err)
 		}
 	}

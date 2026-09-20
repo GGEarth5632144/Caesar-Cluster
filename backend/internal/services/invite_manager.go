@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"errors"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -192,7 +191,7 @@ func (m *InviteManager) Accept(ctx context.Context, userID, inviteID int) (*enti
 	// ให้ฐานข้อมูลตัดสินแทน: ใครถึงก่อนได้ไป คนมาทีหลังได้ RowsAffected = 0 แล้ว rollback
 	err = m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		joined := tx.Model(&entity.User{}).Where("id = ? AND namespace_id IS NULL", userID).
-			Updates(map[string]any{"namespace_id": ns.ID, "namespace_joined_at": time.Now().UTC()})
+			Update("namespace_id", ns.ID)
 		if joined.Error != nil {
 			return joined.Error
 		}

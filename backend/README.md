@@ -101,21 +101,6 @@ go run ./cmd/seed
 `users.namespace_id` ชี้ไป namespace เดียว จะเป็นแบบใช้คนเดียว (`solo`) หรือรวมกลุ่ม (`group`) ก็ได้
 สมาชิกในกลุ่ม **แชร์โควตาก้อนเดียวกัน** และเห็น service ของกลุ่มเหมือนกันหมด
 
-**การเปลี่ยนแปลงทุกอย่างที่กระทบโควตาของกลุ่ม เป็นสิทธิ์ของหัวหน้ากลุ่ม (contributor) คนเดียว** —
-สร้าง (`POST /api/services`, `POST /api/databases`), แก้ไข (`PATCH /api/services/:id`),
-ปรับจำนวน container (`PATCH /api/services/:id/scale`) และลบ (`DELETE /api/services/:id`)
-เพราะโควตาเป็นของกลุ่มร่วมกัน สมาชิกคนหนึ่ง deploy จนเต็มหรือลบของคนอื่นทิ้ง กระทบทั้งกลุ่มโดยเจ้าของไม่รู้เรื่อง
-
-สมาชิกคนอื่นยังทำได้ทุกอย่างที่เป็นการ **อ่าน**: เห็นรายการ service ของกลุ่ม ดู log (`GET /api/services/:id/logs`)
-และดูข้อมูลเชื่อมต่อฐานข้อมูล (`GET /api/services/:id/connection`)
-
-ด่านอยู่ที่ `ServiceManager.requireNamespaceOwner` → ตอบ `403 NOT_NAMESPACE_OWNER`
-ฝั่งแอดมินและ worker ลบตามเวลาใช้ `DeleteByID`/`deleteService` ซึ่งไม่ผ่านด่านนี้ (คนสั่งไม่ใช่สมาชิกของกลุ่มอยู่แล้ว)
-
-ลำดับสมาชิกที่ API คืนกลับไปคือ **หัวหน้ากลุ่มบนสุดเสมอ ตามด้วยคนที่เหลือเรียงตามเวลาที่เข้ากลุ่ม**
-(`users.namespace_joined_at` — แถวเก่าที่ยังเป็น NULL ใช้ `created_at` แทน) เหมือนกันทั้ง
-`/api/namespaces/me` และ `/api/admin/namespaces`
-
 **3. CPU เก็บเป็น millicore** (1 core = 1000m) เพื่อให้เลือกเป็น % ได้ เช่น 300% = `3000m`
 
 **4. สมัครได้เฉพาะคนที่มีรายชื่ออยู่ในฐานข้อมูล (ทุกสาขา)**
@@ -218,13 +203,9 @@ kubectl apply -f rbac.yaml   # apply เข้า cluster เอง (เคร�
 
 ต่อ 1 namespace ได้ `Role` (สิทธิ์ตรงกับที่ backend อนุญาตผ่าน API เป๊ะ: CRUD deployments/services,
 อ่าน pods/pods-log อย่างเดียว — **ไม่มี** `pods/exec` เพราะ ERD กำกับไว้ว่า monitoring ได้ ใช้ terminal ไม่ได้)
-+ `RoleBinding` ผูกกับสมาชิก**ทุกคน**ในกลุ่มเข้า Role เดียวกัน แต่ละ subject เป็น `caesar-user-<student_id>`
++ `RoleBinding` ผูกกับสมาชิก**ทุกคน**ในกลุ่ม (ไม่ใช่แค่เจ้าของ — ตรงกับที่ backend ให้สมาชิกทุกคนสร้าง/ลบ
+service ของกลุ่มร่วมกันเท่ากันอยู่แล้ว) เข้า Role เดียวกัน แต่ละ subject เป็น `caesar-user-<student_id>`
 พร้อม annotation บอกว่าใครเป็นเจ้าของ + โควตาไว้ให้ดูเทียบง่ายๆ
-
-> หมายเหตุ: ตั้งแต่จำกัดให้ **เฉพาะหัวหน้ากลุ่มสร้าง/แก้/ลบ service ได้** สิทธิ์ใน manifest นี้จะกว้างกว่า
-> สิทธิ์ที่ backend อนุญาตให้สมาชิกทั่วไปมาก (Role เดียวกันมีทั้ง `create`/`update`/`patch`/`delete`)
-> ยังไม่กระทบอะไรเพราะ manifest ชุดนี้ยังไม่ได้ถูก apply ใช้งานจริง (ดูย่อหน้าถัดไป)
-> แต่ถ้าวันหนึ่งจะใช้ ต้องแยกเป็นสอง Role: หัวหน้าได้ CRUD ส่วนสมาชิกได้ `get`/`list` + `pods/log` เท่านั้น
 
 > Caesar Cluster ไม่มี auth เข้า Kubernetes โดยตรง (auth ตอนนี้เป็น JWT ระดับ backend API เท่านั้น)
 > `caesar-user-<student_id>` เลยเป็นแค่ชื่อ subject ที่ตั้งไว้ก่อนเฉยๆ ยังไม่มีระบบไหน map identity จริง
@@ -264,7 +245,7 @@ kubectl apply -f rbac.yaml   # apply เข้า cluster เอง (เคร�
 | POST | `/api/namespaces` | สร้าง space (`type`: `solo` \| `group`) |
 | POST | `/api/namespaces/join` | เข้าร่วม space แบบ `group` |
 | GET | `/api/namespaces/me` | space ของฉัน + ยอดใช้งาน + จำนวนสมาชิก |
-| DELETE | `/api/namespaces` | ออกจาก space ของตัวเอง (สมาชิกธรรมดา = ออกได้ทันที **service ที่เคยสร้างไว้ยังอยู่กับกลุ่ม** ให้หัวหน้าดูแลต่อ, เจ้าของคนสุดท้าย = ลบทั้งก้อน) |
+| DELETE | `/api/namespaces` | ออกจาก space ของตัวเอง (สมาชิกธรรมดา = แค่ออก **ต้องลบ service ของตัวเองให้หมดก่อน**, เจ้าของคนสุดท้าย = ลบทั้งก้อน) |
 | POST | `/api/namespaces/invites` | เชิญ `student_id` เข้ากลุ่ม — **เฉพาะเจ้าของ (contributor)** เท่านั้น |
 | GET | `/api/namespaces/invites/mine` | คำเชิญที่ pending ส่งถึงฉัน (เห็นได้ไม่ว่าจะมี space แล้วหรือยัง) |
 | GET | `/api/namespaces/invites/sent` | คำเชิญทั้งหมดที่ฉันส่งจาก space ของตัวเอง (ทุกสถานะ) — เจ้าของเท่านั้น |
@@ -272,10 +253,8 @@ kubectl apply -f rbac.yaml   # apply เข้า cluster เอง (เคร�
 | PATCH | `/api/namespaces/invites/:id/decline` | ปฏิเสธ |
 | DELETE | `/api/namespaces/invites/:id` | เจ้าของยกเลิกคำเชิญที่ยังไม่มีคนตอบ (เผื่อเชิญผิดคน) |
 | GET | `/api/services` | service ทั้งหมดใน space |
-| POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) — **เฉพาะหัวหน้ากลุ่ม** |
-| DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** — **เฉพาะหัวหน้ากลุ่ม** |
-| PATCH | `/api/services/:id` | แก้ไขแล้ว re-deploy ในที่ (ดิสก์/NodePort คงเดิม) — **เฉพาะหัวหน้ากลุ่ม** |
-| PATCH | `/api/services/:id/scale` | ปรับจำนวน container — **เฉพาะหัวหน้ากลุ่ม** |
+| POST | `/api/services` | deploy (เลือก `request_template_id` หรือกรอก `cpu_milli`/`ram_mb` เอง) |
+| DELETE | `/api/services/:id` | ลบ → **คืนโควตาทันที** |
 | GET | `/api/services/:id/logs` | สตรีม log สด — `tail`, `since`, `follow=true` (ตอบเป็น `text/plain` ไม่ใช่ JSON) |
 
 ### Admin เท่านั้น
@@ -308,8 +287,8 @@ admin import รายชื่อ → user register → login
 | `SERVICE_LIMIT` | จำนวน service ใน space เต็มแล้ว |
 | `ALREADY_IN_NAMESPACE` | มี space อยู่แล้ว (1 คน = 1 space) |
 | `NAMESPACE_HAS_MEMBERS` | เจ้าของพยายามออก/ลบ namespace ทั้งที่ยังมีสมาชิกคนอื่นอยู่ |
+| `HAS_OWN_SERVICES` | สมาชิกพยายามออกจาก space ทั้งที่ยังมี service ที่ตัวเองสร้างค้างอยู่ (ออกไปแล้วจะลบเองไม่ได้อีก) |
 | `NOT_CONTRIBUTOR` | เฉพาะเจ้าของ space เท่านั้นที่เชิญ/ดูคำเชิญที่ส่งไปได้ |
-| `NOT_NAMESPACE_OWNER` | เฉพาะหัวหน้ากลุ่มเท่านั้นที่สร้าง/แก้/ปรับขนาด/ลบ service ของกลุ่มได้ (สมาชิกดูและอ่าน log ได้อย่างเดียว) |
 | `INVITE_SELF` | เชิญ student_id ของตัวเอง |
 | `INVITE_ALREADY_PENDING` | เชิญคนเดิมซ้ำทั้งที่มีคำเชิญ pending อยู่แล้วใน space นี้ |
 | `INVITE_NOT_PENDING` | คำเชิญถูก accept/decline/cancel ไปแล้ว ตอบซ้ำไม่ได้ |

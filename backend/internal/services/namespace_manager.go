@@ -5,8 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
-	"time"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -22,6 +21,7 @@ var (
 	ErrQuotaOutOfRange     = errors.New("โควตาที่ตั้งเกินเพดานที่อนุญาต")
 	ErrQuotaBelowUsage     = errors.New("โควตาใหม่ต่ำกว่ายอดที่ service ในเนมสเปซนี้ใช้อยู่")
 	ErrNamespaceHasMembers = errors.New("namespace นี้ยังมีสมาชิกคนอื่นอยู่ ต้องให้สมาชิกออกให้หมดก่อน หรือให้แอดมินลบแทน")
+	ErrHasOwnServices      = errors.New("คุณยังมี service ที่ตัวเองสร้างค้างอยู่ใน space นี้ ต้องลบให้หมดก่อนถึงจะออกได้")
 
 	// ErrNamespaceTerminating = namespace ชื่อนี้เพิ่งถูกสั่งลบและยังตายไม่สนิท
 	//
@@ -132,7 +132,7 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, 
 		// ให้ฐานข้อมูลเป็นคนตัดสินผู้ชนะแทน: คนที่มาทีหลังจะได้ RowsAffected = 0 แล้ว transaction
 		// ทั้งก้อน (รวม INSERT namespace) ถูก rollback ไปเอง ไม่มีอะไรค้าง
 		res := tx.Model(&entity.User{}).Where("id = ? AND namespace_id IS NULL", userID).
-			Updates(map[string]any{"namespace_id": ns.ID, "namespace_joined_at": time.Now().UTC()})
+			Update("namespace_id", ns.ID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -206,29 +206,6 @@ func (m *NamespaceManager) Join(ctx context.Context, userID, namespaceID int) (*
 	return &ns, nil
 }
 
-// memberOrder = ลำดับสมาชิกภายใน space เดียว — เรียงตามเวลาที่เข้ากลุ่มจริง (เก่าไปใหม่)
-//
-// COALESCE กับ created_at เพราะแถวที่มีอยู่ก่อนเพิ่มคอลัมน์ namespace_joined_at จะเป็น NULL
-// ซึ่งถ้าปล่อยไว้ Postgres จะเรียงไว้ท้ายสุดทั้งก้อน — ใช้เวลาสมัครบัญชีแทนไปก่อนใกล้เคียงกว่า
-// ปิดท้ายด้วย id กันกรณีเวลาเท่ากันเป๊ะ (เช่นแถวที่ seed ใส่มาพร้อมกัน) ให้ลำดับคงที่ทุกครั้งที่เรียก
-const memberOrder = "COALESCE(namespace_joined_at, created_at), id"
-
-// ownerFirst ดันหัวหน้ากลุ่มขึ้นแถวแรก โดยคงลำดับของสมาชิกที่เหลือไว้ตามเดิม
-//
-// ทำในฝั่ง Go ไม่ใช่ ORDER BY เพราะ ListAll ดึงสมาชิกของทุก space ในคำสั่งเดียว ซึ่งแต่ละ space
-// มีหัวหน้าคนละคน จะเขียนเป็น CASE เดียวครอบทั้ง query ไม่ได้ — และการทำที่เดียวทั้งสองเส้น
-// การันตีว่าหน้า "กลุ่มของฉัน" กับหน้า Namespace Management ของแอดมินเรียงเหมือนกันเสมอ
-func ownerFirst(members []MemberInfo) []MemberInfo {
-	i := slices.IndexFunc(members, func(m MemberInfo) bool { return m.IsContributor })
-	if i <= 0 {
-		return members // ไม่พบหัวหน้าในลิสต์ (ถูกลบบัญชีไปแล้ว) หรืออยู่บนสุดอยู่แล้ว
-	}
-	owner := members[i]
-	copy(members[1:i+1], members[:i])
-	members[0] = owner
-	return members
-}
-
 // Detail คืน namespace + ยอดใช้งาน + จำนวนสมาชิก (ใช้ทั้งหน้า "space ของฉัน" และหน้า admin)
 // data flow: รับ namespaceID → อ่าน namespace → ถาม QuotaService.Usage → COUNT สมาชิก → รวมเป็น NamespaceDetail
 func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*NamespaceDetail, error) {
@@ -247,7 +224,7 @@ func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*Namesp
 
 	var users []entity.User
 	if err := m.db.WithContext(ctx).
-		Where("namespace_id = ?", namespaceID).Order(memberOrder).Find(&users).Error; err != nil {
+		Where("namespace_id = ?", namespaceID).Order("id").Find(&users).Error; err != nil {
 		return nil, err
 	}
 	members := make([]MemberInfo, 0, len(users))
@@ -259,7 +236,6 @@ func (m *NamespaceManager) Detail(ctx context.Context, namespaceID int) (*Namesp
 			IsContributor: u.ID == ns.ContributorID,
 		})
 	}
-	members = ownerFirst(members)
 
 	return &NamespaceDetail{Namespace: ns, Usage: usage, MemberCount: len(members), Members: members}, nil
 }
@@ -295,12 +271,12 @@ func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, erro
 		return nil, err
 	}
 
-	// เรียงด้วยเกณฑ์เดียวกับ Detail() (memberOrder) โดยแบ่งกลุ่มด้วย namespace_id ก่อน
-	// หน้าเว็บจะได้ไม่สลับแถวไปมาระหว่างสองเส้น — ส่วนการดันหัวหน้าขึ้นบนสุดทำทีหลังด้วย ownerFirst
+	// เรียงตาม (namespace_id, id) เพื่อให้ลำดับสมาชิกในแต่ละ space เท่ากับที่ Detail() คืน
+	// (Detail เรียงตาม id ภายใน space เดียว) หน้าเว็บจะได้ไม่สลับแถวไปมาระหว่างสองเส้น
 	var users []entity.User
 	if err := m.db.WithContext(ctx).
 		Where("namespace_id IN ?", ids).
-		Order("namespace_id, " + memberOrder).Find(&users).Error; err != nil {
+		Order("namespace_id, id").Find(&users).Error; err != nil {
 		return nil, err
 	}
 	membersByNS := make(map[int][]MemberInfo, len(all))
@@ -323,7 +299,7 @@ func (m *NamespaceManager) ListAll(ctx context.Context) ([]NamespaceDetail, erro
 
 	out := make([]NamespaceDetail, 0, len(all))
 	for _, ns := range all {
-		members := ownerFirst(membersByNS[ns.ID])
+		members := membersByNS[ns.ID]
 		if members == nil {
 			members = []MemberInfo{} // ให้ JSON เป็น [] ไม่ใช่ null เหมือนที่ Detail() คืน
 		}
@@ -477,20 +453,27 @@ func (m *NamespaceManager) Leave(ctx context.Context, userID int) error {
 	}
 
 	if ns.ContributorID != userID {
-		// แค่สมาชิก — ออกได้เลย service ที่เคยสร้างไว้ยังอยู่กับกลุ่มและหัวหน้าดูแลต่อได้
-		//
-		// เดิมบล็อกไว้จนกว่าจะลบ service ของตัวเองให้หมด เพราะสิทธิ์ลบผูกกับ "namespace ปัจจุบัน
-		// ของผู้เรียก" พอออกไปแล้วเจ้าตัวจะกลับมาลบเองไม่ได้ แต่ตั้งแต่จำกัดให้เฉพาะหัวหน้ากลุ่ม
-		// จัดการ service ได้ เงื่อนไขนี้กลายเป็นทางตัน: สมาชิกลบเองก็ไม่ได้ ออกก็ไม่ได้
-		// ตอนนี้ของที่ค้างอยู่เป็นภาระของหัวหน้ากลุ่ม (หรือแอดมิน) ซึ่งเป็นคนเดียวที่ลบได้อยู่แล้ว
-		//
+		// แค่สมาชิก — ออกได้ถ้าเก็บของตัวเองเรียบร้อยแล้ว ไม่กระทบ namespace หรือคนอื่น
+		var own []entity.Service
+		if err := m.db.WithContext(ctx).
+			Where("namespace_id = ? AND created_by = ?", nsID, userID).
+			Order("id").Find(&own).Error; err != nil {
+			return err
+		}
+		if len(own) > 0 {
+			names := make([]string, 0, len(own))
+			for _, svc := range own {
+				names = append(names, svc.Name)
+			}
+			return fmt.Errorf("%w (เหลืออยู่ %d ตัว: %s)",
+				ErrHasOwnServices, len(own), strings.Join(names, ", "))
+		}
+
 		// ผูก namespace_id เดิมไว้ใน WHERE ด้วย — ถ้าระหว่างนี้มีคนอื่นย้าย/ลบ space ไปแล้ว
 		// จะได้ไม่เผลอเขียนทับสถานะใหม่ของ user (RowsAffected = 0 ถือว่าออกไปแล้ว ไม่ใช่ error)
-		//
-		// ล้าง namespace_joined_at ไปพร้อมกัน ไม่ให้เวลาเข้ากลุ่มเดิมค้างอยู่กับคนที่ไม่มีกลุ่มแล้ว
 		return m.db.WithContext(ctx).Model(&entity.User{}).
 			Where("id = ? AND namespace_id = ?", userID, nsID).
-			Updates(map[string]any{"namespace_id": nil, "namespace_joined_at": nil}).Error
+			Update("namespace_id", nil).Error
 	}
 
 	var memberCount int64

@@ -37,10 +37,6 @@ type CreateDatabaseParams struct {
 //
 // รหัสผ่านเดินทางใน entity.Service.DBPassword (gorm:"-") ไปถึง provisioner เท่านั้น ไม่ลง DB
 func (m *ServiceManager) CreateDatabase(ctx context.Context, userID, namespaceID int, p CreateDatabaseParams) (*entity.Service, error) {
-	if err := m.requireNamespaceOwner(ctx, userID, namespaceID); err != nil {
-		return nil, err
-	}
-
 	engine, version, err := resolveDatabaseVersion(p.Engine, p.Version, time.Now())
 	if err != nil {
 		return nil, err
