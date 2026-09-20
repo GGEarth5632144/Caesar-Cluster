@@ -58,14 +58,6 @@ export const namespaceApi = {
     const response = await axiosClient.get<ApiResponse<NamespaceDetail>>('/namespaces/me');
     return response.data.data;
   },
-
-  // ออกจากกลุ่มของตัวเอง — ผลต่างกันตามบทบาท (ดู NamespaceManager.Leave ฝั่ง backend)
-  //   สมาชิก        : หลุดออกจากกลุ่มเฉยๆ service ที่เคยสร้างไว้ยังอยู่กับกลุ่ม
-  //   หัวหน้าคนสุดท้าย: เท่ากับลบพื้นที่ทำงานทั้งก้อน (service + ข้อมูลหายถาวร)
-  //   หัวหน้าที่ยังมีสมาชิกอยู่: backend ปฏิเสธด้วย NAMESPACE_HAS_MEMBERS
-  leave: async () => {
-    await axiosClient.delete('/namespaces');
-  },
 };
 
 /**

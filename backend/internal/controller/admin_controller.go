@@ -1426,8 +1426,7 @@ func (h *AdminController) deleteUserAccount(ctx context.Context, id int) (string
 		return failed, fmt.Errorf("list leftover services: %w", err)
 	}
 	for _, svc := range leftovers {
-		// DeleteByID ไม่ผ่านด่าน "ต้องเป็นหัวหน้ากลุ่ม" ของฝั่งผู้ใช้ — แอดมินเก็บกวาดของคนอื่นอยู่
-		if err := h.svc.DeleteByID(ctx, svc.ID); err != nil && !errors.Is(err, services.ErrServiceNotFound) {
+		if err := h.svc.Delete(ctx, svc.ID, svc.NamespaceID); err != nil && !errors.Is(err, services.ErrServiceNotFound) {
 			return "ลบ service ของผู้ใช้ไม่สำเร็จ จึงยังไม่ได้ลบผู้ใช้ (ลองใหม่อีกครั้ง)",
 				fmt.Errorf("delete service %d: %w", svc.ID, err)
 		}

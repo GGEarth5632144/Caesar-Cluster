@@ -1,15 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { Users, UserPlus, X, Loader2, Crown, LogOut, AlertTriangle } from "lucide-react";
+import { Users, UserPlus, X, Loader2, Crown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { inviteApi, type InviteDetail, type InviteStatus } from "@/api/invite";
-import { authApi, getApiErrorMessage } from "@/api/authApi";
-import { namespaceApi, type NamespaceDetail } from "@/api/namespace";
-import { useAuthStore } from "@/store/authStore";
+import { getApiErrorMessage } from "@/api/authApi";
+import type { NamespaceDetail } from "@/api/namespace";
 
 function statusBadgeClass(status: InviteStatus) {
   switch (status) {
@@ -46,34 +44,6 @@ export default function GroupMembers({
   const [sent, setSent] = useState<InviteDetail[]>([]);
   const [loadingSent, setLoadingSent] = useState(isOwner);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
-
-  const navigate = useNavigate();
-  const refreshUser = useAuthStore((state) => state.refreshUser);
-  const [confirmLeave, setConfirmLeave] = useState(false);
-  const [leaving, setLeaving] = useState(false);
-  const [leaveError, setLeaveError] = useState<string | null>(null);
-
-  // หัวหน้ากลุ่มที่เหลือคนเดียว: การออก = ลบพื้นที่ทำงานทั้งก้อน (backend เรียก Delete ต่อให้)
-  // หัวหน้าที่ยังมีสมาชิกอยู่: ออกไม่ได้ ต้องให้สมาชิกออกก่อน — บอกไว้ตรงๆ ดีกว่าให้กดแล้วเจอ error
-  const isLastOwner = isOwner && namespace.member_count <= 1;
-  const ownerBlocked = isOwner && namespace.member_count > 1;
-
-  const handleLeave = async () => {
-    setLeaving(true);
-    setLeaveError(null);
-    try {
-      await namespaceApi.leave();
-      // ซิงก์ namespace_id ใน store จาก /me — UserDashboard จะสลับไปหน้ายื่นคำขอใหม่ให้เอง
-      // (รูปแบบเดียวกับตอนตอบรับคำเชิญใน PendingInvites)
-      const me = await authApi.me();
-      refreshUser(me);
-      navigate("/");
-    } catch (err) {
-      setLeaveError(getApiErrorMessage(err, "ออกจากกลุ่มไม่สำเร็จ"));
-      setLeaving(false);
-      setConfirmLeave(false);
-    }
-  };
 
   const loadSent = () => {
     if (!isOwner) return;
@@ -213,70 +183,6 @@ export default function GroupMembers({
           )}
         </>
       )}
-
-      {/* ออกจากกลุ่ม — อยู่ล่างสุดและไม่ใช่ปุ่มเด่น เพราะเป็นทางออก ไม่ใช่งานที่ทำบ่อย */}
-      <div className="mt-5 border-t border-black/5 pt-4">
-        {ownerBlocked ? (
-          <p className="text-sm text-[#211a14]/50">
-            คุณเป็นหัวหน้ากลุ่ม จึงออกจากกลุ่มไม่ได้ขณะที่ยังมีสมาชิกคนอื่นอยู่ —
-            ให้สมาชิกออกให้หมดก่อน หรือแจ้งผู้ดูแลระบบให้ลบพื้นที่ทำงานนี้
-          </p>
-        ) : confirmLeave ? (
-          <div className="flex flex-col gap-3">
-            {isLastOwner ? (
-              <p className="flex items-start gap-2 text-sm text-red-600">
-                <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-                คุณเป็นสมาชิกคนสุดท้าย การออกจากกลุ่มจะ<strong>ลบพื้นที่ทำงาน “{namespace.name}” ทั้งหมด</strong>
-                {namespace.usage.service_count > 0 &&
-                  ` — service ${namespace.usage.service_count} ตัวและข้อมูลในดิสก์จะถูกลบถาวร กู้คืนไม่ได้`}
-              </p>
-            ) : (
-              <p className="text-sm text-[#211a14]/60">
-                ออกจากกลุ่ม “{namespace.name}” ใช่ไหม? คุณจะไม่เห็น service ของกลุ่มนี้อีก
-                และต้องให้หัวหน้ากลุ่มเชิญใหม่ถึงจะกลับเข้ามาได้
-                {" "}ส่วน service ที่เคยสร้างไว้จะยังอยู่กับกลุ่ม
-              </p>
-            )}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleLeave}
-                disabled={leaving}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
-              >
-                {leaving ? (
-                  <Loader2 size={15} className="animate-spin" />
-                ) : isLastOwner ? (
-                  "ยืนยันลบพื้นที่ทำงาน"
-                ) : (
-                  "ยืนยันออกจากกลุ่ม"
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmLeave(false)}
-                disabled={leaving}
-                className="rounded-xl border border-black/10 px-4 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:bg-black/[0.03]"
-              >
-                ยกเลิก
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setLeaveError(null);
-              setConfirmLeave(true);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-4 py-2 text-sm font-bold text-[#211a14]/60 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-          >
-            <LogOut size={15} />
-            {isLastOwner ? "ออกจากกลุ่มและลบพื้นที่ทำงาน" : "ออกจากกลุ่ม"}
-          </button>
-        )}
-        {leaveError && <p className="mt-2 text-sm text-red-600">{leaveError}</p>}
-      </div>
     </div>
   );
 }
