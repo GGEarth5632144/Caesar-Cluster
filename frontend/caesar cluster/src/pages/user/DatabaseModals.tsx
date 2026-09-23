@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 
+import { ClipboardError, copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import {
   serviceApi,
@@ -690,16 +691,12 @@ function CopyButton({
   const [state, setState] = useState<"idle" | "loading" | "copied">("idle");
 
   const copy = async () => {
-    const clip = navigator.clipboard;
-    if (!clip) {
-      onError?.("เบราว์เซอร์ไม่อนุญาตให้คัดลอก (ต้องเปิดผ่าน https หรือ localhost)");
-      return;
-    }
     setState("loading");
     try {
+      const clip = navigator.clipboard;
       if (typeof value === "string") {
-        await clip.writeText(value);
-      } else {
+        await copyText(value);
+      } else if (clip?.write && typeof ClipboardItem !== "undefined") {
         const text = value();
         try {
           // ส่ง Promise ให้ ClipboardItem ทันทีตอนกด — Safari ปฏิเสธ writeText ที่เกิดหลัง await API (หลุด user gesture)
@@ -710,14 +707,19 @@ function CopyButton({
           ]);
         } catch {
           // เบราว์เซอร์ที่ไม่มี ClipboardItem / ไม่รับ Promise — รอค่าก่อนแล้วค่อยเขียน (error จาก API หลุดไป catch นอก)
-          await clip.writeText(await text);
+          await copyText(await text);
         }
+      } else {
+        // http: ไม่มี Clipboard API — ดึงค่าก่อนแล้วคัดลอกด้วยทางสำรอง (ยังอยู่ในช่วง user activation)
+        await copyText(await value());
       }
       setState("copied");
       setTimeout(() => setState("idle"), 1500);
     } catch (err) {
       setState("idle");
-      onError?.(getApiErrorMessage(err, "คัดลอกไม่สำเร็จ"));
+      onError?.(
+        err instanceof ClipboardError ? err.message : getApiErrorMessage(err, "คัดลอกไม่สำเร็จ"),
+      );
     }
   };
 
