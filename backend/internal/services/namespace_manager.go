@@ -29,7 +29,15 @@ var (
 	// ของ k8s เป็นแบบ async ค้างสถานะ Terminating อยู่พักหนึ่ง เจอบ่อยตอนลบ space
 	// แล้วสร้างใหม่ชื่อเดิมทันที ผู้ใช้ต้องได้คำแนะนำที่ถูกว่าให้รอ ไม่ใช่ให้ไปตั้งชื่ออื่น
 	ErrNamespaceTerminating = errors.New("namespace ชื่อนี้กำลังถูกลบอยู่ รอสักครู่แล้วลองใหม่")
+
+	// ErrStoragePoolFull = ดิสก์ที่ทุก namespace จองรวมกันจะเกินเพดานของ NFS (NFS_POOL_GB)
+	// รอแล้วลองใหม่ไม่หาย ต้องลดดิสก์ที่ขอ หรือแอดมินลดโควตาดิสก์ของ space อื่นก่อน
+	ErrStoragePoolFull = errors.New("พื้นที่ดิสก์รวมของระบบไม่พอให้จองเพิ่ม")
 )
+
+// storagePoolLockKey = กุญแจของ pg_advisory_xact_lock ที่ใช้คุมการจองดิสก์รวม
+// ตัวเลขอะไรก็ได้ที่ไม่ชนกับที่อื่น — ทั้งระบบมีจุดเดียวที่ใช้
+const storagePoolLockKey int64 = 0x43534e46 // "CSNF"
 
 // NamespaceDetail = namespace + ข้อมูลประกอบที่คำนวณสด (ยอดใช้งาน + รายชื่อสมาชิก)
 // Members ไม่ได้เก็บใน DB — อ่านสดจาก users ที่ namespace_id ตรงกัน เพื่อไม่ให้ค่าเพี้ยนจากของจริง
@@ -55,11 +63,43 @@ type NamespaceManager struct {
 	db    *gorm.DB
 	quota *QuotaService
 	prov  Provisioner
+	// poolMB = เพดานดิสก์ที่ทุก namespace จองรวมกันได้ (MB) · 0 = ไม่เช็ค
+	poolMB int
 }
 
 // NewNamespaceManager ประกอบ manager โดยฉีด db/quota/prov — ถูกเรียกจาก main ตอน start
-func NewNamespaceManager(db *gorm.DB, quota *QuotaService, prov Provisioner) *NamespaceManager {
-	return &NamespaceManager{db: db, quota: quota, prov: prov}
+// poolMB มาจาก NFS_POOL_GB (แปลงเป็น MB แล้ว) · 0 = ไม่เช็คดิสก์รวม
+func NewNamespaceManager(db *gorm.DB, quota *QuotaService, prov Provisioner, poolMB int) *NamespaceManager {
+	return &NamespaceManager{db: db, quota: quota, prov: prov, poolMB: poolMB}
+}
+
+// checkStoragePool เช็คว่าจองดิสก์ storageMB ให้ namespace นี้แล้ว ผลรวมทั้งระบบยังไม่เกิน poolMB
+//
+// ต้องเรียกใน transaction เดียวกับที่ INSERT/UPDATE storage_limit_mb เท่านั้น:
+// advisory lock ถูกปล่อยตอน transaction จบ ทำให้ approve สองใบพร้อมกันต้องต่อคิวกัน
+// ไม่งั้นทั้งคู่จะเห็นผลรวมก่อนอีกฝั่งบันทึก แล้วผ่านด่านไปพร้อมกันจนจองเกินเพดาน
+//
+// excludeID = namespace ที่กำลังปรับโควตา (ไม่นับค่าเดิมของตัวเองซ้ำ) · 0 = namespace ใหม่
+//
+// ด่านนี้กันแค่ "จองเกินดิสก์" — ขนาด PVC บน NFS ไม่ได้บังคับจริง service ยังเขียนเกินที่จองได้
+func (m *NamespaceManager) checkStoragePool(tx *gorm.DB, excludeID, storageMB int) error {
+	if m.poolMB <= 0 || storageMB == 0 {
+		return nil
+	}
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", storagePoolLockKey).Error; err != nil {
+		return err
+	}
+	var reservedMB int
+	if err := tx.Model(&entity.Namespace{}).Where("id <> ?", excludeID).
+		Select("COALESCE(SUM(storage_limit_mb), 0)").Scan(&reservedMB).Error; err != nil {
+		return err
+	}
+	if reservedMB+storageMB > m.poolMB {
+		free := max(m.poolMB-reservedMB, 0)
+		return fmt.Errorf("%w: ขอ %d GB แต่เหลือให้จองได้ %d GB (จองไปแล้ว %d จาก %d GB)",
+			ErrStoragePoolFull, storageMB/1024, free/1024, reservedMB/1024, m.poolMB/1024)
+	}
+	return nil
 }
 
 // ValidateQuota ตรวจว่าโควตาที่ขอมาอยู่ในช่วงที่ระบบยอมให้ตั้งได้ (> 0 และไม่เกินเพดาน)
@@ -131,6 +171,9 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, 
 	}
 
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := m.checkStoragePool(tx, 0, storageMB); err != nil {
+			return err
+		}
 		if err := tx.Create(ns).Error; err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation บน uni_namespaces_name
@@ -362,6 +405,12 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		if cpuMilli < used.UsedCPUMilli || ramMB < used.UsedRAMMB || storageMB < used.UsedStorageMB {
 			return fmt.Errorf("%w (ใช้อยู่ %dm CPU / %d MB RAM / %d MB ดิสก์)",
 				ErrQuotaBelowUsage, used.UsedCPUMilli, used.UsedRAMMB, used.UsedStorageMB)
+		}
+		// เช็คดิสก์รวมเฉพาะตอนเพิ่ม — ลดลงคืนพื้นที่ให้ระบบ ผ่านได้เสมอแม้ตอนนี้ผลรวมจะเกินอยู่แล้ว
+		if storageMB > ns.StorageLimitMB {
+			if err := m.checkStoragePool(tx, ns.ID, storageMB); err != nil {
+				return err
+			}
 		}
 
 		prevCPU, prevRAM, prevStorage = ns.CPULimitMilli, ns.RAMLimitMB, ns.StorageLimitMB

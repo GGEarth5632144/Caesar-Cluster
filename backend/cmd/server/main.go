@@ -46,7 +46,7 @@ func main() {
 	// service layer: quota คุมโควตาของ namespace, nsMgr สร้าง/เข้าร่วม space,
 	// svcMgr deploy/ลบ workload (ผ่านการเช็คโควตาเสมอ), inviteMgr คำเชิญเข้ากลุ่ม (ไม่แตะ cluster)
 	quota := services.NewQuotaService(db)
-	nsMgr := services.NewNamespaceManager(db, quota, prov)
+	nsMgr := services.NewNamespaceManager(db, quota, prov, cfg.NFSPoolGB*1024)
 	svcMgr := services.NewServiceManager(db, quota, prov)
 	inviteMgr := services.NewInviteManager(db)
 	telemetrySvc := services.NewTelemetryService(db)
