@@ -177,7 +177,9 @@ func (h *AuthController) Register(c *gin.Context) {
 // สมัครทับด้วยอีเมลอื่น จะแย่งบัญชีที่เจ้าตัวสมัครค้างไว้ไปผูกกับอีเมลตัวเองได้ก่อนเจ้าตัวกดลิงก์
 func (h *AuthController) rejectDuplicateRegistration(c *gin.Context, db *gorm.DB, req dto.RegisterRequest) bool {
 	var existing entity.User
-	err := db.Where("student_id = ? OR lower(gmail) = ?", req.StudentID, req.Gmail).First(&existing).Error
+	// req.StudentID ถูก lower มาแล้วแต่ใน DB เก็บตามรายชื่อ (เช่น B6618452) ต้อง LOWER ฝั่ง column ด้วย
+	// ไม่งั้นหาไม่เจอ แล้วไปชน unique constraint ตอน INSERT ได้ข้อความกลางๆ แทน "สมัครไปแล้ว"
+	err := db.Where("LOWER(student_id) = ? OR lower(gmail) = ?", req.StudentID, req.Gmail).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false
 	}
@@ -187,7 +189,7 @@ func (h *AuthController) rejectDuplicateRegistration(c *gin.Context, db *gorm.DB
 		return true
 	}
 
-	sameStudent := existing.StudentID == req.StudentID
+	sameStudent := strings.EqualFold(existing.StudentID, req.StudentID)
 	sameGmail := strings.EqualFold(existing.Gmail, req.Gmail)
 
 	if sameStudent && sameGmail && !existing.GmailVerified() {
