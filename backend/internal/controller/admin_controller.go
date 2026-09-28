@@ -1150,8 +1150,14 @@ func (h *AdminController) Approve(c *gin.Context) {
 	// โควตาของ space มาจากที่ผู้ใช้กรอกไว้ตอนยื่นคำขอ ไม่ใช่ค่าตั้งต้นของระบบ — คำขอทั้งใบ
 	// มีไว้เพื่อให้แอดมินตัดสินตัวเลขคู่นี้โดยเฉพาะ ถ้าอนุมัติแล้วยังได้ค่าตั้งต้นเท่ากันหมด
 	// การกรอก cpu/ram ในหน้ายื่นคำขอก็ไม่มีความหมาย และแอดมินต้องตามไปปรับโควตาให้ทีหลังทุกใบ
+	// ดิสก์ก็เหมือนกัน: storage_gb เป็น snapshot จาก template ที่เลือกตอนยื่น แปลงเป็น MB ให้ตรงหน่วยกับ
+	// namespaces.storage_limit_mb · 0 = คำขอที่ไม่ได้อ้าง template (หรือยื่นก่อนมีคอลัมน์นี้) → ค่าตั้งต้น
+	storageMB := req.StorageGB * 1024
+	if storageMB == 0 {
+		storageMB = entity.DefaultStorageLimitMB
+	}
 	name := fmt.Sprintf("ns-user-%d", req.UserID)
-	ns, err := h.ns.Create(ctx, req.UserID, name, req.CPULimitMilli, req.RAMLimitMB)
+	ns, err := h.ns.Create(ctx, req.UserID, name, req.CPULimitMilli, req.RAMLimitMB, storageMB)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrAlreadyInNamespace):

@@ -78,6 +78,16 @@ func ValidateQuota(cpuMilli, ramMB int) error {
 	return nil
 }
 
+// ValidateStorageLimit ตรวจเพดานดิสก์รวมของ namespace (0–entity.MaxStorageLimitMB) — ใช้ร่วมกันระหว่าง
+// ตอนยื่นคำขอ (RequestController.Create), ตอนสร้าง namespace (Create) และตอนปรับโควตา (SetQuota)
+// 0 ใช้ได้ = space ที่สร้าง service มีดิสก์ไม่ได้
+func ValidateStorageLimit(storageMB int) error {
+	if storageMB < 0 || storageMB > entity.MaxStorageLimitMB {
+		return fmt.Errorf("%w: ดิสก์ตั้งได้ 0–%d MB", ErrQuotaOutOfRange, entity.MaxStorageLimitMB)
+	}
+	return nil
+}
+
 // Create สร้าง namespace ใหม่ให้ user แล้วผูก user เข้ากับ space นั้นทันที (เขาเป็นเจ้าของ)
 //
 // data flow:
@@ -91,10 +101,16 @@ func ValidateQuota(cpuMilli, ramMB int) error {
 //     — นี่คือเส้นทางปกติของระบบ: ผู้ใช้ระบุความต้องการตอนยื่น แอดมินอนุมัติ แล้วได้เท่าที่ขอจริง
 //   - NamespaceController.Create (ผู้ใช้กดสร้างเอง ไม่ผ่านคำขอ) ส่งค่าตั้งต้น entity.Default*
 //
+// storageMB มาจากทางเดียวกัน: Approve แปลง requests.storage_gb (snapshot จาก template) เป็น MB
+// ส่วน NamespaceController.Create ส่ง entity.DefaultStorageLimitMB
+//
 // ถ้าสร้างบน cluster ไม่สำเร็จ จะ rollback ด้วยการลบ row ทิ้ง — ไม่ปล่อยให้ DB มี space ที่ไม่มีอยู่จริง
-func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, cpuMilli, ramMB int) (*entity.Namespace, error) {
+func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, cpuMilli, ramMB, storageMB int) (*entity.Namespace, error) {
 	// เช็คโควตาก่อนแตะ DB เลย — ค่าที่เกินเพดานคือคำขอที่ผิดตั้งแต่ต้น ไม่ใช่ความผิดพลาดชั่วคราว
 	if err := ValidateQuota(cpuMilli, ramMB); err != nil {
+		return nil, err
+	}
+	if err := ValidateStorageLimit(storageMB); err != nil {
 		return nil, err
 	}
 
@@ -111,7 +127,7 @@ func (m *NamespaceManager) Create(ctx context.Context, userID int, name string, 
 		ContributorID:  userID,
 		CPULimitMilli:  cpuMilli,
 		RAMLimitMB:     ramMB,
-		StorageLimitMB: entity.DefaultStorageLimitMB,
+		StorageLimitMB: storageMB,
 	}
 
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -325,8 +341,8 @@ func (m *NamespaceManager) SetQuota(ctx context.Context, namespaceID, cpuMilli, 
 		return nil, err
 	}
 	// ดิสก์ตั้งเป็น 0 ได้ (= กลุ่มนี้สร้าง database ไม่ได้)
-	if storageMB < 0 || storageMB > entity.MaxStorageLimitMB {
-		return nil, fmt.Errorf("%w: ดิสก์ตั้งได้ 0–%d MB", ErrQuotaOutOfRange, entity.MaxStorageLimitMB)
+	if err := ValidateStorageLimit(storageMB); err != nil {
+		return nil, err
 	}
 
 	var ns entity.Namespace

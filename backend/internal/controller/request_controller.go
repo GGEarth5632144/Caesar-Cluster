@@ -93,6 +93,11 @@ func (h *RequestController) Create(c *gin.Context) {
 			return
 		}
 		storageGB = tmpl.StorageGB
+		// template ที่ขอดิสก์เกินเพดาน namespace ยังไง approve ก็ไม่ผ่าน — ตัดตั้งแต่ตอนยื่น
+		if err := services.ValidateStorageLimit(storageGB * 1024); err != nil {
+			utils.Error(c, http.StatusBadRequest, "QUOTA_OUT_OF_RANGE", err.Error())
+			return
+		}
 	}
 
 	request := entity.Request{
