@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
 	"backend/internal/dto"
@@ -143,6 +144,80 @@ func (h *AuthController) ResendVerification(c *gin.Context) {
 	}
 
 	utils.OK(c, http.StatusOK, gin.H{"message": genericResendMsg})
+}
+
+// ResendVerificationByLogin ส่งลิงก์ยืนยันใบใหม่ให้บัญชีที่เพิ่งล็อกอินแล้วติด EMAIL_NOT_VERIFIED
+//
+// ต่างจาก ResendVerification ตรงที่ผู้เรียกพิสูจน์ตัวด้วยรหัสผ่านแล้ว ระบบจึงรู้ว่าเป็นบัญชีไหน
+// และส่งไปที่อีเมลที่ใช้สมัครเสมอ — เดิมหน้า Login ให้กรอกอีเมลใหม่เอง ถ้ากรอกไม่ตรงกับตอนสมัคร
+// backend ตอบ "ส่งแล้ว" แบบ generic แต่ไม่มีเมลออกไปจริง ผู้ใช้เลยรอลิงก์ที่ไม่มีวันมา
+//
+// ตอบตรงๆ ได้ทุกกรณี (cooldown, ส่งไม่ออก, ยืนยันไปแล้ว) เพราะคนที่ผ่านรหัสผ่านมาได้ไม่มีอะไรต้องปิดบัง
+// และคืนอีเมลแบบปิดบางส่วนให้เห็นว่าลิงก์ไปที่ไหน — ถ้าไม่ใช่อีเมลตัวเองจะได้รู้ว่าสมัครด้วยอีเมลผิด
+func (h *AuthController) ResendVerificationByLogin(c *gin.Context) {
+	var req dto.ResendVerificationByLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
+
+	db := h.db.WithContext(c.Request.Context())
+
+	// ด่านเดียวกับ Login ทุกประการ — ข้อความ "รหัสผิด" ต้องเหมือนกันด้วย ไม่งั้นกลายเป็นช่องไล่เดา student_id
+	var user entity.User
+	err := db.Where("LOWER(student_id) = ?", strings.ToLower(strings.TrimSpace(req.StudentID))).
+		First(&user).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("resend-verification/login: query user error: %v", err)
+		utils.Error(c, http.StatusInternalServerError, "INTERNAL", "เกิดข้อผิดพลาด")
+		return
+	}
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)) != nil {
+		utils.Error(c, http.StatusUnauthorized, "LOGIN_FAILED", "student_id หรือ password ไม่ถูกต้อง")
+		return
+	}
+
+	if user.GmailVerified() {
+		utils.Error(c, http.StatusConflict, "ALREADY_VERIFIED",
+			"บัญชีนี้ยืนยันอีเมลแล้ว กดเข้าสู่ระบบได้เลย")
+		return
+	}
+
+	if err := h.sendVerificationLink(c.Request.Context(), db, &user); err != nil {
+		if errors.Is(err, errVerificationResendTooSoon) {
+			utils.Error(c, http.StatusTooManyRequests, "RESEND_TOO_SOON",
+				"เพิ่งส่งลิงก์ยืนยันไปเมื่อสักครู่ กรุณาตรวจกล่องอีเมล (รวมทั้งเมลขยะ) ก่อนลองใหม่")
+			return
+		}
+		log.Printf("resend-verification/login: ส่งลิงก์ให้ user %d ไม่สำเร็จ: %v", user.ID, err)
+		utils.Error(c, http.StatusBadGateway, "MAIL_FAILED", "ส่งอีเมลยืนยันไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
+		return
+	}
+
+	masked := maskGmail(user.Gmail)
+	utils.OK(c, http.StatusOK, gin.H{
+		"gmail_masked": masked,
+		"message": "ส่งลิงก์ยืนยันใบใหม่ไปที่ " + masked + " แล้ว กรุณาตรวจกล่องอีเมล รวมทั้งเมลขยะ (Spam) " +
+			"— ถ้านี่ไม่ใช่อีเมลของคุณ กรุณาติดต่อผู้ดูแลระบบ",
+	})
+}
+
+// maskGmail ปิดกลางชื่อหน้า @ ไว้ เช่น kittisak@gmail.com → ki******@gmail.com
+// พอให้เจ้าของจำอีเมลตัวเองได้ แต่คนที่แอบมองจอไม่ได้อีเมลเต็มไป
+func maskGmail(gmail string) string {
+	at := strings.LastIndex(gmail, "@")
+	if at < 0 {
+		return gmail
+	}
+	local, domain := gmail[:at], gmail[at:]
+	keep := 2
+	if len(local) <= 2 {
+		keep = 1
+	}
+	if len(local) <= keep {
+		return local + domain
+	}
+	return local[:keep] + strings.Repeat("*", len(local)-keep) + domain
 }
 
 // sendVerificationLink ออกลิงก์ใบใหม่แล้วส่งอีเมล — ใช้ร่วมกันทั้ง Register, สมัครซ้ำ และขอลิงก์ใหม่

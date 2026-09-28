@@ -104,6 +104,16 @@ export const authApi = {
     return response.data.data;
   },
 
+  // ขอลิงก์ยืนยันใบใหม่จากหน้า Login — พิสูจน์ตัวด้วยรหัสผ่านชุดที่เพิ่งติด EMAIL_NOT_VERIFIED
+  // ส่งไปที่อีเมลที่ใช้สมัครเสมอ (ผู้ใช้ไม่ต้องกรอกอีเมล) และตอบ error ตรงๆ ได้ เช่น 429 RESEND_TOO_SOON
+  resendVerificationByLogin: async (payload: { student_id: string; password: string }) => {
+    const response = await axiosClient.post<{ data: { gmail_masked: string; message: string } }>(
+      '/resend-verification/login',
+      payload,
+    );
+    return response.data.data;
+  },
+
   // ขอลิงก์ยืนยันใบใหม่ — backend ตอบ generic message เสมอ (ไม่บอกว่ามีบัญชีนี้ในระบบไหม)
   resendVerification: async (payload: { gmail: string }) => {
     const response = await axiosClient.post<{ data: { message: string } }>(
