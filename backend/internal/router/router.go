@@ -92,6 +92,9 @@ func Setup(
 		// ผู้เรียกกรอกเอง (คุมต่อบัญชีด้วย cooldown 60 วิ ใน sendVerificationLink อีกชั้น)
 		api.POST("/verify-email", authCtl.VerifyEmail)
 		api.POST("/resend-verification", middlewares.RateLimit(5, 15*time.Minute), authCtl.ResendVerification)
+		// ทางของหน้า Login: พิสูจน์ตัวด้วยรหัสผ่านแล้ว ส่งได้แค่อีเมลที่ผูกกับบัญชี — ไม่ใส่ rate limit ต่อ IP
+		// เหมือน /login (ทั้งแล็บใช้ IP เดียว) cooldown 60 วิ ต่อบัญชีใน sendVerificationLink กันสแปมให้แล้ว
+		api.POST("/resend-verification/login", authCtl.ResendVerificationByLogin)
 
 		// รีเซ็ตรหัสผ่านผ่านอีเมล (public) — /forgot-password มี rate limit ต่อ IP กันสแปม/email-bombing
 		api.POST("/forgot-password", middlewares.RateLimit(3, 15*time.Minute), authCtl.ForgotPassword)

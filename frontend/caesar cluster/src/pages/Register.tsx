@@ -104,7 +104,11 @@ export default function Register() {
               ไปหน้าเข้าสู่ระบบ
             </Button>
 
-            <ResendVerification gmail={submitted.gmail} />
+            <ResendVerification
+              send={() =>
+                authApi.resendVerification({ gmail: submitted.gmail }).then((r) => r.message)
+              }
+            />
           </div>
         ) : (
           <form

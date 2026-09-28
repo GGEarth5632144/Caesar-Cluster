@@ -208,7 +208,13 @@ func (h *AuthController) rejectDuplicateRegistration(c *gin.Context, db *gorm.DB
 		return true
 	}
 
-	if sameStudent {
+	if sameStudent && !existing.GmailVerified() {
+		// สมัครค้างไว้ด้วยอีเมลอื่น — มักเป็นเจ้าตัวที่พิมพ์อีเมลผิดรอบแรก บอกทางออกให้ แทนที่จะปล่อยให้งง
+		// (ห้ามสมัครทับด้วยอีเมลใหม่เอง เหตุผลอยู่ในคอมเมนต์หัวฟังก์ชัน — ต้องให้ admin ลบบัญชีค้างก่อน)
+		utils.Error(c, http.StatusConflict, "REGISTER_FAILED",
+			"รหัสประจำตัวนี้สมัครไว้แล้วด้วยอีเมลอื่นและยังไม่ได้ยืนยัน ถ้าใส่อีเมลผิดตอนสมัคร "+
+				"กรุณาติดต่อผู้ดูแลระบบให้ลบบัญชีนั้นก่อน แล้วสมัครใหม่อีกครั้ง")
+	} else if sameStudent {
 		utils.Error(c, http.StatusConflict, "REGISTER_FAILED", "รหัสประจำตัวนี้สมัครไปแล้ว")
 	} else {
 		utils.Error(c, http.StatusConflict, "GMAIL_TAKEN", "อีเมลนี้ถูกใช้สมัครไปแล้ว")

@@ -35,6 +35,14 @@ type ResendVerificationRequest struct {
 	Gmail string `json:"gmail" binding:"required,email"`
 }
 
+// ResendVerificationByLoginRequest = body ของ POST /api/resend-verification/login
+// ใช้จากหน้า Login หลังได้ EMAIL_NOT_VERIFIED — ยืนยันตัวด้วยรหัสนักศึกษา+รหัสผ่านชุดเดียวกับที่เพิ่งล็อกอิน
+// แล้วส่งลิงก์ไปที่อีเมลที่ใช้สมัคร ไม่ให้ผู้ใช้กรอกอีเมลเอง (กรอกผิดแล้วเมลไม่ออกโดยไม่มีใครรู้)
+type ResendVerificationByLoginRequest struct {
+	StudentID string `json:"student_id" binding:"required"`
+	Password  string `json:"password" binding:"required"`
+}
+
 type UpdateUserRequest struct {
 	StudentID *string `json:"student_id"`
 	RealName  *string `json:"real_name"`

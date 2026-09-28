@@ -29,12 +29,12 @@ export default function Login() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
   const [showPassword, setShowPassword] = useState(false);
-  // รหัสผ่านถูกแล้ว แต่บัญชียังไม่ได้ยืนยันอีเมล — โชว์ช่องขอลิงก์ใหม่ให้ตรงนั้นเลย
-  // ไม่ใช่แค่ขึ้นข้อความแล้วปล่อยให้ผู้ใช้หาทางเอง
-  const [needsVerification, setNeedsVerification] = useState(false);
-  // ต้องถามอีเมลใหม่เพราะฟอร์มนี้ล็อกอินด้วยรหัสนักศึกษา ระบบจึงไม่รู้ว่าจะส่งลิงก์ไปที่ไหน
-  // (backend ตอบ generic ทุกกรณีอยู่แล้ว การกรอกอีเมลผิดจึงไม่บอกอะไรเพิ่มกับใคร)
-  const [resendGmail, setResendGmail] = useState("");
+  // รหัสผ่านถูกแล้ว แต่บัญชียังไม่ได้ยืนยันอีเมล — เก็บชุดที่ล็อกอินไว้ใช้ขอลิงก์ใหม่ตรงนั้นเลย
+  // ไม่ถามอีเมลซ้ำ: เดิมให้กรอกเอง ถ้ากรอกไม่ตรงกับตอนสมัคร backend ตอบ "ส่งแล้ว" แต่ไม่มีเมลออกจริง
+  // เก็บค่าตอนกดล็อกอิน ไม่อ่านจากฟอร์มสดๆ — ผู้ใช้แก้ช่องทีหลังจะได้ไม่ส่งไปผิดบัญชี
+  const [unverified, setUnverified] = useState<{ student_id: string; password: string } | null>(
+    null,
+  );
 
   const {
     register,
@@ -48,7 +48,7 @@ export default function Login() {
   });
 
   const onSubmit = async (values: LoginForm) => {
-    setNeedsVerification(false);
+    setUnverified(null);
     try {
       const result = await authApi.login({
         student_id: values.student_id,
@@ -61,7 +61,7 @@ export default function Login() {
       // แยก EMAIL_NOT_VERIFIED ออกจาก error อื่นด้วย code ไม่ใช่ข้อความ — ข้อความเปลี่ยนได้
       // แต่ code เป็นสัญญาระหว่าง backend กับหน้าเว็บ (ดู getApiErrorCode)
       if (getApiErrorCode(err) === "EMAIL_NOT_VERIFIED") {
-        setNeedsVerification(true);
+        setUnverified({ student_id: values.student_id, password: values.password });
       }
       setError("root", {
         message: getApiErrorMessage(err, "เข้าสู่ระบบไม่สำเร็จ"),
@@ -157,20 +157,17 @@ export default function Login() {
           </p>
         )}
 
-        {needsVerification && (
+        {unverified && (
           <div className="mt-4 rounded-2xl bg-white/10 p-4">
             <p className="text-center text-sm text-white/90">
-              กรอกอีเมลที่ใช้สมัครเพื่อให้เราส่งลิงก์ยืนยันไปให้ใหม่
+              เราจะส่งลิงก์ยืนยันใบใหม่ไปที่อีเมลที่คุณใช้สมัคร
             </p>
-            <Input
-              type="email"
-              placeholder="you@example.com"
-              value={resendGmail}
-              onChange={(event) => setResendGmail(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && event.preventDefault()}
-              className={`mt-3 ${inputClass}`}
+            <ResendVerification
+              key={unverified.student_id}
+              startCooldown={false}
+              send={() => authApi.resendVerificationByLogin(unverified).then((r) => r.message)}
+              className="mt-3"
             />
-            <ResendVerification gmail={resendGmail} className="mt-3" />
           </div>
         )}
 

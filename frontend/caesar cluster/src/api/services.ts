@@ -22,6 +22,18 @@ export function hasStorage(svc: Pick<AppService, 'storage_mb'>): boolean {
   return svc.storage_mb > 0;
 }
 
+/**
+ * ลิงก์เปิดหน้าเว็บของ service จากนอกคลัสเตอร์ — null = ไม่มีทางเข้าให้คลิก
+ * (database เข้าได้เฉพาะในกลุ่ม, web ที่ยังไม่ได้ node_port ก็ยังไม่มีที่ให้ไป)
+ *
+ * ล็อก http:// ไว้ ไม่อิง protocol ของหน้าเว็บหลัก — NodePort ไม่มี TLS ถ้าวันหนึ่งหน้าเว็บหลักขึ้น https
+ * ลิงก์จะกลายเป็น https://<host>:<node_port> ที่ต่อไม่ติดทุกตัว
+ */
+export function serviceUrl(svc: Pick<AppService, 'is_database' | 'node_port'>): string | null {
+  if (svc.is_database || !svc.node_port) return null;
+  return `http://${window.location.hostname}:${svc.node_port}`;
+}
+
 export interface AppService {
   id: number;
   namespace_id: number;

@@ -23,6 +23,7 @@ import {
   HardDrive,
   Lock,
   Eye,
+  ExternalLink,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -34,6 +35,7 @@ import {
   isSettled,
   hasStorage,
   isTemplateDatabase,
+  serviceUrl,
   type AppService,
   type UpdateServiceDTO,
 } from "@/api/services";
@@ -241,6 +243,27 @@ function statusAdvice(svc: AppService): string | null {
     }
   }
   return null;
+}
+
+/**
+ * <host>:<node_port> ที่คลิกแล้วเปิดหน้าเว็บของ service ในแท็บใหม่ — ไม่ต้อง copy ไปวางเอง
+ * ไม่มีทางเข้า (database / ยังไม่ได้พอร์ต) = ไม่ render อะไรเลย ให้ฝั่งที่เรียกแสดงข้อความของตัวเอง
+ */
+function ServiceLink({ svc }: { svc: Pick<AppService, "is_database" | "node_port"> }) {
+  const url = serviceUrl(svc);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`เปิด ${url} ในแท็บใหม่`}
+      className="inline-flex min-w-0 items-center gap-1 font-medium text-[#BB6653] hover:underline"
+    >
+      <span className="truncate">{url.replace(/^http:\/\//, "")}</span>
+      <ExternalLink size={14} className="shrink-0" />
+    </a>
+  );
 }
 
 export default function MyService() {
@@ -553,9 +576,9 @@ export default function MyService() {
                   <div className="flex items-center gap-1.5 text-sm text-[#211a14]/45">
                     <Network size={16} className="text-[#BB6653] shrink-0" />
                     {svc.node_port ? (
-                      <span className="truncate">
-                        {window.location.hostname}:{svc.node_port} &rarr; :
-                        {svc.container_port}
+                      <span className="flex min-w-0 items-center gap-1">
+                        <ServiceLink svc={svc} />
+                        <span className="shrink-0">&rarr; :{svc.container_port}</span>
                       </span>
                     ) : (
                       <span>รอคลัสเตอร์จ่ายพอร์ต...</span>
@@ -880,10 +903,15 @@ export default function MyService() {
                           {selectedServiceDetail.container_port}
                         </span>
                       ) : (
-                        <span className="break-words font-mono text-[#211a14]/60">
-                          {selectedServiceDetail.node_port
-                            ? `${window.location.hostname}:${selectedServiceDetail.node_port} → :${selectedServiceDetail.container_port}`
-                            : "Waiting for cluster port..."}
+                        <span className="flex min-w-0 flex-wrap items-center gap-1 font-mono text-[#211a14]/60">
+                          {selectedServiceDetail.node_port ? (
+                            <>
+                              <ServiceLink svc={selectedServiceDetail} />
+                              <span>→ :{selectedServiceDetail.container_port}</span>
+                            </>
+                          ) : (
+                            "Waiting for cluster port..."
+                          )}
                         </span>
                       )}
                     </div>
