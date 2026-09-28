@@ -52,6 +52,10 @@ type Config struct {
 	// เก็บ power_histories ย้อนหลังกี่วัน (0 หรือติดลบ = ไม่ลบเลย)
 	// ห้ามต่ำกว่า 30 เพราะกราฟเลือกดูย้อนหลังได้ไกลสุด 30 วัน
 	PowerHistoryRetentionDays int
+
+	// เพดานดิสก์ที่ทุก namespace จองรวมกันได้ (GB) — ขนาด PVC บน NFS เป็นแค่ตัวเลข ไม่ได้บังคับจริง
+	// ด่านนี้จึงกันแค่ "จองเกินดิสก์" ไม่กันการเขียนเกินขนาดที่จอง · 0 = ไม่เช็ค (dev/mock)
+	NFSPoolGB int
 }
 
 // Load อ่าน config จาก environment (โหลด .env ให้ก่อนถ้ามี)
@@ -85,6 +89,8 @@ func Load() *Config {
 		MailReplyTo:          strings.TrimSpace(getEnv("MAIL_REPLY_TO", "")),
 
 		PowerHistoryRetentionDays: getEnvInt("POWER_HISTORY_RETENTION_DAYS", 30),
+
+		NFSPoolGB: getEnvInt("NFS_POOL_GB", 0),
 	}
 	if cfg.DBUrl == "" || cfg.JWTSecret == "" {
 		log.Fatal("ต้องกำหนด DB_URL และ JWT_SECRET ใน .env")

@@ -1,0 +1,36 @@
+# caesar-student-deny-nfs.yaml -- กัน pod ของนักศึกษาต่อ NFS บน NUC ตรงๆ (docs 043)
+#
+# ปัญหา: pod ที่ออกนอกคลัสเตอร์ถูก SNAT (Calico natOutgoing) เป็น IP ของ worker 192.168.100.x
+# ซึ่งอยู่ใน ACL ของ /etc/exports (no_root_squash) → image ที่มี NFS client แบบ userspace (libnfs)
+# mount /Caesar-NFS/pvc เป็น root แล้วเห็น/แก้ไฟล์ PVC ของทุกกลุ่มได้ (ทดสอบจริง 2026-09-29 ผ่าน NFSv4)
+#
+# กันที่ egress ของ pod ใน namespace ที่ backend สร้าง (label managed-by) ทุกปลายทาง
+# เพราะ nfsd ฟังทุก interface ของ NUC (192.168.100.1, 192.168.162.130 ที่ได้จาก DHCP, ZeroTier)
+# ไม่กระทบ PVC: การ mount ของ PVC ทำโดย kubelet ใน network ของ node ไม่ผ่าน policy ของ pod
+#
+# apply ผ่าน calicoctl (คลัสเตอร์นี้ไม่มี Calico API server → kubectl ใช้ projectcalico.org/v3 ไม่ได้):
+#   calicoctl apply -f caesar-student-deny-nfs.yaml
+# ถอน: calicoctl delete globalnetworkpolicy caesar-student-deny-nfs
+# ทดสอบ: ~/test/calico-deny-nfs/ บน NUC
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: caesar-student-deny-nfs
+spec:
+  # ns-<id> ทุกตัวที่ backend สร้าง (ensureNamespaceObject ติด label นี้) — ตัวใหม่โดนอัตโนมัติ
+  namespaceSelector: app.kubernetes.io/managed-by == 'caesar-cluster'
+  types:
+    - Egress
+  egress:
+    # 2049 = nfsd (v4 ใช้พอร์ตนี้พอร์ตเดียว) · 111 = rpcbind (v3 ใช้หาพอร์ต mountd)
+    - action: Deny
+      protocol: TCP
+      destination:
+        ports: [111, 2049]
+    - action: Deny
+      protocol: UDP
+      destination:
+        ports: [111, 2049]
+    # ที่เหลือส่งต่อให้ NetworkPolicy ของ k8s (<svc>-namespace-only ของ database) และ default allow
+    # ห้ามปล่อยให้จบ policy โดยไม่มี rule รับ — Calico จะ drop egress ทั้งหมดของ pod
+    - action: Pass

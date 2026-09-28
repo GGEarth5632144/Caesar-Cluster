@@ -869,6 +869,8 @@ func (h *AdminController) SetNamespaceQuota(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "QUOTA_OUT_OF_RANGE", err.Error())
 		case errors.Is(err, services.ErrQuotaBelowUsage):
 			utils.Error(c, http.StatusConflict, "QUOTA_BELOW_USAGE", err.Error())
+		case errors.Is(err, services.ErrStoragePoolFull):
+			utils.Error(c, http.StatusConflict, "STORAGE_POOL_FULL", err.Error())
 		default:
 			log.Printf("set quota error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "ปรับโควตาไม่สำเร็จ")
@@ -1173,6 +1175,10 @@ func (h *AdminController) Approve(c *gin.Context) {
 			// เจอตอนแอดมินลบ space ของคนนี้แล้วรีบกด approve คำขอใหม่ให้เขาทันที
 			// ชื่อ namespace ที่ Approve ตั้งเป็น ns-user-<id> ตายตัว จึงชนกับตัวเดิมที่ยังไม่ตายสนิท
 			utils.Error(c, http.StatusConflict, "NAMESPACE_TERMINATING", err.Error())
+		case errors.Is(err, services.ErrStoragePoolFull):
+			// ดิสก์ที่ทุกกลุ่มจองรวมกันเต็มเพดาน NFS_POOL_GB — ไม่ใช่ระบบพัง
+			// แอดมินลดดิสก์ของ space อื่นที่จองเกินใช้ แล้วค่อย approve ใบนี้ใหม่
+			utils.Error(c, http.StatusConflict, "STORAGE_POOL_FULL", err.Error())
 		default:
 			log.Printf("approve: provision namespace error: %v", err)
 			utils.Error(c, http.StatusInternalServerError, "INTERNAL", "สร้าง namespace ไม่สำเร็จ")
